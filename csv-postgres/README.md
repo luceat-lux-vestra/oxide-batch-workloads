@@ -59,7 +59,7 @@ cargo run -- verify --input customers.csv
 | `migrate` | `PostgresMigrator::migrate` (framework's `oxide_batch` schema) + this workload's `app_business` schema. |
 | `run` | Launches or resumes the import job through `JobLauncher::launch_chunk`. |
 | `recover` | Marks a `Starting/Started/Stopping/Unknown` execution left by a hard crash as recoverable (`RecoveryRequest::mark_failed`), required before a subsequent `run` can resume it — see *Restart semantics* below. |
-| `verify` | Independently re-parses `--input` (a real CSV parser) and compares it against the database directly: row count *and* a full-content digest (`customer_id`/`name`/`email`/`amount`/`created_at`, both computed by streaming). Prints a JSON report to stdout and **exits nonzero on any mismatch** — this is not a DB-only summary. |
+| `verify` | Independently re-parses `--input` (a real CSV parser) and compares it against the database directly: row count *and* a full-content digest (`customer_id`/`name`/`email`/`amount`/`created_at`, both computed by streaming). Prints a JSON report to stdout and **exits nonzero on any mismatch** — this is not a DB-only summary. Requires `--input` to be in strictly ascending `customer_id` order (validated, fails closed if not — every `generate`d dataset satisfies this by construction; see `src/verify.rs`'s doc comment). |
 | `reset` | Truncates only `app_business.imported_customer`. Never touches `oxide_batch`. |
 
 `run` flags for deterministic fault injection (built into the shipped binary
@@ -190,8 +190,36 @@ separately, deliberately not blended** (spec ss26): defaulting to
 `ON CONFLICT` everywhere would hide a framework reprocessing defect behind
 apparent success.
 
+## Error provenance and diagnosability
+
+Two separate claims, kept separate on purpose:
+
+- **Transaction correctness: PASS.** A real `PRIMARY KEY` violation (or any
+  other business-transaction rejection) rolls back its whole containing
+  chunk correctly and fails the job — independently verified in
+  `tests/rollback.rs` by checking actual database row counts, not by
+  trusting a status code.
+- **Root-cause provenance through the public API: limited, by framework
+  design.** `BusinessTransactionError` (`Infrastructure` / `Rejected` /
+  `Cancelled`) and `WriterError`'s `FailureCategory` are both
+  value-redacted by OxideBatch itself — the framework's own PostgreSQL
+  adapter discards the `SQLSTATE`, constraint name, and driver error
+  *before* any consumer code (including `src/writer.rs`'s
+  `CustomerRowWriter`) ever sees the failure. A real `PRIMARY KEY`
+  violation and a transient connection failure are both indistinguishable
+  stable categories at this workload's boundary — there is no lower-level
+  public extension point in 0.6.0 that would let a consumer recover the
+  discarded detail, so no consumer-side workaround is possible or
+  attempted here. Filed as
+  [luceat-lux-vestra/oxide-batch#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220).
+
 ## Findings against OxideBatch 0.6.0
 
+- **Missing capability (diagnostics)** — `BusinessTransactionError`/
+  `WriterError` are value-redacted down to a stable category with no
+  driver/`SQLSTATE`/constraint detail recoverable at the public consumer
+  boundary; see *Error provenance and diagnosability* above and
+  [luceat-lux-vestra/oxide-batch#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220).
 - **API gap** — `item_components::postgres_batch_writer` generates each
   row's placeholder group as a fixed `($1, $2, ...)`; there is no way to
   add a per-column SQL cast, and `BusinessValue` has no temporal variant
@@ -291,7 +319,7 @@ the child; restart always launches a brand-new process.
 
 | File | Covers |
 |---|---|
-| `tests/clean_import.rs` | T1: real source-vs-database correctness via `verify` (not a spot-check), a negative control that corrupts one DB value and asserts `verify` rejects it, no leaked idle-in-transaction session |
+| `tests/clean_import.rs` | T1: real source-vs-database correctness via `verify` (not a spot-check), a negative control that corrupts one DB value and asserts `verify` rejects it, a negative control that proves `verify`'s ascending-`customer_id` ordering contract is actually enforced, no leaked idle-in-transaction session |
 | `tests/malformed_input.rs` | T2: wrong field count / non-numeric amount fails the job, zero partial rows |
 | `tests/rollback.rs` | T3, T7: real PK violation, strict vs. idempotent |
 | `tests/restart.rs` | T4, T5, T6, T8: graceful vs. hard-crash failure windows, recovery, clean-vs-recovered equivalence |

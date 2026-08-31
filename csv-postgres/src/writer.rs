@@ -91,6 +91,21 @@ impl ItemWriter<CustomerRow> for CustomerRowWriter {
             }
             let text = self.insert_sql(chunk.len());
             let statement = BusinessStatement::new(&text, &values);
+            // FRAMEWORK LIMITATION, not a workaround opportunity: `error`
+            // here is already `BusinessTransactionError` (Infrastructure /
+            // Rejected / Cancelled) -- the framework's own PostgreSQL
+            // adapter has already discarded the SQLSTATE, constraint name,
+            // and driver error before this code ever sees it (that
+            // redaction happens inside `BusinessTransaction::execute`
+            // itself, at a boundary this consumer has no way to reach
+            // behind). A real PRIMARY KEY violation and a transient
+            // connection failure are both indistinguishable stable
+            // categories once mapped to `WriterError` below. Transaction
+            // correctness (the row's chunk still rolls back correctly
+            // either way) is unaffected and independently verified in
+            // tests/rollback.rs; root-cause diagnosability through the
+            // public API is what's limited. Filed as
+            // luceat-lux-vestra/oxide-batch#220.
             transaction
                 .execute(statement)
                 .await

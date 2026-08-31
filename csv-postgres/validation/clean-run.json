@@ -9,5 +9,5 @@
   "db_row_count": 100000,
   "final_state_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
   "verify_note": "verify compared source CSV content against database content directly (row count + full-content digest) and exited 0",
-  "runtime_seconds": 1.53
+  "runtime_seconds": 1.629
 }

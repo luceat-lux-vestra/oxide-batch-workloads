@@ -15,7 +15,7 @@
   },
   "final_business_db_rows": 100000,
   "expected_final_rows": 100000,
-  "runtime_seconds": 1.145,
+  "runtime_seconds": 1.174,
   "clean_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
   "recovered_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
   "full_content_digests_match": true,

@@ -127,6 +127,48 @@ async fn verify_fails_closed_when_a_database_value_is_corrupted() {
     );
 }
 
+/// `verify` requires and validates a strictly-ascending-`customer_id`
+/// source (see `source_digest`'s doc comment for why: the database side
+/// is always read `ORDER BY customer_id`, so this tool is not
+/// order-independent). Proves that contract is actually enforced, not
+/// just documented: a content-identical file with its rows reversed must
+/// be rejected, with the failure clearly attributable to ordering, not
+/// reported as a generic content mismatch. Needs no database import at
+/// all -- the ordering check fails closed before any DB comparison runs.
+#[tokio::test]
+async fn verify_fails_closed_on_out_of_order_source_customer_id() {
+    support::migrate();
+    let dataset = support::generate(GenerateOptions {
+        rows: 20,
+        label: "verify-order",
+        ..Default::default()
+    });
+
+    let original = std::fs::read_to_string(&dataset.path).expect("read generated dataset");
+    let mut lines: Vec<&str> = original.lines().collect();
+    lines.reverse();
+    let reversed_path = support::temp_csv("verify-order-reversed");
+    std::fs::write(&reversed_path, lines.join("\n") + "\n").expect("write reversed dataset");
+
+    let output = support::bin()
+        .arg("verify")
+        .arg("--input")
+        .arg(&reversed_path)
+        .output()
+        .expect("spawn csv-postgres");
+    assert!(
+        !output.status.success(),
+        "verify must reject a source file that is not in strictly ascending customer_id order"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ascending customer_id order"),
+        "failure should name the ordering contract, not report a generic mismatch: {stderr}"
+    );
+
+    let _ = std::fs::remove_file(&reversed_path);
+}
+
 /// Inspects global `pg_stat_activity` state, so it is only a meaningful
 /// signal with `--test-threads=1` (the repository's documented default):
 /// under real concurrency, another test's own in-flight import can

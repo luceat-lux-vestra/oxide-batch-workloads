@@ -12,6 +12,13 @@
 //! quoted comma or an escaped quote in a field is handled correctly, not
 //! split naively on `,`), producing the same canonicalized row string the
 //! database side does, so the two are directly comparable.
+//!
+//! **Scope**: this verifier requires the source CSV to be in strictly
+//! ascending `customer_id` order (validated, fails closed if not -- see
+//! `source_digest`'s doc comment for why: the database side is always
+//! read `ORDER BY customer_id`, and this tool is not order-independent).
+//! Every dataset this workload's own `generate` command produces satisfies
+//! this by construction.
 
 use std::path::Path;
 
@@ -49,11 +56,27 @@ fn canonical_row(
 /// escaped/doubled quotes correctly), returning the row count and a
 /// canonical-content digest.
 ///
+/// **Ordering contract**: the database side of this comparison
+/// (`db_digest`) reads `ORDER BY customer_id`, and the two digests are
+/// accumulated into a single running hash in the order each side is
+/// visited -- so a genuinely order-independent comparison would need a
+/// commutative combining step (e.g. summing or XORing independent
+/// per-row digests) instead. This tool intentionally does not do that:
+/// it requires and validates that the source CSV is itself in strictly
+/// ascending `customer_id` order (true for every dataset this workload's
+/// own `generate` command produces, by construction) and fails closed
+/// with a clear error otherwise, rather than silently accepting an
+/// unordered file whose match against the always-`customer_id`-ordered
+/// database side would be coincidental. A verifier for arbitrarily
+/// ordered source files is a different, larger tool than this workload
+/// needed.
+///
 /// # Errors
 ///
-/// Returns an error if `input` cannot be opened, or a row fails to parse
+/// Returns an error if `input` cannot be opened, a row fails to parse
 /// (wrong field count, non-numeric `customer_id`/`amount`, or an
-/// unparseable `created_at`) -- fails closed rather than skipping.
+/// unparseable `created_at`), or `customer_id` is not strictly ascending
+/// -- fails closed rather than skipping or silently mismatching.
 fn source_digest(input: &Path) -> anyhow::Result<(usize, String)> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
@@ -61,6 +84,7 @@ fn source_digest(input: &Path) -> anyhow::Result<(usize, String)> {
         .from_path(input)?;
     let mut hasher = Sha256::new();
     let mut rows = 0usize;
+    let mut last_customer_id: Option<i64> = None;
     for record in reader.records() {
         let record = record?;
         if record.len() != 5 {
@@ -77,6 +101,18 @@ fn source_digest(input: &Path) -> anyhow::Result<(usize, String)> {
                 &record[0]
             )
         })?;
+        if let Some(last) = last_customer_id {
+            if customer_id <= last {
+                anyhow::bail!(
+                    "source row {}: customer_id {customer_id} is not strictly greater than the \
+                     previous row's {last} -- verify requires the source CSV to be in strictly \
+                     ascending customer_id order (see source_digest's doc comment); this file is \
+                     out of scope for this verifier, not a content mismatch",
+                    rows + 1
+                );
+            }
+        }
+        last_customer_id = Some(customer_id);
         let amount: i64 = record[3].parse().map_err(|_| {
             anyhow::anyhow!("source row {}: invalid amount '{}'", rows + 1, &record[3])
         })?;
