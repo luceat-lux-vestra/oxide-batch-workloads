@@ -158,9 +158,13 @@ Two schemas, deliberately never overlapping:
   returns success is durable — its rows are never lost — but this workload
   does **not** claim the framework guarantees the *reader* never revisits
   that chunk's byte range on a subsequent attempt. What is verified,
-  end to end: **final business state has no duplicates** (`tests/restart.rs`,
-  `validation/restart-run.json`'s `content_digests_match`). That is a
-  final-state guarantee (Claim B, spec ss24), not a stronger "never
+  end to end: **final business state has no duplicates**, verified against
+  the exact same input file used for both the clean run and the
+  crash+restart run — same bytes, same `customer_id` range, full row
+  content compared (not an offset-derived subset) — in
+  `tests/restart.rs::clean_run_and_recovered_run_converge_to_the_same_content`
+  and `validation/restart-run.json`'s `full_content_digests_match`. That is
+  a final-state guarantee (Claim B, spec ss24), not a stronger "never
   reprocessed" claim (Claim A) — this workload does not have evidence for
   Claim A independent of Claim B and does not assert it.
 
@@ -189,7 +193,8 @@ apparent success.
   non-text/i64/bool/bytes column.** Worked around with a hand-written
   `ItemWriter` on the lower `BusinessTransaction`/`BusinessStatement`
   primitive (`src/writer.rs`) — legitimate use of a real, lower-level public
-  extension point, not a framework reimplementation.
+  extension point, not a framework reimplementation. Filed as
+  [luceat-lux-vestra/oxide-batch#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218).
 - **Doc/release inconsistency** — the `v0.6.0` tag's `README.md` states
   "`oxide-batch` `0.6.0` ... is not yet published", while crates.io already
   lists it as the published `default_version`. Cosmetic, but a reader
@@ -225,15 +230,24 @@ via `docker-compose.yml`). Rust: 1.98.0. `cargo build --release`.
 
 | Profile | Rows | CSV size | Runtime | Peak RSS |
 |---|---|---|---|---|
-| normal | 100,000 | 7.7 MB | 1.58s (~63k rows/s) | ~21 MB |
-| stress | 1,000,000 | 79.5 MB | 18.13s (~55k rows/s) | ~93 MB |
+| normal | 100,000 | 7.7 MB | 1.58s (~63k rows/s) | ~13.4 MB |
+| stress | 1,000,000 | 79.5 MB | 15.17s (~66k rows/s) | ~13.4 MB |
 
-A 10x increase in row count produced a ~4.4x increase in peak RSS, not a
-~10x one — consistent with the streaming architecture (spec ss9:
-`memory ≈ runtime baseline + O(chunk_size)`), though this workload does not
-claim the residual growth is exactly zero or attribute it precisely (sqlx
-pool buffers, tokio runtime scaling, and OS page cache are all plausible
-contributors alongside the CSV reader/writer's own bounded buffers).
+A 10x increase in row count (and file size) produced **no measurable
+increase** in peak RSS. This is a corrected number: an earlier version of
+this workload computed the input's SHA-256 (job identity, ss15) by reading
+the whole file into memory (`std::fs::read`) *before* the streaming reader
+ever opened it, which — while the reader/writer/processor loop was itself
+already properly chunked — meant actual peak memory still scaled with file
+size (the previous, wrong measurement: ~21 MB → ~93 MB, a ~4.4x increase
+for the same 10x row-count step, misattributed in an earlier revision of
+this README to "the streaming architecture" when in fact a real
+non-streaming step was the dominant contributor). `sha256_of_file`
+(`src/generator.rs`) now streams through a fixed 64 KB buffer; `verify`
+(`src/verify.rs`) was fixed the same way (a streamed `BufReader` line
+count instead of `read_to_string`, and `sqlx`'s row `fetch` stream instead
+of `fetch_all`). The flat 13.4 MB now genuinely reflects
+`memory ≈ runtime baseline + O(chunk_size)` (spec ss9), not file size.
 
 ## Test suite
 

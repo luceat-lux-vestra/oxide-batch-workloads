@@ -358,6 +358,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "futures-util",
  "oxide-batch",
  "oxide-batch-test",
  "rand 0.8.8",

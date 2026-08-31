@@ -1,9 +1,16 @@
 //! Query-based verification: never trusts log strings. Prints machine-
 //! readable JSON to stdout so a caller can redirect it straight into
 //! `validation/*.json` evidence.
+//!
+//! Both the CSV line count and the database row fetch are streamed (a
+//! `BufReader` line iterator; `sqlx`'s row stream via `fetch`, not
+//! `fetch_all`) rather than buffered whole, so verifying a stress-sized
+//! (1M+ row) import does not itself become an unbounded-memory step.
 
+use std::io::BufRead;
 use std::path::Path;
 
+use futures_util::TryStreamExt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -31,15 +38,13 @@ pub async fn verify(database_url: &str, input: &Path) -> anyhow::Result<()> {
             .fetch_one(&pool)
             .await?;
 
-    let rows: Vec<(i64, String, String, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+    let mut hasher = Sha256::new();
+    let mut rows = sqlx::query_as::<_, (i64, String, String, i64, chrono::DateTime<chrono::Utc>)>(
         "SELECT customer_id, name, email, amount, created_at \
          FROM app_business.imported_customer ORDER BY customer_id",
     )
-    .fetch_all(&pool)
-    .await?;
-
-    let mut hasher = Sha256::new();
-    for (customer_id, name, email, amount, created_at) in &rows {
+    .fetch(&pool);
+    while let Some((customer_id, name, email, amount, created_at)) = rows.try_next().await? {
         hasher.update(customer_id.to_le_bytes());
         hasher.update(0u8.to_le_bytes());
         hasher.update(name.as_bytes());
@@ -51,12 +56,19 @@ pub async fn verify(database_url: &str, input: &Path) -> anyhow::Result<()> {
         hasher.update(created_at.to_rfc3339().as_bytes());
         hasher.update(1u8.to_le_bytes());
     }
+    drop(rows);
     let canonical_digest_sha256 = format!("{:x}", hasher.finalize());
 
-    let csv_non_empty_lines = std::fs::read_to_string(input)?
-        .lines()
-        .filter(|line| !line.is_empty())
-        .count();
+    let csv_non_empty_lines = {
+        let file = std::io::BufReader::new(std::fs::File::open(input)?);
+        let mut count = 0usize;
+        for line in file.lines() {
+            if !line?.is_empty() {
+                count += 1;
+            }
+        }
+        count
+    };
 
     pool.close().await;
 

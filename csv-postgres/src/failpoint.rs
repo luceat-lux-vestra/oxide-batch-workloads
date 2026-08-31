@@ -52,6 +52,16 @@ impl FailAt {
         let number: u64 = number.parse().map_err(|_| {
             anyhow::anyhow!("--fail-at position must be a positive integer, got '{number}'")
         })?;
+        // Ordinals are 1-based, and 0 is the internal sentinel meaning
+        // "never trigger" (see job::run): silently accepting chunk:0/row:0
+        // here would produce a --fail-at flag that quietly never fires,
+        // rather than the clear rejection its own error message already
+        // promises for a non-positive value.
+        if number == 0 {
+            return Err(anyhow::anyhow!(
+                "--fail-at position must be a positive integer, got '0'"
+            ));
+        }
         match kind {
             "chunk" => Ok(Self::Chunk(u32::try_from(number)?)),
             "row" => Ok(Self::Row(number)),

@@ -6,7 +6,7 @@
   "this_attempt_only": {
     "committed_read": 75000,
     "committed_written": 75000,
-    "note": "rows this restart attempt itself newly processed (50 remaining chunks), not the instance total"
+    "note": "rows this restart attempt itself newly processed (150 remaining chunks of 200 total), not the instance total"
   },
   "cumulative_after_restart": {
     "read_count": 100000,
@@ -15,8 +15,9 @@
   },
   "final_business_db_rows": 100000,
   "expected_final_rows": 100000,
-  "runtime_seconds": 1.182,
-  "clean_run_content_digest_md5": "e3a864e6a128352114f49bd937df58a6",
-  "recovered_run_content_digest_md5": "e3a864e6a128352114f49bd937df58a6",
-  "content_digests_match": true
+  "runtime_seconds": 1.541,
+  "clean_run_full_content_digest_sha256": "316f994528c803161b52c2026e6e16bca32f9df4d98e87955c027133e4ee006f",
+  "recovered_run_full_content_digest_sha256": "316f994528c803161b52c2026e6e16bca32f9df4d98e87955c027133e4ee006f",
+  "full_content_digests_match": true,
+  "digest_note": "same exact input file, same customer_id range (business table reset between the clean and crash scenarios): this compares customer_id/name/email/amount/created_at in full, not an offset-invariant subset"
 }
