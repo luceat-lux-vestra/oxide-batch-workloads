@@ -233,6 +233,9 @@ apparent success.
   otherwise. Not a defect (the docs explain it once you look), but easy to
   miss on a first read; see `src/failpoint.rs`'s module doc.
 
+  These three documentation/ergonomics findings are filed together as
+  [luceat-lux-vestra/oxide-batch#219](https://github.com/luceat-lux-vestra/oxide-batch/issues/219).
+
 ## Resource observations (observational, not a benchmark)
 
 CPU: Apple M1 Max. OS: macOS 26.6.2. PostgreSQL: 18.6 (`postgres:18` image,
@@ -270,10 +273,14 @@ cargo run -- migrate
 cargo test -- --test-threads=1
 ```
 
-`--test-threads=1` is required for one test (`clean_import`'s connection-leak
-check, which inspects global `pg_stat_activity` state — see its doc
-comment); the rest are safe under parallel execution and CI runs them that
-way except for that constraint.
+`--test-threads=1` is this suite's default, not just a suggestion: several
+tests either inspect global `pg_stat_activity` state or `reset()` the whole
+shared business table (each `tests/support::generate` call gets its own
+`customer_id` range for isolation, but a handful of tests need the *whole*
+table to themselves for a moment regardless — see each such test's own doc
+comment for why). Rather than track and re-document exactly which tests
+that is and let the count go stale as tests are added (as happened once
+already), the whole suite -- and CI -- just runs serialized.
 
 Every test spawns the **compiled binary** as a real child process (never an
 in-process function call) and asserts on **PostgreSQL state** — row counts,
