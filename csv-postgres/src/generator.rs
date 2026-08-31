@@ -240,11 +240,8 @@ pub fn generate(
     writer.flush()?;
     drop(writer);
 
-    let bytes = std::fs::read(path)?;
-    let file_size_bytes = bytes.len() as u64;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let sha256 = format!("{:x}", hasher.finalize());
+    let file_size_bytes = std::fs::metadata(path)?.len();
+    let sha256 = sha256_of_file(path)?;
 
     Ok(GenerateManifest {
         rows,
@@ -255,15 +252,32 @@ pub fn generate(
     })
 }
 
+/// The read buffer size for `sha256_of_file`: fixed regardless of input
+/// size, so hashing a 1 GB file costs the same working memory as hashing a
+/// 1 KB one.
+const HASH_BUFFER_BYTES: usize = 64 * 1024;
+
 /// Computes the SHA-256 of a file already on disk, for job-identity and
-/// input-mutation-guard purposes (see `job::input_identity`).
+/// input-mutation-guard purposes (see `job::run`), by streaming it through
+/// a fixed-size buffer rather than reading it into memory whole -- the
+/// import pipeline's own streaming-memory claim would otherwise be
+/// contradicted by this step alone, which runs before the streaming reader
+/// ever opens the file.
 ///
 /// # Errors
 ///
 /// Returns an I/O error if `path` cannot be read.
 pub fn sha256_of_file(path: &Path) -> std::io::Result<String> {
-    let bytes = std::fs::read(path)?;
+    use std::io::Read;
+    let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }

@@ -52,6 +52,16 @@ impl FailAt {
         let number: u64 = number.parse().map_err(|_| {
             anyhow::anyhow!("--fail-at position must be a positive integer, got '{number}'")
         })?;
+        // Ordinals are 1-based, and 0 is the internal sentinel meaning
+        // "never trigger" (see job::run): silently accepting chunk:0/row:0
+        // here would produce a --fail-at flag that quietly never fires,
+        // rather than the clear rejection its own error message already
+        // promises for a non-positive value.
+        if number == 0 {
+            return Err(anyhow::anyhow!(
+                "--fail-at position must be a positive integer, got '0'"
+            ));
+        }
         match kind {
             "chunk" => Ok(Self::Chunk(u32::try_from(number)?)),
             "row" => Ok(Self::Row(number)),
@@ -189,13 +199,17 @@ impl<I: Send + Sync, W: ItemWriter<I>> ItemWriter<I> for FailingWriter<W> {
         if targeted && self.mode == FailureMode::BeforeWrite {
             self.fired.store(true, Ordering::SeqCst);
             maybe_abort(self.hard_crash, "writer before-write");
-            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
+            return Err(WriterError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
         }
         let outcome = self.inner.write(items, context).await?;
         if targeted && self.mode == FailureMode::DuringWrite {
             self.fired.store(true, Ordering::SeqCst);
             maybe_abort(self.hard_crash, "writer during-write");
-            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
+            return Err(WriterError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
         }
         Ok(outcome)
     }

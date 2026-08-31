@@ -1,0 +1,13 @@
+{
+  "scenario": "clean_run",
+  "dataset": {"rows": 100000, "seed": 20260831, "id_offset": 1, "file_size_bytes": 7746930, "sha256": "8a748d720051a49a8ecceeb4e02c16afb58362f789457764539b36bfaa3e83fa"},
+  "chunk_size": 500,
+  "import_name": "evidence_clean_run",
+  "job_execution_status": "COMPLETED",
+  "chunks_committed": 200,
+  "source_rows": 100000,
+  "db_row_count": 100000,
+  "final_state_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
+  "verify_note": "verify compared source CSV content against database content directly (row count + full-content digest) and exited 0",
+  "runtime_seconds": 1.629
+}

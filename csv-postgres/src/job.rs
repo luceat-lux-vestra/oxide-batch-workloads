@@ -52,7 +52,7 @@ pub async fn migrate(database_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Drops and recreates only the business table. Never touches the
+/// Truncates only the business table (never drops it). Never touches the
 /// `oxide_batch` schema.
 pub async fn reset(database_url: &str) -> anyhow::Result<()> {
     let pool = sqlx::postgres::PgPoolOptions::new()

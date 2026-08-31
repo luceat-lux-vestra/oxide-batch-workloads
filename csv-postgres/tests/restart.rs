@@ -8,7 +8,8 @@
 mod support;
 
 use support::{
-    business_row_count_in_range, content_digest_in_range, latest_execution_status, GenerateOptions,
+    business_row_count_in_range, canonical_digest_in_range, latest_execution_status,
+    GenerateOptions,
 };
 
 const CHUNK_SIZE: &str = "100"; // 500 rows / 100 => 5 chunks
@@ -263,47 +264,56 @@ async fn real_process_crash_and_restart_produce_a_completed_job() {
     assert_eq!(final_rows, dataset.rows as i64);
 }
 
-/// T8: a clean run and a crash+recover+restart run of the *same* generated
-/// content (same seed, independent id_offsets since both share one
-/// business table) converge to an identical content digest -- not just an
-/// identical row count.
+/// T8: a clean run and a crash+recover+restart run of the exact same
+/// generated file (same bytes, same `customer_id` range) converge to an
+/// identical **full-row-content** digest -- `customer_id`, `name`,
+/// `email`, `amount`, `created_at` all included, not just an identical row
+/// count and not a digest that has to exclude offset-derived columns
+/// because two different datasets were used. The business table is reset
+/// between the two scenarios so the second one's rows don't collide with
+/// the first's; this test therefore truncates the whole business table and
+/// depends on serialized test execution (this repository's documented
+/// `--test-threads=1`, plus cargo's own default of running separate test
+/// binaries one at a time) -- see `clean_import.rs`'s connection-leak test
+/// for the same constraint.
 #[tokio::test]
 async fn clean_run_and_recovered_run_converge_to_the_same_content() {
     support::migrate();
 
-    let clean = support::generate(GenerateOptions {
+    let dataset = support::generate(GenerateOptions {
         rows: 400,
         seed: 777,
-        label: "equivalence-clean",
+        label: "equivalence",
         ..Default::default()
     });
-    let clean_import_name = support::unique_name("equivalence_clean");
-    restart(&clean.path, &clean_import_name); // plain clean run, no failpoint
+    let pool = support::pool().await;
 
-    let recovered = support::generate(GenerateOptions {
-        rows: 400,
-        seed: 777, // same content pattern as `clean`, different id_offset
-        label: "equivalence-recovered",
-        ..Default::default()
-    });
+    let clean_import_name = support::unique_name("equivalence_clean");
+    restart(&dataset.path, &clean_import_name); // plain clean run, no failpoint
+    let clean_rows = business_row_count_in_range(&pool, dataset.id_offset, dataset.rows).await;
+    assert_eq!(clean_rows, dataset.rows as i64);
+    let clean_digest = canonical_digest_in_range(&pool, dataset.id_offset, dataset.rows).await;
+
+    support::reset();
+
     let recovered_import_name = support::unique_name("equivalence_recovered");
     let status = run_with_failpoint(
-        &recovered.path,
+        &dataset.path,
         &recovered_import_name,
         "chunk:3",
         "after-business-commit",
         true,
     );
     assert!(!status.success());
-    support::recover(&recovered_import_name, &recovered.path);
-    restart(&recovered.path, &recovered_import_name);
+    support::recover(&recovered_import_name, &dataset.path);
+    restart(&dataset.path, &recovered_import_name);
+    let recovered_rows = business_row_count_in_range(&pool, dataset.id_offset, dataset.rows).await;
+    assert_eq!(recovered_rows, dataset.rows as i64);
+    let recovered_digest = canonical_digest_in_range(&pool, dataset.id_offset, dataset.rows).await;
 
-    let pool = support::pool().await;
-    let clean_digest = content_digest_in_range(&pool, clean.id_offset, clean.rows).await;
-    let recovered_digest =
-        content_digest_in_range(&pool, recovered.id_offset, recovered.rows).await;
     assert_eq!(
         clean_digest, recovered_digest,
-        "identical source content must converge to identical final business content, crash or not"
+        "identical source bytes and identical customer_id range: full row content must converge \
+         to the same digest, crash or not"
     );
 }

@@ -91,6 +91,24 @@ impl ItemWriter<CustomerRow> for CustomerRowWriter {
             }
             let text = self.insert_sql(chunk.len());
             let statement = BusinessStatement::new(&text, &values);
+            // FRAMEWORK LIMITATION, not a workaround opportunity: `error`
+            // here is already `BusinessTransactionError` (Infrastructure /
+            // Rejected / Cancelled) -- the framework's own PostgreSQL
+            // adapter has already discarded the SQLSTATE, constraint name,
+            // and driver error before this code ever sees it (that
+            // redaction happens inside `BusinessTransaction::execute`
+            // itself, at a boundary this consumer has no way to reach
+            // behind). The coarse class is still preserved below
+            // (`Rejected` -> `UserComponent`, `Infrastructure` ->
+            // `TransientInfrastructure`, `Cancelled` -> `Cancelled`), but
+            // root-cause detail within each class is not: e.g. unique
+            // violation vs. another rejected statement, or connection
+            // failure vs. another infrastructure failure. Transaction
+            // correctness (the row's chunk still rolls back correctly
+            // either way) is unaffected and independently verified in
+            // tests/rollback.rs; root-cause diagnosability through the
+            // public API is what's limited. Filed as
+            // luceat-lux-vestra/oxide-batch#220.
             transaction
                 .execute(statement)
                 .await

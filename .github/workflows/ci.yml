@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: csv-postgres
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
+  CSV_POSTGRES_TEST_DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: csv_postgres_ci
+          POSTGRES_PASSWORD: csv_postgres_ci
+          POSTGRES_DB: csv_postgres_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U csv_postgres_ci -d csv_postgres_ci"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: csv-postgres
+
+      - name: Format check
+        run: cargo fmt --check
+
+      # --locked everywhere below: this workload's whole reproducibility
+      # claim is "the committed Cargo.lock is what's actually built and
+      # tested" (spec: registry-source evidence in Cargo.lock). Without
+      # --locked, cargo can silently re-resolve and build against a newer
+      # dependency version than the one the lockfile (and this evidence)
+      # records.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --locked --all-targets
+
+      - name: No unguarded unwrap/expect on the production path
+        run: |
+          # The one documented exception: a fixed, compile-time-constant
+          # calendar date that cannot fail validation (src/generator.rs).
+          if grep -rnE '\.(unwrap|expect)\(' src/ \
+              | grep -v 'fixed calendar date is always valid'; then
+            echo "::error::found .unwrap()/.expect() outside the documented exception in src/"
+            exit 1
+          fi
+
+      - name: Migrate (OxideBatch metadata schema + business schema)
+        run: cargo run --locked -q -- migrate
+
+      - name: Integration tests (T1-T10, small CI-sized fixtures)
+        # --test-threads=1: several tests inspect global pg_stat_activity
+        # state or reset() the whole shared business table, both only safe
+        # when nothing else is concurrently touching the same database (see
+        # each such test's own doc comment). Rather than track exactly
+        # which tests that is here too and let it drift out of sync with
+        # README.md's own copy of the same list, the whole suite runs
+        # serialized.
+        run: cargo test --locked -- --test-threads=1
+
+      - name: Golden-path smoke (reset -> generate -> run -> verify)
+        run: |
+          set -euo pipefail
+          cargo run --locked -q -- reset
+          cargo run --locked -q -- generate --output /tmp/ci_smoke.csv --profile tiny --seed 42
+          cargo run --locked -q -- run --input /tmp/ci_smoke.csv --import-name ci_smoke --chunk-size 200
+          cargo run --locked -q -- verify --input /tmp/ci_smoke.csv
+
+  msrv:
+    # Verifies the declared rust-version (Cargo.toml) actually builds --
+    # the main `ci` job above only ever exercises whatever "stable" resolves
+    # to at run time, which had silently drifted ahead of the declared MSRV
+    # with nothing catching it. Build-only (no Postgres service): MSRV
+    # compilation is what's being checked here, not integration behavior,
+    # which is already covered on stable above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read declared rust-version
+        id: msrv
+        # Note: no explicit csv-postgres/ prefix -- the workflow-level
+        # `defaults.run.working-directory: csv-postgres` already applies
+        # here (confirmed the hard way: the first version of this step
+        # doubled the prefix to csv-postgres/csv-postgres/Cargo.toml).
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: csv-postgres
+
+      - name: Build at declared MSRV
+        working-directory: csv-postgres
+        run: cargo build --locked --all-targets

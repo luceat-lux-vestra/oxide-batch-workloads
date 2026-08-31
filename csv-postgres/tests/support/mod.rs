@@ -84,6 +84,15 @@ pub fn migrate() {
     run_ok(bin().arg("migrate"));
 }
 
+/// Truncates the whole business table. Callers that use this must not run
+/// concurrently with any other test touching `app_business.imported_customer`
+/// -- safe under this repository's documented `--test-threads=1` plus
+/// cargo's own default of running separate test binaries sequentially, not
+/// otherwise.
+pub fn reset() {
+    run_ok(bin().arg("reset"));
+}
+
 pub fn recover(import_name: &str, input: &std::path::Path) -> Output {
     run_ok(
         bin()
@@ -186,41 +195,6 @@ pub async fn latest_execution_status(pool: &PgPool, import_name: &str) -> Option
     .fetch_optional(pool)
     .await
     .expect("query latest execution status")
-}
-
-/// Like `canonical_digest_in_range`, but excludes `customer_id` *and*
-/// `email` from the hash: two datasets generated from the same seed at
-/// *different* `id_offset`s (as any two independent test runs sharing one
-/// business table must be) have identical `name`/`amount`/`created_at` for
-/// row N, but `email` is deliberately derived from `customer_id`
-/// (`generator::base_row`) and so is not offset-invariant by design. This
-/// digest lets a clean run and a crash/restart run -- which necessarily
-/// used different offsets -- be compared on genuinely offset-independent
-/// content (spec ss27), not just row counts.
-pub async fn content_digest_in_range(pool: &PgPool, id_offset: u64, rows: u64) -> String {
-    let low = id_offset as i64;
-    let high = (id_offset + rows) as i64;
-    let rows: Vec<(String, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT name, amount, created_at \
-         FROM app_business.imported_customer \
-         WHERE customer_id > $1 AND customer_id <= $2 \
-         ORDER BY customer_id",
-    )
-    .bind(low)
-    .bind(high)
-    .fetch_all(pool)
-    .await
-    .expect("select business rows for content digest");
-
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    for (name, amount, created_at) in &rows {
-        hasher.update(name.as_bytes());
-        hasher.update(amount.to_le_bytes());
-        hasher.update(created_at.to_rfc3339().as_bytes());
-        hasher.update([0xFFu8]);
-    }
-    format!("{:x}", hasher.finalize())
 }
 
 pub async fn canonical_digest_in_range(pool: &PgPool, id_offset: u64, rows: u64) -> String {

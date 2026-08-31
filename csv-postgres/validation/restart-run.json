@@ -1,0 +1,23 @@
+{
+  "scenario": "restart_run",
+  "import_name": "evidence_crash_run",
+  "recovery": "RecoveryRequest::mark_failed via 'recover' subcommand",
+  "restart_job_execution_status": "COMPLETED",
+  "this_attempt_only": {
+    "committed_read": 75000,
+    "committed_written": 75000,
+    "note": "rows this restart attempt itself newly processed (150 remaining chunks of 200 total), not the instance total"
+  },
+  "cumulative_after_restart": {
+    "read_count": 100000,
+    "commit_count": 200,
+    "note": "ob_step_execution's persisted total across the whole job instance's lineage (inherited + this attempt)"
+  },
+  "final_business_db_rows": 100000,
+  "expected_final_rows": 100000,
+  "runtime_seconds": 1.174,
+  "clean_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
+  "recovered_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
+  "full_content_digests_match": true,
+  "digest_note": "same exact input file, same customer_id range (business table reset between the clean and crash scenarios): this compares customer_id/name/email/amount/created_at in full, not an offset-invariant subset"
+}
