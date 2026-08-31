@@ -98,9 +98,12 @@ impl ItemWriter<CustomerRow> for CustomerRowWriter {
             // and driver error before this code ever sees it (that
             // redaction happens inside `BusinessTransaction::execute`
             // itself, at a boundary this consumer has no way to reach
-            // behind). A real PRIMARY KEY violation and a transient
-            // connection failure are both indistinguishable stable
-            // categories once mapped to `WriterError` below. Transaction
+            // behind). The coarse class is still preserved below
+            // (`Rejected` -> `UserComponent`, `Infrastructure` ->
+            // `TransientInfrastructure`, `Cancelled` -> `Cancelled`), but
+            // root-cause detail within each class is not: e.g. unique
+            // violation vs. another rejected statement, or connection
+            // failure vs. another infrastructure failure. Transaction
             // correctness (the row's chunk still rolls back correctly
             // either way) is unaffected and independently verified in
             // tests/rollback.rs; root-cause diagnosability through the
