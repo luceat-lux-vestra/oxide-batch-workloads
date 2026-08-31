@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OxideBatch framework issues
+    url: https://github.com/luceat-lux-vestra/oxide-batch/issues
+    about: Report framework/API defects here after reproducing them as an external consumer.
