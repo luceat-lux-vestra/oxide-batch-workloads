@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: csv-postgres
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
+  CSV_POSTGRES_TEST_DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: csv_postgres_ci
+          POSTGRES_PASSWORD: csv_postgres_ci
+          POSTGRES_DB: csv_postgres_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U csv_postgres_ci -d csv_postgres_ci"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: csv-postgres
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: No unguarded unwrap/expect on the production path
+        run: |
+          # The one documented exception: a fixed, compile-time-constant
+          # calendar date that cannot fail validation (src/generator.rs).
+          if grep -rnE '\.(unwrap|expect)\(' src/ \
+              | grep -v 'fixed calendar date is always valid'; then
+            echo "::error::found .unwrap()/.expect() outside the documented exception in src/"
+            exit 1
+          fi
+
+      - name: Migrate (OxideBatch metadata schema + business schema)
+        run: cargo run -q -- migrate
+
+      - name: Integration tests (T1-T10, small CI-sized fixtures)
+        # --test-threads=1: one test (clean_import's connection-leak check)
+        # inspects global pg_stat_activity/pg_locks state, which is only a
+        # meaningful signal when nothing else is concurrently mid-transaction
+        # against the same database. See its doc comment.
+        run: cargo test -- --test-threads=1
+
+      - name: Golden-path smoke (reset -> generate -> run -> verify)
+        run: |
+          set -euo pipefail
+          cargo run -q -- reset
+          cargo run -q -- generate --output /tmp/ci_smoke.csv --profile tiny --seed 42
+          cargo run -q -- run --input /tmp/ci_smoke.csv --import-name ci_smoke --chunk-size 200
+          cargo run -q -- verify --input /tmp/ci_smoke.csv

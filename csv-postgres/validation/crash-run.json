@@ -1,0 +1,13 @@
+{
+  "scenario": "crash_run",
+  "dataset": {"rows": 100000, "seed": 20260831, "id_offset": 2000000, "sha256": "dbcc075089669ccceb8e189b2d619a0075136d48d754b69f4cfa28f81482dac2"},
+  "chunk_size": 500,
+  "import_name": "evidence_crash_run",
+  "failure_injection": {"fail_at": "chunk:50", "failure_mode": "after-business-commit", "hard_crash": true},
+  "process_exit_code": 134,
+  "process_terminated_by_signal": 6,
+  "job_execution_status_after_crash": "STARTED",
+  "job_execution_exit_code_after_crash": "UNKNOWN",
+  "business_db_rows_after_crash": 25000,
+  "expected_rows_from_50_committed_chunks": 25000
+}

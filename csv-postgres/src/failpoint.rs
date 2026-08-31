@@ -189,13 +189,17 @@ impl<I: Send + Sync, W: ItemWriter<I>> ItemWriter<I> for FailingWriter<W> {
         if targeted && self.mode == FailureMode::BeforeWrite {
             self.fired.store(true, Ordering::SeqCst);
             maybe_abort(self.hard_crash, "writer before-write");
-            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
+            return Err(WriterError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
         }
         let outcome = self.inner.write(items, context).await?;
         if targeted && self.mode == FailureMode::DuringWrite {
             self.fired.store(true, Ordering::SeqCst);
             maybe_abort(self.hard_crash, "writer during-write");
-            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
+            return Err(WriterError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
         }
         Ok(outcome)
     }

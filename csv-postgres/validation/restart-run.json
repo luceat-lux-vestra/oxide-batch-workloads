@@ -1,0 +1,22 @@
+{
+  "scenario": "restart_run",
+  "import_name": "evidence_crash_run",
+  "recovery": "RecoveryRequest::mark_failed via 'recover' subcommand",
+  "restart_job_execution_status": "COMPLETED",
+  "this_attempt_only": {
+    "committed_read": 75000,
+    "committed_written": 75000,
+    "note": "rows this restart attempt itself newly processed (50 remaining chunks), not the instance total"
+  },
+  "cumulative_after_restart": {
+    "read_count": 100000,
+    "commit_count": 200,
+    "note": "ob_step_execution's persisted total across the whole job instance's lineage (inherited + this attempt)"
+  },
+  "final_business_db_rows": 100000,
+  "expected_final_rows": 100000,
+  "runtime_seconds": 1.182,
+  "clean_run_content_digest_md5": "e3a864e6a128352114f49bd937df58a6",
+  "recovered_run_content_digest_md5": "e3a864e6a128352114f49bd937df58a6",
+  "content_digests_match": true
+}

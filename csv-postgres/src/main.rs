@@ -106,8 +106,17 @@ enum Command {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    // Defaults to info (per-job/per-step/per-chunk progress, never
+    // per-row) so useful diagnostics are visible without an operator
+    // needing to know to set RUST_LOG first; still fully overridable.
+    // Written to stderr (tracing_subscriber's default writer is stdout,
+    // which would otherwise interleave with e.g. `verify`'s JSON output).
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
+        .with_ansi(false)
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();

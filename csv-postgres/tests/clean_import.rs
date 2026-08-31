@@ -63,6 +63,12 @@ async fn clean_import_lands_every_row_exactly_once_with_correct_values() {
     assert_eq!(digest_a, digest_b);
 }
 
+/// Inspects global `pg_stat_activity` state, so it is only a meaningful
+/// signal with `--test-threads=1` (the repository's documented default):
+/// under real concurrency, another test's own in-flight import can
+/// legitimately be idle-in-transaction for a moment between two statements
+/// of the same open chunk transaction, which this check cannot distinguish
+/// from an actual leak.
 #[tokio::test]
 async fn clean_import_leaves_no_open_transaction_or_extra_connections() {
     support::migrate();

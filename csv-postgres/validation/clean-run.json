@@ -1,0 +1,11 @@
+{
+  "scenario": "clean_run",
+  "dataset": {"rows": 100000, "seed": 20260831, "id_offset": 1, "file_size_bytes": 7746930, "sha256": "8a748d720051a49a8ecceeb4e02c16afb58362f789457764539b36bfaa3e83fa"},
+  "chunk_size": 500,
+  "import_name": "evidence_clean_run",
+  "job_execution_status": "COMPLETED",
+  "chunks_committed": 200,
+  "db_row_count": 100000,
+  "final_state_digest_sha256": "316f994528c803161b52c2026e6e16bca32f9df4d98e87955c027133e4ee006f",
+  "runtime_seconds": 1.567
+}

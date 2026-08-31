@@ -13,7 +13,13 @@ services:
       timeout: 3s
       retries: 20
     volumes:
-      - csv_postgres_workload_data:/var/lib/postgresql/data
+      # PostgreSQL 18's official image expects a single mount at
+      # /var/lib/postgresql (not .../data): it now lays out data in a
+      # pg_ctlcluster-style, major-version-specific subdirectory. Mounting
+      # at .../data directly fails to start (confirmed against this exact
+      # image: "PostgreSQL data in: /var/lib/postgresql/data (unused
+      # mount/volume)").
+      - csv_postgres_workload_data:/var/lib/postgresql
 
 volumes:
   csv_postgres_workload_data:
