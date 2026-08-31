@@ -40,6 +40,10 @@ enum Command {
         /// 1-based row index to write with a non-numeric amount field.
         #[arg(long)]
         inject_bad_amount_at: Option<u64>,
+        /// Added to every generated customer_id, so independent test runs
+        /// sharing one business table never collide on the primary key.
+        #[arg(long, default_value_t = 0)]
+        id_offset: u64,
     },
     /// Run OxideBatch's own PostgreSQL metadata migrations plus this
     /// workload's business-table migration.
@@ -116,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
             inject_duplicate_at,
             inject_malformed_at,
             inject_bad_amount_at,
+            id_offset,
         } => {
             let rows = rows.unwrap_or_else(|| profile.default_rows());
             let manifest = generator::generate(
@@ -125,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
                 inject_duplicate_at,
                 inject_malformed_at,
                 inject_bad_amount_at,
+                id_offset,
             )?;
             let sidecar = output.with_extension("manifest.json");
             std::fs::write(&sidecar, serde_json::to_string_pretty(&manifest)?)?;
@@ -150,7 +156,10 @@ async fn main() -> anyhow::Result<()> {
             hard_crash,
             idempotent_writes,
         } => {
-            let fail_at = fail_at.as_deref().map(failpoint::FailAt::parse).transpose()?;
+            let fail_at = fail_at
+                .as_deref()
+                .map(failpoint::FailAt::parse)
+                .transpose()?;
             job::run(
                 &database_url,
                 &input,
@@ -168,7 +177,10 @@ async fn main() -> anyhow::Result<()> {
             import_name,
             input,
         } => job::recover(&database_url, &import_name, &input).await,
-        Command::Verify { database_url, input } => verify::verify(&database_url, &input).await,
+        Command::Verify {
+            database_url,
+            input,
+        } => verify::verify(&database_url, &input).await,
         Command::Reset { database_url } => job::reset(&database_url).await,
     }
 }

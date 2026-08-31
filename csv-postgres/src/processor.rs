@@ -34,8 +34,13 @@ impl oxide_batch::ItemProcessor<DelimitedRecord, CustomerRow> for CustomerRowPro
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<CustomerRow>, ProcessorError> {
         if item.len() != EXPECTED_FIELD_COUNT {
-            tracing::warn!(field_count = item.len(), "malformed row: unexpected field count");
-            return Err(ProcessorError::with_category(FailureCategory::UserComponent));
+            tracing::warn!(
+                field_count = item.len(),
+                "malformed row: unexpected field count"
+            );
+            return Err(ProcessorError::with_category(
+                FailureCategory::UserComponent,
+            ));
         }
         let reject = |field: &'static str| {
             tracing::warn!(field, "malformed row: unparseable field");
@@ -55,9 +60,8 @@ impl oxide_batch::ItemProcessor<DelimitedRecord, CustomerRow> for CustomerRowPro
             .parse()
             .map_err(|_| reject("amount"))?;
         let created_at_field = item.get(4).ok_or_else(|| reject("created_at"))?;
-        let created_at: DateTime<Utc> = created_at_field
-            .parse()
-            .map_err(|_| reject("created_at"))?;
+        let created_at: DateTime<Utc> =
+            created_at_field.parse().map_err(|_| reject("created_at"))?;
 
         Ok(ProcessOutcome::Item(CustomerRow {
             customer_id,

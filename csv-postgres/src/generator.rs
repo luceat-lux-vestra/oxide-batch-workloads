@@ -64,7 +64,9 @@ impl std::str::FromStr for Profile {
             "tiny" => Ok(Self::Tiny),
             "normal" => Ok(Self::Normal),
             "stress" => Ok(Self::Stress),
-            other => Err(format!("unknown profile '{other}' (expected tiny|normal|stress)")),
+            other => Err(format!(
+                "unknown profile '{other}' (expected tiny|normal|stress)"
+            )),
         }
     }
 }
@@ -100,20 +102,28 @@ fn quote_csv_field(field: &str) -> String {
     }
 }
 
-fn base_row(rng: &mut ChaCha8Rng, row_index: u64) -> (u64, String, String, i64, DateTime<Utc>) {
-    let customer_id = row_index;
+fn base_row(
+    rng: &mut ChaCha8Rng,
+    row_index: u64,
+    id_offset: u64,
+) -> (u64, String, String, i64, DateTime<Utc>) {
+    let customer_id = id_offset + row_index;
     let first_names = [
         "Alice", "Bob", "Carol", "Dave", "Erin", "Frank", "Grace", "Heidi", "Ivan", "Judy",
     ];
     let last_names = [
-        "Smith", "Johnson", "Lee", "Brown", "Garcia", "Miller", "Davis", "Wilson", "Moore", "Taylor",
+        "Smith", "Johnson", "Lee", "Brown", "Garcia", "Miller", "Davis", "Wilson", "Moore",
+        "Taylor",
     ];
     let first = first_names[(row_index as usize) % first_names.len()];
     let last = last_names[rng.gen_range(0..last_names.len())];
     let name = format!("{first} {last}");
     let email = format!("customer{customer_id}@example.test");
     let amount = rng.gen_range(100..1_000_000);
-    let base = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().expect("fixed calendar date is always valid");
+    let base = Utc
+        .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
+        .single()
+        .expect("fixed calendar date is always valid");
     let created_at = base + Duration::seconds(row_index as i64);
     (customer_id, name, email, amount, created_at)
 }
@@ -138,7 +148,11 @@ fn write_row(
         }
         RowVariant::MalformedFieldCount => {
             // Missing the trailing created_at field entirely.
-            writeln!(out, "{customer_id},{},{email},{amount}", quote_csv_field(name))
+            writeln!(
+                out,
+                "{customer_id},{},{email},{amount}",
+                quote_csv_field(name)
+            )
         }
         RowVariant::MalformedAmount => {
             writeln!(
@@ -184,6 +198,7 @@ pub fn generate(
     duplicate_at: Option<u64>,
     malformed_at: Option<u64>,
     bad_amount_at: Option<u64>,
+    id_offset: u64,
 ) -> std::io::Result<GenerateManifest> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let edge_cases = edge_case_plan(rows);
@@ -192,7 +207,7 @@ pub fn generate(
     let mut last_row: Option<(u64, String, String, i64, DateTime<Utc>)> = None;
 
     for row_index in 1..=rows {
-        let row = base_row(&mut rng, row_index);
+        let row = base_row(&mut rng, row_index, id_offset);
         let variant = edge_cases
             .iter()
             .find(|(at, _)| *at == row_index)
@@ -209,7 +224,15 @@ pub fn generate(
 
         if duplicate_at == Some(row_index) {
             if let Some((id, name, email, amount, created_at)) = &last_row {
-                write_row(&mut writer, RowVariant::DuplicateKey, *id, name, email, *amount, *created_at)?;
+                write_row(
+                    &mut writer,
+                    RowVariant::DuplicateKey,
+                    *id,
+                    name,
+                    email,
+                    *amount,
+                    *created_at,
+                )?;
             }
         }
         last_row = Some(row);

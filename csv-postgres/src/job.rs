@@ -9,21 +9,23 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 
-use oxide_batch::item_components::{DelimitedDialect, DelimitedRecord, delimited_file_reader};
+use oxide_batch::item_components::{delimited_file_reader, DelimitedDialect, DelimitedRecord};
 use oxide_batch::{
-    Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
-    ChunkDeliveryMode, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
-    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts, FailureCategory,
-    FailureId, InFlightPolicy, JobLauncher, JobName, JobParameter, JobParameters, JobRepository,
-    NoopChunkCompletion, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
-    PostgresChunkStateProvider,
-    PostgresChunkTransactionManager, PostgresConfig, PostgresJobRepository, PostgresMigrator,
-    RecoveryRequest, SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
-    StopSource, SystemClock, TlsMode,
+    Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
+    ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
+    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
+    FailureCategory, FailureId, InFlightPolicy, JobLauncher, JobName, JobParameter, JobParameters,
+    JobRepository, NoopChunkCompletion, ParameterName, ParameterRole, ParameterValue,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresJobRepository, PostgresMigrator, RecoveryRequest,
+    SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource,
+    SystemClock, TlsMode,
 };
 use sha2::{Digest, Sha256};
 
-use crate::failpoint::{FailAt, FailingReader, FailingTransactionManager, FailingWriter, FailureMode};
+use crate::failpoint::{
+    FailAt, FailingReader, FailingTransactionManager, FailingWriter, FailureMode,
+};
 use crate::processor::CustomerRowProcessor;
 use crate::writer::CustomerRowWriter;
 
@@ -88,7 +90,9 @@ fn state_provider() -> Arc<dyn PostgresChunkStateProvider> {
     })
 }
 
-fn component_revisions(namespace: ComponentStreamIdentity) -> anyhow::Result<ChunkComponentRevisions> {
+fn component_revisions(
+    namespace: ComponentStreamIdentity,
+) -> anyhow::Result<ChunkComponentRevisions> {
     let restart = ChunkRestartContract::new(
         StateSchemaId::new(CHECKPOINT_SCHEMA)?,
         StateSchemaVersion::new(1)?,
@@ -104,7 +108,10 @@ fn component_revisions(namespace: ComponentStreamIdentity) -> anyhow::Result<Chu
         ComponentRevision::new("csv-postgres.checkpoint-v1")?,
         restart,
     )
-    .with_stream_revision(namespace, ComponentRevision::new("csv-postgres.delimited-reader-stream-v1")?))
+    .with_stream_revision(
+        namespace,
+        ComponentRevision::new("csv-postgres.delimited-reader-stream-v1")?,
+    ))
 }
 
 fn sha256_hex(bytes: &[u8]) -> [u8; 32] {
@@ -141,8 +148,11 @@ pub async fn run(
     tracing::info!(import_name, input = %input.display(), input_sha256, chunk_size, "starting run");
 
     let namespace = ComponentStreamIdentity::new(READER_NAMESPACE)?;
-    let (raw_reader, stream, contract) =
-        delimited_file_reader::<DelimitedRecord>(input, DelimitedDialect::csv(), namespace.clone())?;
+    let (raw_reader, stream, contract) = delimited_file_reader::<DelimitedRecord>(
+        input,
+        DelimitedDialect::csv(),
+        namespace.clone(),
+    )?;
 
     let (fail_at_row, fail_at_chunk) = match fail_at {
         Some(FailAt::Row(n)) => (n, 0),
@@ -166,7 +176,8 @@ pub async fn run(
         Arc::clone(&fired),
     );
 
-    let raw_transactions = PostgresChunkTransactionManager::new(repository.clone(), state_provider());
+    let raw_transactions =
+        PostgresChunkTransactionManager::new(repository.clone(), state_provider());
     let transactions = Arc::new(FailingTransactionManager::new(
         raw_transactions,
         Arc::clone(&chunk_ordinal),
@@ -197,16 +208,24 @@ pub async fn run(
     let parameters = JobParameters::try_from_iter([
         (
             ParameterName::new("import_name")?,
-            JobParameter::new(ParameterValue::string(import_name)?, ParameterRole::Identifying),
+            JobParameter::new(
+                ParameterValue::string(import_name)?,
+                ParameterRole::Identifying,
+            ),
         ),
         (
             ParameterName::new("input_sha256")?,
-            JobParameter::new(ParameterValue::string(&input_sha256)?, ParameterRole::Identifying),
+            JobParameter::new(
+                ParameterValue::string(&input_sha256)?,
+                ParameterRole::Identifying,
+            ),
         ),
     ])?;
     let (_stop_source, stop_token) = StopSource::new();
 
-    let report = launcher.launch_chunk(&mut chunk_job, &parameters, &stop_token).await?;
+    let report = launcher
+        .launch_chunk(&mut chunk_job, &parameters, &stop_token)
+        .await?;
     let execution = report.launch().job_execution();
     tracing::info!(
         job_execution_id = %execution.id(),
@@ -221,7 +240,16 @@ pub async fn run(
             "chunk evidence"
         );
     }
+    let status = execution.metadata().status();
     repository.close().await?;
+    // launch_chunk returning Ok only means the launcher's own future
+    // completed; a component failure is persisted, not surfaced as Err
+    // (see JobLauncher::launch's doc comment). A caller relying on process
+    // exit code (a shell script, CI, this workload's own tests) needs a
+    // nonzero exit for a non-successful terminal job status.
+    if status != oxide_batch::BatchStatus::Completed {
+        anyhow::bail!("job execution ended with status {status}, not Completed");
+    }
     Ok(())
 }
 
@@ -235,11 +263,17 @@ pub async fn recover(database_url: &str, import_name: &str, input: &Path) -> any
     let parameters = JobParameters::try_from_iter([
         (
             ParameterName::new("import_name")?,
-            JobParameter::new(ParameterValue::string(import_name)?, ParameterRole::Identifying),
+            JobParameter::new(
+                ParameterValue::string(import_name)?,
+                ParameterRole::Identifying,
+            ),
         ),
         (
             ParameterName::new("input_sha256")?,
-            JobParameter::new(ParameterValue::string(&input_sha256)?, ParameterRole::Identifying),
+            JobParameter::new(
+                ParameterValue::string(&input_sha256)?,
+                ParameterRole::Identifying,
+            ),
         ),
     ])?;
     let key = oxide_batch::JobInstanceKey::new(JobName::new(import_name)?, &parameters);
@@ -268,7 +302,8 @@ pub async fn recover(database_url: &str, import_name: &str, input: &Path) -> any
         );
     }
 
-    let evidence_digest = sha256_hex(format!("csv-postgres-operator-recovery:{import_name}").as_bytes());
+    let evidence_digest =
+        sha256_hex(format!("csv-postgres-operator-recovery:{import_name}").as_bytes());
     let request = RecoveryRequest::mark_failed(
         execution.version(),
         "CSV_POSTGRES_WORKLOAD_HARD_CRASH_RECOVERY",

@@ -18,7 +18,6 @@
 //! standalone-friendly defaults, which would otherwise silently no-op this
 //! injection against the real launch path.
 
-use std::future::Future;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -129,23 +128,18 @@ impl<R> FailingReader<R> {
     }
 }
 
-impl<I: Send + Sync, R: ItemReader<I>> ItemReader<I> for FailingReader<R> {
-    fn read<'a>(
-        &'a mut self,
-        context: ReadContext<'a>,
-    ) -> impl Future<Output = Result<ReadOutcome<I>, ReaderError>> + Send + 'a {
-        async move {
-            let outcome = self.inner.read(context).await?;
-            if matches!(outcome, ReadOutcome::Item(_)) {
-                let ordinal = self.row_ordinal.fetch_add(1, Ordering::SeqCst) + 1;
-                if ordinal == self.fail_at_row {
-                    self.fired.store(true, Ordering::SeqCst);
-                    maybe_abort(self.hard_crash, "reader row target");
-                    return Err(ReaderError::with_category(FailureCategory::UserComponent));
-                }
+impl<I: Send + Sync + 'static, R: ItemReader<I>> ItemReader<I> for FailingReader<R> {
+    async fn read(&mut self, context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        let outcome = self.inner.read(context).await?;
+        if matches!(outcome, ReadOutcome::Item(_)) {
+            let ordinal = self.row_ordinal.fetch_add(1, Ordering::SeqCst) + 1;
+            if ordinal == self.fail_at_row {
+                self.fired.store(true, Ordering::SeqCst);
+                maybe_abort(self.hard_crash, "reader row target");
+                return Err(ReaderError::with_category(FailureCategory::UserComponent));
             }
-            Ok(outcome)
         }
+        Ok(outcome)
     }
 }
 
@@ -185,27 +179,25 @@ impl<W> FailingWriter<W> {
 }
 
 impl<I: Send + Sync, W: ItemWriter<I>> ItemWriter<I> for FailingWriter<W> {
-    fn write<'a>(
+    async fn write<'a>(
         &'a self,
         items: &'a [I],
         context: WriteContext<'a>,
-    ) -> impl Future<Output = Result<WriteOutcome, WriterError>> + Send + 'a {
-        async move {
-            let ordinal = self.chunk_ordinal.load(Ordering::SeqCst);
-            let targeted = ordinal == self.fail_at_chunk;
-            if targeted && self.mode == FailureMode::BeforeWrite {
-                self.fired.store(true, Ordering::SeqCst);
-                maybe_abort(self.hard_crash, "writer before-write");
-                return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
-            }
-            let outcome = self.inner.write(items, context).await?;
-            if targeted && self.mode == FailureMode::DuringWrite {
-                self.fired.store(true, Ordering::SeqCst);
-                maybe_abort(self.hard_crash, "writer during-write");
-                return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
-            }
-            Ok(outcome)
+    ) -> Result<WriteOutcome, WriterError> {
+        let ordinal = self.chunk_ordinal.load(Ordering::SeqCst);
+        let targeted = ordinal == self.fail_at_chunk;
+        if targeted && self.mode == FailureMode::BeforeWrite {
+            self.fired.store(true, Ordering::SeqCst);
+            maybe_abort(self.hard_crash, "writer before-write");
+            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
         }
+        let outcome = self.inner.write(items, context).await?;
+        if targeted && self.mode == FailureMode::DuringWrite {
+            self.fired.store(true, Ordering::SeqCst);
+            maybe_abort(self.hard_crash, "writer during-write");
+            return Err(WriterError::with_category(FailureCategory::TransientInfrastructure));
+        }
+        Ok(outcome)
     }
 }
 
@@ -328,7 +320,9 @@ impl<M: ChunkTransactionManager> FailingTransactionManager<M> {
 }
 
 impl<M: ChunkTransactionManager> ChunkTransactionManager for FailingTransactionManager<M> {
-    fn begin(&self) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
         self.wrap(self.inner.begin())
     }
 

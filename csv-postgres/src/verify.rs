@@ -26,9 +26,10 @@ pub async fn verify(database_url: &str, input: &Path) -> anyhow::Result<()> {
         .connect(database_url)
         .await?;
 
-    let db_row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_business.imported_customer")
-        .fetch_one(&pool)
-        .await?;
+    let db_row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM app_business.imported_customer")
+            .fetch_one(&pool)
+            .await?;
 
     let rows: Vec<(i64, String, String, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT customer_id, name, email, amount, created_at \
