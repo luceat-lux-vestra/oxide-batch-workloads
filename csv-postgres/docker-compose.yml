@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: oxide_batch_workload
+      POSTGRES_PASSWORD: oxide_batch_workload
+      POSTGRES_DB: csv_postgres_workload
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oxide_batch_workload -d csv_postgres_workload"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - csv_postgres_workload_data:/var/lib/postgresql/data
+
+volumes:
+  csv_postgres_workload_data:
