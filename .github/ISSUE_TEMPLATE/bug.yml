@@ -1,0 +1,62 @@
+name: Workload bug
+description: Report a reproducible defect in workload code or validation behavior
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report suspected security vulnerabilities publicly. See SECURITY.md.
+        Framework defects belong in luceat-lux-vestra/oxide-batch after a minimal reproducer is established.
+  - type: input
+    id: workload
+    attributes:
+      label: Workload
+      placeholder: csv-postgres
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Workload commit
+      description: Exact commit SHA where the problem reproduces.
+    validations:
+      required: true
+  - type: input
+    id: oxidebatch
+    attributes:
+      label: OxideBatch release
+      placeholder: 0.6.0
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal deterministic commands, dataset/seed, failure point, and environment where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: durable
+    attributes:
+      label: Durable/business state
+      description: For transaction/restart defects, include checkpoint/execution state and final business state without sensitive row contents.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust/toolchain, OS, database version, container/runtime as applicable.
+    validations:
+      required: true
