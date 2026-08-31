@@ -51,7 +51,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@7792a740c378f4c06d6f01a55c3c4cbe4e0b2401 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: csv-postgres
 
@@ -107,7 +107,7 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.version }}
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@7792a740c378f4c06d6f01a55c3c4cbe4e0b2401 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: csv-postgres
 
