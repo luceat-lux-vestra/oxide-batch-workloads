@@ -100,8 +100,12 @@ jobs:
 
       - name: Read declared rust-version
         id: msrv
+        # Note: no explicit csv-postgres/ prefix -- the workflow-level
+        # `defaults.run.working-directory: csv-postgres` already applies
+        # here (confirmed the hard way: the first version of this step
+        # doubled the prefix to csv-postgres/csv-postgres/Cargo.toml).
         run: |
-          version=$(grep -m1 '^rust-version' csv-postgres/Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust ${{ steps.msrv.outputs.version }}
