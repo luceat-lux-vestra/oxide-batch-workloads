@@ -205,12 +205,15 @@ Two separate claims, kept separate on purpose:
   value-redacted by OxideBatch itself — the framework's own PostgreSQL
   adapter discards the `SQLSTATE`, constraint name, and driver error
   *before* any consumer code (including `src/writer.rs`'s
-  `CustomerRowWriter`) ever sees the failure. A real `PRIMARY KEY`
-  violation and a transient connection failure are both indistinguishable
-  stable categories at this workload's boundary — there is no lower-level
-  public extension point in 0.6.0 that would let a consumer recover the
-  discarded detail, so no consumer-side workaround is possible or
-  attempted here. Filed as
+  `CustomerRowWriter`) ever sees the failure. The coarse failure class is
+  preserved (`Rejected` vs. `Infrastructure` vs. `Cancelled`), but the
+  root cause within that class is not: for example, a unique violation is
+  indistinguishable from another rejected statement, and a connection
+  failure from another infrastructure failure, because SQLSTATE, constraint
+  name, and driver/source detail are unavailable at this boundary. There is
+  no lower-level public extension point in 0.6.0 that would let a consumer
+  recover the discarded detail, so no consumer-side workaround is possible
+  or attempted here. Filed as
   [luceat-lux-vestra/oxide-batch#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220).
 
 ## Findings against OxideBatch 0.6.0
