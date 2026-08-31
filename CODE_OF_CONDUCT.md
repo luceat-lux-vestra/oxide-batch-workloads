@@ -31,9 +31,14 @@ diverse, inclusive, and healthy community.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported privately through the contact method in `SECURITY.md`, with
-`Code of Conduct` in the subject or report title. Reports will be reviewed
-promptly and handled with respect for the reporter's privacy and safety.
+reported privately by emailing **heathkimdev@gmail.com** with
+`Code of Conduct` in the subject line. Reports will be reviewed promptly and
+handled with respect for the reporter's privacy and safety.
+
+This is a distinct channel from `SECURITY.md`'s vulnerability-reporting
+process. Do not use GitHub Security Advisories / private vulnerability
+reporting for Code of Conduct reports, and do not use this email address for
+security vulnerabilities.
 
 Project maintainers may remove, edit, or reject comments, commits, code, issues,
 and other contributions that violate this Code of Conduct, and may temporarily
