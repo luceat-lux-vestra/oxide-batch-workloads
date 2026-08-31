@@ -4,14 +4,20 @@
 
 mod support;
 
-use support::{
-    business_row_count_in_range, canonical_digest_in_range, latest_execution_status,
-    GenerateOptions,
-};
+use support::{business_row_count_in_range, latest_execution_status, GenerateOptions};
 
+/// `verify` compares the *whole* business table against `input` (it has no
+/// range scoping -- a real deployment's table only ever holds its own
+/// data), so this test resets the table first: otherwise another test's
+/// rows sharing this suite's table (each isolated only by its own
+/// `id_offset` range, see `tests/support`) would make a correct import
+/// look like a mismatch. Depends on serialized test execution, same as
+/// `clean_import_leaves_no_open_transaction_or_extra_connections` and
+/// `restart.rs`'s content-equivalence test.
 #[tokio::test]
 async fn clean_import_lands_every_row_exactly_once_with_correct_values() {
     support::migrate();
+    support::reset();
     let dataset = support::generate(GenerateOptions {
         rows: 500,
         label: "clean",
@@ -43,24 +49,82 @@ async fn clean_import_lands_every_row_exactly_once_with_correct_values() {
     assert_eq!(status, "COMPLETED");
     assert_eq!(exit_code, "COMPLETED");
 
-    let expected_customer_id = (dataset.id_offset + 1) as i64;
-    let row: (String, String, i64) = sqlx::query_as(
-        "SELECT name, email, amount FROM app_business.imported_customer WHERE customer_id = $1",
-    )
-    .bind(expected_customer_id)
-    .fetch_one(&pool)
-    .await
-    .expect("first generated row must exist");
-    assert!(row.0.contains(' '), "generated name has first+last name");
-    assert!(row.1.ends_with("@example.test"));
-    assert!(row.2 >= 100 && row.2 < 1_000_000);
+    // Real correctness proof, not a spot-check: `verify` independently
+    // re-parses the source CSV with a real CSV parser (so the generator's
+    // own quoted-comma / escaped-quote edge-case rows, ss8, are handled
+    // correctly, not split naively on ','), computes its own row count and
+    // full-content digest, and compares them against the database's --
+    // failing closed (nonzero exit) on any mismatch. Every value in every
+    // row is covered, not just the first row's name/email/amount.
+    support::run_ok(
+        support::bin()
+            .arg("verify")
+            .arg("--input")
+            .arg(&dataset.path),
+    );
+}
 
-    // Digest is deterministic for a fixed seed/id_offset/row-count: recomputing
-    // it here would just restate canonical_digest_in_range's own logic, so the
-    // real assertion is that it doesn't panic and is stable across two reads.
-    let digest_a = canonical_digest_in_range(&pool, dataset.id_offset, dataset.rows).await;
-    let digest_b = canonical_digest_in_range(&pool, dataset.id_offset, dataset.rows).await;
-    assert_eq!(digest_a, digest_b);
+/// Negative control for the positive test above: if `verify` is ever
+/// weakened back into something that can't actually detect wrong content
+/// (e.g. counting rows without comparing values), this must start failing.
+/// Corrupts one already-imported row directly in the database (bypassing
+/// the application entirely) and asserts `verify` rejects it.
+#[tokio::test]
+async fn verify_fails_closed_when_a_database_value_is_corrupted() {
+    support::migrate();
+    support::reset();
+    let dataset = support::generate(GenerateOptions {
+        rows: 50,
+        label: "verify-negative",
+        ..Default::default()
+    });
+    let import_name = support::unique_name("verify_negative");
+
+    support::run_ok(
+        support::bin()
+            .arg("run")
+            .arg("--input")
+            .arg(&dataset.path)
+            .arg("--import-name")
+            .arg(&import_name)
+            .arg("--chunk-size")
+            .arg("50"),
+    );
+
+    // A clean, unmutated import must verify successfully first, so a
+    // failure below is attributable to the corruption, not to some other
+    // pre-existing problem.
+    support::run_ok(
+        support::bin()
+            .arg("verify")
+            .arg("--input")
+            .arg(&dataset.path),
+    );
+
+    let pool = support::pool().await;
+    let corrupted_customer_id = (dataset.id_offset + 1) as i64;
+    sqlx::query("UPDATE app_business.imported_customer SET name = $1 WHERE customer_id = $2")
+        .bind("CORRUPTED-BY-TEST")
+        .bind(corrupted_customer_id)
+        .execute(&pool)
+        .await
+        .expect("corrupt one row directly in the database");
+
+    let output = support::bin()
+        .arg("verify")
+        .arg("--input")
+        .arg(&dataset.path)
+        .output()
+        .expect("spawn csv-postgres");
+    assert!(
+        !output.status.success(),
+        "verify must fail closed against database content that no longer matches the source CSV"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("digest"),
+        "failure should be attributable to a content mismatch, got: {stderr}"
+    );
 }
 
 /// Inspects global `pg_stat_activity` state, so it is only a meaningful

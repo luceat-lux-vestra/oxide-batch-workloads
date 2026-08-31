@@ -96,8 +96,8 @@ enum Command {
         #[arg(long)]
         input: PathBuf,
     },
-    /// Drop and recreate the business table (never touches OxideBatch's own
-    /// `oxide_batch` schema).
+    /// Truncates the business table (never drops it, never touches
+    /// OxideBatch's own `oxide_batch` schema).
     Reset {
         #[arg(long, env = "DATABASE_URL")]
         database_url: String,

@@ -24,7 +24,7 @@ DATA="$(mktemp -d)"
 CHUNK_SIZE=500
 FAIL_AT_CHUNK=50
 
-cargo build --release --quiet
+cargo build --locked --release --quiet
 
 psql_scalar() {
   psql "$DATABASE_URL" -t -A -c "$1"
@@ -64,11 +64,15 @@ CLEAN_RUNTIME=$(python3 -c "print(round($CLEAN_END - $CLEAN_START, 3))")
 CLEAN_VERIFY=$("$BIN" verify --input "$DATA/dataset.csv")
 CLEAN_STATUS=$(psql_scalar "SELECT e.status FROM oxide_batch.ob_job_execution e JOIN oxide_batch.ob_job_instance i ON i.id = e.job_instance_id WHERE i.job_name = '$CLEAN_IMPORT' ORDER BY e.attempt DESC LIMIT 1;")
 CLEAN_COMMIT_COUNT=$(psql_scalar "SELECT s.commit_count FROM oxide_batch.ob_step_execution s JOIN oxide_batch.ob_job_execution e ON e.id = s.job_execution_id JOIN oxide_batch.ob_job_instance i ON i.id = e.job_instance_id WHERE i.job_name = '$CLEAN_IMPORT' ORDER BY e.attempt DESC LIMIT 1;")
-# Full-row content digest (customer_id, name, email, amount, created_at):
-# saved now, before the business table is reset for the crash scenario, so
-# the restart phase below can compare against it directly.
-CLEAN_DIGEST=$(python3 -c "import json;print(json.loads('''$CLEAN_VERIFY''')['canonical_digest_sha256'])")
+# `verify` independently re-parses the source CSV (real CSV parser) and
+# compares it against the database's own content -- row count and a
+# full-content digest (customer_id, name, email, amount, created_at) --
+# already failing closed (nonzero exit, caught by `set -e` above) on any
+# mismatch. Saved now, before the business table is reset for the crash
+# scenario, so the restart phase below can compare against it directly.
+CLEAN_SOURCE_ROWS=$(python3 -c "import json;print(json.loads('''$CLEAN_VERIFY''')['source_rows'])")
 CLEAN_DBROWS=$(python3 -c "import json;print(json.loads('''$CLEAN_VERIFY''')['db_row_count'])")
+CLEAN_DIGEST=$(python3 -c "import json;print(json.loads('''$CLEAN_VERIFY''')['db_digest_sha256'])")
 
 cat > "$OUT/clean-run.json" <<EOF
 {
@@ -78,8 +82,10 @@ cat > "$OUT/clean-run.json" <<EOF
   "import_name": "$CLEAN_IMPORT",
   "job_execution_status": "$CLEAN_STATUS",
   "chunks_committed": $CLEAN_COMMIT_COUNT,
+  "source_rows": $CLEAN_SOURCE_ROWS,
   "db_row_count": $CLEAN_DBROWS,
   "final_state_digest_sha256": "$CLEAN_DIGEST",
+  "verify_note": "verify compared source CSV content against database content directly (row count + full-content digest) and exited 0",
   "runtime_seconds": $CLEAN_RUNTIME
 }
 EOF
@@ -145,7 +151,7 @@ THIS_ATTEMPT_READ=$(grep -o 'committed_read=[0-9]*' "$RESTART_STDERR" | tail -1 
 THIS_ATTEMPT_WRITTEN=$(grep -o 'committed_written=[0-9]*' "$RESTART_STDERR" | tail -1 | cut -d= -f2)
 
 RESTART_VERIFY=$("$BIN" verify --input "$DATA/dataset.csv")
-RESTART_DIGEST=$(python3 -c "import json;print(json.loads('''$RESTART_VERIFY''')['canonical_digest_sha256'])")
+RESTART_DIGEST=$(python3 -c "import json;print(json.loads('''$RESTART_VERIFY''')['db_digest_sha256'])")
 RESTART_DBROWS=$(python3 -c "import json;print(json.loads('''$RESTART_VERIFY''')['db_row_count'])")
 
 cat > "$OUT/restart-run.json" <<EOF

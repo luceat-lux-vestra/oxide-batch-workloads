@@ -59,7 +59,7 @@ cargo run -- verify --input customers.csv
 | `migrate` | `PostgresMigrator::migrate` (framework's `oxide_batch` schema) + this workload's `app_business` schema. |
 | `run` | Launches or resumes the import job through `JobLauncher::launch_chunk`. |
 | `recover` | Marks a `Starting/Started/Stopping/Unknown` execution left by a hard crash as recoverable (`RecoveryRequest::mark_failed`), required before a subsequent `run` can resume it — see *Restart semantics* below. |
-| `verify` | DB-query-based evidence: row count, canonical content digest. Prints JSON to stdout. |
+| `verify` | Independently re-parses `--input` (a real CSV parser) and compares it against the database directly: row count *and* a full-content digest (`customer_id`/`name`/`email`/`amount`/`created_at`, both computed by streaming). Prints a JSON report to stdout and **exits nonzero on any mismatch** — this is not a DB-only summary. |
 | `reset` | Truncates only `app_business.imported_customer`. Never touches `oxide_batch`. |
 
 `run` flags for deterministic fault injection (built into the shipped binary
@@ -118,8 +118,18 @@ unsupported.
 Two schemas, deliberately never overlapping:
 
 - `oxide_batch` — OxideBatch's own durable job/step/instance metadata
-  (`PostgresMigrator::migrate`). This workload never creates or modifies
+  (`PostgresMigrator::migrate`). No command this workload ships (`migrate`,
+  `run`, `recover`, `verify`, `reset`) ever creates, alters, or drops
   anything here.
+
+  The **exception** is `validation/generate-evidence.sh`, a test/evidence
+  script, not a shipped command: it `TRUNCATE`s
+  `oxide_batch.ob_job_execution`/`ob_job_instance` **rows** (never the
+  schema or table structure) between scenarios, so the same deterministic
+  job identity can be relaunched on every re-run without colliding with a
+  prior run's already-`COMPLETED` instance. This is disposable test-only
+  teardown and assumes an isolated/throwaway database — run it against
+  `docker-compose.yml`'s database, never a shared or production one.
 - `app_business` — this workload's own business table
   (`migrations/001_init.sql`):
 
@@ -244,9 +254,10 @@ for the same 10x row-count step, misattributed in an earlier revision of
 this README to "the streaming architecture" when in fact a real
 non-streaming step was the dominant contributor). `sha256_of_file`
 (`src/generator.rs`) now streams through a fixed 64 KB buffer; `verify`
-(`src/verify.rs`) was fixed the same way (a streamed `BufReader` line
-count instead of `read_to_string`, and `sqlx`'s row `fetch` stream instead
-of `fetch_all`). The flat 13.4 MB now genuinely reflects
+(`src/verify.rs`) streams both sides it compares (a real `csv` crate
+parser reading the source file record-by-record, and `sqlx`'s row `fetch`
+stream against the database, never `fetch_all`) rather than buffering
+either whole. The flat 13.4 MB now genuinely reflects
 `memory ≈ runtime baseline + O(chunk_size)` (spec ss9), not file size.
 
 ## Test suite
@@ -273,7 +284,7 @@ the child; restart always launches a brand-new process.
 
 | File | Covers |
 |---|---|
-| `tests/clean_import.rs` | T1: row-for-row correctness, no leaked idle-in-transaction session |
+| `tests/clean_import.rs` | T1: real source-vs-database correctness via `verify` (not a spot-check), a negative control that corrupts one DB value and asserts `verify` rejects it, no leaked idle-in-transaction session |
 | `tests/malformed_input.rs` | T2: wrong field count / non-numeric amount fails the job, zero partial rows |
 | `tests/rollback.rs` | T3, T7: real PK violation, strict vs. idempotent |
 | `tests/restart.rs` | T4, T5, T6, T8: graceful vs. hard-crash failure windows, recovery, clean-vs-recovered equivalence |

@@ -15,9 +15,9 @@
   },
   "final_business_db_rows": 100000,
   "expected_final_rows": 100000,
-  "runtime_seconds": 1.541,
-  "clean_run_full_content_digest_sha256": "316f994528c803161b52c2026e6e16bca32f9df4d98e87955c027133e4ee006f",
-  "recovered_run_full_content_digest_sha256": "316f994528c803161b52c2026e6e16bca32f9df4d98e87955c027133e4ee006f",
+  "runtime_seconds": 1.145,
+  "clean_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
+  "recovered_run_full_content_digest_sha256": "97d4181baa1e3455b260be877bc33ffbfc6cb35a14bf7624772924e1d1e4046a",
   "full_content_digests_match": true,
   "digest_note": "same exact input file, same customer_id range (business table reset between the clean and crash scenarios): this compares customer_id/name/email/amount/created_at in full, not an offset-invariant subset"
 }
