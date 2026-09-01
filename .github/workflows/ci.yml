@@ -13,20 +13,33 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    working-directory: csv-postgres
-
 env:
   CARGO_TERM_COLOR: always
   DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
   CSV_POSTGRES_TEST_DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
 
 jobs:
+  workload-registry:
+    name: workload-registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate canonical workload registry
+        run: python3 .github/scripts/validate-workload-registry.py
+
   ci:
     name: ci
+    needs: workload-registry
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: csv-postgres
     services:
       postgres:
         image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280 # 18
@@ -90,8 +103,12 @@ jobs:
 
   msrv:
     name: msrv
+    needs: workload-registry
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: csv-postgres
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
