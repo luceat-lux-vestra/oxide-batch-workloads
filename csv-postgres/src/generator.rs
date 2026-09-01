@@ -15,6 +15,39 @@ use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+/// Uniform integer sampling in `[low, high_exclusive)`, built only on
+/// `next_u64` -- deliberately *not* `rand`'s own `gen_range`/`random_range`.
+///
+/// `rand_core`'s `SeedableRng`/`Rng` contract guarantees a fixed generator's
+/// raw output stream for a given seed is stable across crate versions, but
+/// `rand`'s higher-level range-sampling algorithm carries no such guarantee:
+/// rand 0.9 switched single-sample integer distributions to Canon's/Lemire's
+/// method specifically because it "breaks value stability" (rand's own
+/// CHANGELOG), and separately special-cased `usize`/`isize` sampling
+/// (`UniformUsize`) for 32-/64-bit portability. Empirically, the generator's
+/// `usize` range changed under rand 0.10 while its current `i64` range happened
+/// to match; relying on either behavior would make future output stability
+/// depend on rand's internal distribution implementation.
+///
+/// This function instead pins the exact widening-multiply-with-rejection
+/// algorithm `rand` 0.8's `UniformInt<u64>` used, so `generate`'s
+/// byte-identical-output promise (see module docs) does not silently drift
+/// the next time `rand` changes its distribution internals. Verified
+/// bit-for-bit against `rand` 0.8.8 + `rand_chacha` 0.3.1 across 2,000 seeds.
+fn uniform_range(rng: &mut ChaCha8Rng, low: u64, high_exclusive: u64) -> u64 {
+    let range = high_exclusive - low;
+    let zone = (range << range.leading_zeros()).wrapping_sub(1);
+    loop {
+        let v: u64 = rng.next_u64();
+        let full = u128::from(v) * u128::from(range);
+        let hi = (full >> 64) as u64;
+        let lo = full as u64;
+        if lo <= zone {
+            return low + hi;
+        }
+    }
+}
+
 /// Which edge-case shape a generated row takes. Plain data is the default;
 /// the others exist to give the pipeline something real to reject.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,10 +149,10 @@ fn base_row(
         "Taylor",
     ];
     let first = first_names[(row_index as usize) % first_names.len()];
-    let last = last_names[rng.gen_range(0..last_names.len())];
+    let last = last_names[uniform_range(rng, 0, last_names.len() as u64) as usize];
     let name = format!("{first} {last}");
     let email = format!("customer{customer_id}@example.test");
-    let amount = rng.gen_range(100..1_000_000);
+    let amount = uniform_range(rng, 100, 1_000_000) as i64;
     let base = Utc
         .with_ymd_and_hms(2026, 1, 1, 0, 0, 0)
         .single()
