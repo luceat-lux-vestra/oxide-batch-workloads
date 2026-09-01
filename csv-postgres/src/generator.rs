@@ -279,5 +279,5 @@ pub fn sha256_of_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::hex::hex_digest(&hasher.finalize()))
 }

@@ -222,5 +222,14 @@ pub async fn canonical_digest_in_range(pool: &PgPool, id_offset: u64, rows: u64)
         hasher.update(created_at.to_rfc3339().as_bytes());
         hasher.update([0xFFu8]);
     }
-    format!("{:x}", hasher.finalize())
+    // `digest` 0.11's output type dropped its `LowerHex` impl in favor of a
+    // plain fixed-size `Array`, so hex-encode it by hand.
+    use std::fmt::Write as _;
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }

@@ -135,7 +135,7 @@ fn source_digest(input: &Path) -> anyhow::Result<(usize, String)> {
         );
         rows += 1;
     }
-    Ok((rows, format!("{:x}", hasher.finalize())))
+    Ok((rows, crate::hex::hex_digest(&hasher.finalize())))
 }
 
 /// Streams the business table (ordered by `customer_id`, matching the
@@ -160,7 +160,7 @@ async fn db_digest(pool: &sqlx::PgPool) -> anyhow::Result<(i64, String)> {
         );
         count += 1;
     }
-    Ok((count, format!("{:x}", hasher.finalize())))
+    Ok((count, crate::hex::hex_digest(&hasher.finalize())))
 }
 
 /// Compares `input`'s own content against the business table's content --
