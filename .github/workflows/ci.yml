@@ -29,6 +29,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test fail-closed registry validation
+        run: python3 .github/scripts/test-workload-registry.py
+
       - name: Validate canonical workload registry
         run: python3 .github/scripts/validate-workload-registry.py
 
