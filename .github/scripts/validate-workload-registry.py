@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 
 import json
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-REGISTRY = ROOT / "workloads.json"
+
+class RegistryError(ValueError):
+    pass
 
 
 def fail(message: str) -> None:
-    print(f"::error::{message}")
-    raise SystemExit(1)
+    raise RegistryError(message)
 
 
-def load_registry() -> dict:
+def load_registry(registry: Path) -> dict:
     try:
-        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        data = json.loads(registry.read_text(encoding="utf-8"))
     except FileNotFoundError:
         fail("missing canonical workload registry: workloads.json")
     except json.JSONDecodeError as exc:
@@ -44,8 +43,9 @@ def validate_top_level_path(path_value: object, kind: str) -> str:
     return path_value
 
 
-def main() -> None:
-    data = load_registry()
+def validate_repository(root: Path, registry: Path | None = None) -> list[str]:
+    registry = registry or root / "workloads.json"
+    data = load_registry(registry)
     workloads = data.get("workloads")
     reserved = data.get("reserved_top_level_cargo_projects", [])
 
@@ -69,7 +69,7 @@ def main() -> None:
         names.add(name)
         paths.add(path)
 
-        workload_dir = ROOT / path
+        workload_dir = root / path
         if not workload_dir.is_dir():
             fail(f"registered workload path does not exist: {path}")
         if not (workload_dir / "Cargo.toml").is_file():
@@ -83,13 +83,13 @@ def main() -> None:
         if path in paths:
             fail(f"path cannot be both workload and reserved Cargo project: {path}")
         reserved_paths.add(path)
-        project_dir = ROOT / path
+        project_dir = root / path
         if not project_dir.is_dir() or not (project_dir / "Cargo.toml").is_file():
             fail(f"reserved Cargo project must exist and contain Cargo.toml: {path}")
 
     candidates = {
         child.name
-        for child in ROOT.iterdir()
+        for child in root.iterdir()
         if child.is_dir() and not child.name.startswith(".") and (child / "Cargo.toml").is_file()
     }
     accounted = paths | reserved_paths
@@ -101,7 +101,17 @@ def main() -> None:
     if stale:
         fail("registry references non-candidate Cargo project(s): " + ", ".join(stale))
 
-    print(f"validated {len(paths)} workload(s): {', '.join(sorted(paths))}")
+    return sorted(paths)
+
+
+def main() -> None:
+    root = Path(__file__).resolve().parents[2]
+    try:
+        paths = validate_repository(root)
+    except RegistryError as exc:
+        print(f"::error::{exc}")
+        raise SystemExit(1) from exc
+    print(f"validated {len(paths)} workload(s): {', '.join(paths)}")
 
 
 if __name__ == "__main__":
