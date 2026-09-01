@@ -12,6 +12,20 @@ framework's source, and neither does this one. A defect found here becomes
 an issue against `luceat-lux-vestra/oxide-batch`, never a source change in
 this repository.
 
+## Validation program
+
+See [`ROADMAP.md`](ROADMAP.md) for the workload-driven validation program:
+item I/O, processing/failure semantics, database portability, comparative
+benchmarks, scalability, scheduler/orchestrator interoperability, event-driven
+launch and completion feedback, control-plane/API interoperability,
+observability, deployment lifecycle, configuration/security, upgrade/DR, and
+extension/test-kit usability.
+
+The roadmap describes evidence targets, not promises to embed external systems
+inside OxideBatch. Specific schedulers, brokers, dashboards, secret stores, and
+orchestration platforms remain external unless workload evidence demonstrates a
+missing framework-neutral contract.
+
 ## Workloads
 
 | Path | Release validated | Purpose |
