@@ -26,7 +26,7 @@ class WorkloadRegistryTests(unittest.TestCase):
         path.mkdir()
         (path / "Cargo.toml").write_text("[package]\nname = \"fixture\"\nversion = \"0.0.0\"\n", encoding="utf-8")
 
-    def write_registry(self, workloads: list[dict[str, str]], reserved: list[str] | None = None) -> None:
+    def write_registry(self, workloads: list[dict[str, str]], reserved: list[dict[str, str]] | None = None) -> None:
         (self.root / "workloads.json").write_text(
             json.dumps(
                 {
@@ -82,15 +82,30 @@ class WorkloadRegistryTests(unittest.TestCase):
         self.write_registry([])
         self.assert_rejected("workloads must be a non-empty array")
 
-    def test_allows_explicit_reserved_cargo_project(self) -> None:
+    def test_allows_explicit_reserved_cargo_project_with_reason(self) -> None:
         self.cargo_project("alpha")
         self.cargo_project("repo-tool")
-        self.write_registry([{"name": "alpha", "path": "alpha"}], ["repo-tool"])
+        self.write_registry(
+            [{"name": "alpha", "path": "alpha"}],
+            [{"path": "repo-tool", "reason": "repository-owned tooling, not a validation workload"}],
+        )
         self.assertEqual(validator.validate_repository(self.root), ["alpha"])
+
+    def test_rejects_reserved_project_without_reason(self) -> None:
+        self.cargo_project("alpha")
+        self.cargo_project("repo-tool")
+        self.write_registry(
+            [{"name": "alpha", "path": "alpha"}],
+            [{"path": "repo-tool", "reason": ""}],
+        )
+        self.assert_rejected("must include a non-empty reason")
 
     def test_rejects_stale_reserved_project(self) -> None:
         self.cargo_project("alpha")
-        self.write_registry([{"name": "alpha", "path": "alpha"}], ["missing-tool"])
+        self.write_registry(
+            [{"name": "alpha", "path": "alpha"}],
+            [{"path": "missing-tool", "reason": "repository-owned tooling"}],
+        )
         self.assert_rejected("reserved Cargo project must exist")
 
 
