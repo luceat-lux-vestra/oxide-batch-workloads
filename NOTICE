@@ -1,0 +1,9 @@
+OxideBatch Workloads
+Copyright 2026 OxideBatch Workloads contributors
+
+This product includes software developed by the OxideBatch Workloads
+contributors.
+
+This repository validates published `luceat-lux-vestra/oxide-batch`
+releases as an independent external consumer. It is not the OxideBatch
+framework and does not redistribute framework source.

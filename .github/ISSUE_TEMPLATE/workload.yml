@@ -1,0 +1,46 @@
+name: New workload / validation campaign
+description: Propose a materially new real-world validation workload
+title: "workload: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: contract
+    attributes:
+      label: Contract to validate
+      description: What real user/operator behavior or framework guarantee needs external validation?
+    validations:
+      required: true
+  - type: textarea
+    id: gap
+    attributes:
+      label: Why existing workloads are insufficient
+    validations:
+      required: true
+  - type: input
+    id: release
+    attributes:
+      label: Target OxideBatch release
+      placeholder: 0.6.0
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: Required scenarios
+      description: Clean path, deterministic failures, crash/restart boundaries, invalid input, idempotency, resource checks, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance evidence
+      description: Define what would prove success and what would be a blocker.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Explicit non-goals
+      description: Prevent this campaign from expanding into unrelated framework/product work.
+    validations:
+      required: true
