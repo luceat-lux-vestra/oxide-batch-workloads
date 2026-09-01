@@ -37,10 +37,18 @@ pinned to a published `oxide-batch = "=X.Y.Z"` (registry source, verifiable
 in the lockfile — never a path/git dependency), its own CI, and its own
 evidence under `validation/`.
 
+[`workloads.json`](workloads.json) is the canonical inventory used by repository
+controls to determine which top-level Cargo projects are validation workloads.
+A top-level Cargo project that is repository-owned tooling rather than a
+validation workload must be listed explicitly as a reserved project with a
+non-empty rationale; it must not be silently omitted from the inventory.
+
 ## Adding a workload
 
-A new workload gets its own top-level directory and does not touch any
-other workload's dependency version, database schema, or CI job. See
-`csv-postgres/README.md` for what a workload's own documentation should
+A new workload gets its own top-level directory and is added to
+[`workloads.json`](workloads.json). It does not touch another workload's
+dependency version, database schema, or workload-specific CI implementation.
+Repository-level discovery must fail closed until the new project is registered.
+See `csv-postgres/README.md` for what a workload's own documentation should
 cover (quickstart, schema, restart semantics actually observed, findings,
 resource notes, evidence reproduction).
