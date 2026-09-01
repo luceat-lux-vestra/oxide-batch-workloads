@@ -77,7 +77,12 @@ def validate_repository(root: Path, registry: Path | None = None) -> list[str]:
 
     reserved_paths: set[str] = set()
     for entry in reserved:
-        path = validate_top_level_path(entry, "reserved Cargo project")
+        if not isinstance(entry, dict) or set(entry) != {"path", "reason"}:
+            fail("each reserved Cargo project must contain exactly path and reason")
+        path = validate_top_level_path(entry["path"], "reserved Cargo project")
+        reason = entry["reason"]
+        if not isinstance(reason, str) or not reason.strip():
+            fail(f"reserved Cargo project must include a non-empty reason: {path}")
         if path in reserved_paths:
             fail(f"duplicate reserved Cargo project: {path}")
         if path in paths:
