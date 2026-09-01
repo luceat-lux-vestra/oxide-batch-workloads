@@ -1,5 +1,6 @@
 mod failpoint;
 mod generator;
+mod hex;
 mod job;
 mod processor;
 mod verify;
