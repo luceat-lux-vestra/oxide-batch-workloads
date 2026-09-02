@@ -70,9 +70,7 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(result["workload"], {"oxide-batch": "0.6.0", "oxide-batch-test": "0.6.0"})
 
     def test_ignores_non_first_party_workspace_dependency(self) -> None:
-        self.write_manifest(
-            '[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n'
-        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n')
         self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
         validator.validate_repository(self.root)
 
@@ -104,6 +102,14 @@ class ProvenanceTests(unittest.TestCase):
         self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
         self.assert_rejected("must not be overridden")
 
+    def test_rejects_legacy_replace_override(self) -> None:
+        self.write_manifest(
+            '[dependencies]\noxide-batch = "=0.6.0"\n'
+            '[replace]\n"oxide-batch:0.6.0" = { path = "../oxide-batch" }\n'
+        )
+        self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
+        self.assert_rejected("must not be overridden")
+
     def test_rejects_target_specific_alias_bypass(self) -> None:
         self.write_manifest(
             '[dependencies]\noxide-batch = "=0.6.0"\n'
@@ -114,15 +120,7 @@ class ProvenanceTests(unittest.TestCase):
 
     def test_rejects_non_crates_io_lock_source(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
-        self.write_lock(
-            [
-                {
-                    "name": "oxide-batch",
-                    "version": "0.6.0",
-                    "source": "git+https://example.test/oxide-batch",
-                }
-            ]
-        )
+        self.write_lock([{"name": "oxide-batch", "version": "0.6.0", "source": "git+https://example.test/oxide-batch"}])
         self.assert_rejected("does not resolve from canonical crates.io")
 
     def test_rejects_missing_checksum(self) -> None:
@@ -130,10 +128,21 @@ class ProvenanceTests(unittest.TestCase):
         self.write_lock([{"name": "oxide-batch", "version": "0.6.0", "checksum": "bad"}])
         self.assert_rejected("missing a valid crates.io checksum")
 
-    def test_rejects_source_replacement_config(self) -> None:
+    def test_rejects_workload_source_replacement_config(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
         self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
         cargo = self.workload / ".cargo"
+        cargo.mkdir()
+        (cargo / "config.toml").write_text(
+            '[source.crates-io]\nreplace-with = "mirror"\n[source.mirror]\nregistry = "https://example.test/index"\n',
+            encoding="utf-8",
+        )
+        self.assert_rejected("source replacement is forbidden")
+
+    def test_rejects_repository_root_source_replacement_config(self) -> None:
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
+        cargo = self.root / ".cargo"
         cargo.mkdir()
         (cargo / "config.toml").write_text(
             '[source.crates-io]\nreplace-with = "mirror"\n[source.mirror]\nregistry = "https://example.test/index"\n',
