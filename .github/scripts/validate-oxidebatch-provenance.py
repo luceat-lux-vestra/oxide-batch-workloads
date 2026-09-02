@@ -55,7 +55,7 @@ def dependency_package(alias: str, spec: object) -> tuple[str, str | None, dict 
     return package, version, spec
 
 
-def validate_manifest(manifest_path: Path) -> dict[str, str]:
+def validate_manifest(manifest_path: Path, *, subject_required: bool = True) -> dict[str, str]:
     try:
         document = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -107,7 +107,7 @@ def validate_manifest(manifest_path: Path) -> dict[str, str]:
                 fail(f"first-party dependency {package} is declared at conflicting exact versions")
             subjects[package] = resolved_version
 
-    if not subjects:
+    if not subjects and subject_required:
         fail(f"workload manifest declares no first-party OxideBatch validation subject: {manifest_path}")
     return subjects
 
@@ -156,7 +156,7 @@ def validate_cargo_source_config(base_dir: Path) -> None:
             fail(f"Cargo source replacement is forbidden for validation subjects: {path}")
 
 
-def load_workloads(root: Path) -> list[Path]:
+def load_workloads(root: Path) -> list[tuple[Path, bool]]:
     try:
         registry = json.loads((root / "workloads.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as exc:
@@ -164,20 +164,24 @@ def load_workloads(root: Path) -> list[Path]:
     entries = registry.get("workloads") if isinstance(registry, dict) else None
     if not isinstance(entries, list) or not entries:
         fail("canonical workload registry contains no workloads")
-    paths: list[Path] = []
+    workloads: list[tuple[Path, bool]] = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
             fail("invalid workload registry entry")
-        paths.append(root / entry["path"])
-    return paths
+        provenance = entry.get("provenance", {})
+        required = True
+        if isinstance(provenance, dict) and "required" in provenance:
+            required = bool(provenance["required"])
+        workloads.append((root / entry["path"], required))
+    return workloads
 
 
 def validate_repository(root: Path) -> dict[str, dict[str, str]]:
     validate_cargo_source_config(root)
     result: dict[str, dict[str, str]] = {}
-    for workload_dir in load_workloads(root):
+    for workload_dir, subject_required in load_workloads(root):
         validate_cargo_source_config(workload_dir)
-        subjects = validate_manifest(workload_dir / "Cargo.toml")
+        subjects = validate_manifest(workload_dir / "Cargo.toml", subject_required=subject_required)
         validate_lockfile(workload_dir / "Cargo.lock", subjects)
         result[workload_dir.name] = subjects
     return result

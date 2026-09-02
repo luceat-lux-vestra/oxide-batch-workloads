@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Workload-owned CI contract entrypoint for csv-postgres.
+# See ../../.github/WORKLOAD_CONTRACT.md for the contract this implements.
+#
+# This script is the ONLY place that knows csv-postgres needs PostgreSQL,
+# what its DATABASE_URL is, how it migrates, and what its smoke sequence is.
+# The central workflow only ever runs `ci/validate <ci|msrv>`.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+stage="${1:?usage: ci/validate <ci|msrv>}"
+
+export DATABASE_URL="postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5433/csv_postgres_workload"
+export CSV_POSTGRES_TEST_DATABASE_URL="$DATABASE_URL"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+start_postgres() {
+  compose up -d --wait --wait-timeout 60
+}
+
+stop_postgres() {
+  compose down --volumes
+}
+
+run_ci_stage() {
+  cargo fmt --check
+  cargo clippy --locked --all-targets -- -D warnings
+  cargo build --locked --all-targets
+
+  echo "guard: no unguarded unwrap/expect on the production path"
+  if grep -rnE '\.(unwrap|expect)\(' src/ \
+      | grep -v 'fixed calendar date is always valid'; then
+    echo "::error::found .unwrap()/.expect() outside the documented exception in src/" >&2
+    exit 1
+  fi
+
+  trap stop_postgres EXIT
+  start_postgres
+
+  cargo run --locked -q -- migrate
+  cargo test --locked -- --test-threads=1
+
+  echo "golden-path smoke: reset -> generate -> run -> verify"
+  cargo run --locked -q -- reset
+  cargo run --locked -q -- generate --output /tmp/ci_smoke.csv --profile tiny --seed 42
+  cargo run --locked -q -- run --input /tmp/ci_smoke.csv --import-name ci_smoke --chunk-size 200
+  cargo run --locked -q -- verify --input /tmp/ci_smoke.csv
+}
+
+run_msrv_stage() {
+  # Matches the previous dedicated msrv job exactly: a locked build of all
+  # targets at the declared toolchain, no database required.
+  cargo build --locked --all-targets
+}
+
+case "$stage" in
+  ci)
+    run_ci_stage
+    ;;
+  msrv)
+    run_msrv_stage
+    ;;
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 1
+    ;;
+esac

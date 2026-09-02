@@ -30,6 +30,15 @@ class ProvenanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def set_provenance_required(self, required: bool, reason: str = "fixture") -> None:
+        entry = {"name": "workload", "path": "workload", "provenance": {"required": required}}
+        if not required:
+            entry["provenance"]["reason"] = reason
+        (self.root / "workloads.json").write_text(
+            json.dumps({"workloads": [entry]}),
+            encoding="utf-8",
+        )
+
     def write_manifest(self, body: str) -> None:
         (self.workload / "Cargo.toml").write_text(body, encoding="utf-8")
 
@@ -68,6 +77,24 @@ class ProvenanceTests(unittest.TestCase):
         self.valid_lock()
         result = validator.validate_repository(self.root)
         self.assertEqual(result["workload"], {"oxide-batch": "0.6.0", "oxide-batch-test": "0.6.0"})
+
+    def test_rejects_missing_subject_when_provenance_required_by_default(self) -> None:
+        self.write_manifest('[dependencies]\nserde = "1"\n')
+        self.write_lock([])
+        self.assert_rejected("declares no first-party OxideBatch validation subject")
+
+    def test_allows_missing_subject_when_provenance_not_required(self) -> None:
+        self.set_provenance_required(False)
+        self.write_manifest('[dependencies]\nserde = "1"\n')
+        self.write_lock([{"name": "serde", "version": "1.0.0"}])
+        result = validator.validate_repository(self.root)
+        self.assertEqual(result["workload"], {})
+
+    def test_still_enforces_exact_provenance_when_not_required_but_subject_present(self) -> None:
+        self.set_provenance_required(False)
+        self.write_manifest('[dependencies]\noxide-batch = "0.6"\n')
+        self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
+        self.assert_rejected("must use an exact")
 
     def test_ignores_non_first_party_workspace_dependency(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n')

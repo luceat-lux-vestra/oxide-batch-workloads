@@ -20,7 +20,7 @@ Dependency upgrades that change the OxideBatch version are semantic validation c
 
 Use deterministic datasets and failure injection. Stateful/restartable workloads must test durable state and final business state. A claimed restart must use a new process after a real process failure where that distinction matters.
 
-Run the narrow checks needed while iterating, then the relevant full workload gate before requesting review. For `csv-postgres`, the authoritative CI includes formatting, Clippy with warnings denied, locked builds, real PostgreSQL integration tests, a golden-path smoke test, and the declared MSRV build.
+Run the narrow checks needed while iterating, then the relevant full workload gate before requesting review. Each workload owns its authoritative CI behind `<workload>/ci/validate` (see `.github/WORKLOAD_CONTRACT.md`); for `csv-postgres` that is formatting, Clippy with warnings denied, locked builds, a production unwrap/expect guard, real PostgreSQL integration tests, a golden-path smoke test, and the declared MSRV build. Run `./ci/validate ci` (and `./ci/validate msrv` where applicable) from the workload's own directory to reproduce exactly what CI runs.
 
 Do not claim tests or manual validation that were not actually run. Document skipped checks and the reason.
 

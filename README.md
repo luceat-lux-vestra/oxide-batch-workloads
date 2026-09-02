@@ -43,12 +43,26 @@ A top-level Cargo project that is repository-owned tooling rather than a
 validation workload must be listed explicitly as a reserved project with a
 non-empty rationale; it must not be silently omitted from the inventory.
 
+## CI: registry-driven aggregate gates
+
+The merge-gate workflow (`.github/workflows/ci.yml`) never hardcodes a
+workload's build/test/service commands. It fans out over every workload in
+`workloads.json` and invokes a small, stable, workload-owned contract
+(`<workload>/ci/validate`) — see
+[`.github/WORKLOAD_CONTRACT.md`](.github/WORKLOAD_CONTRACT.md) for exactly
+what that contract is and what `workloads.json`'s `msrv`/`provenance` fields
+mean. The required, stable branch-protection contexts are the aggregate
+verdicts (`workloads-ci`, `workloads-msrv`), computed by a small testable
+tool (`.github/scripts/aggregate_verdict.py`) rather than opaque workflow
+expressions — never a per-workload job name.
+
 ## Adding a workload
 
-A new workload gets its own top-level directory and is added to
-[`workloads.json`](workloads.json). It does not touch another workload's
-dependency version, database schema, or workload-specific CI implementation.
-Repository-level discovery must fail closed until the new project is registered.
-See `csv-postgres/README.md` for what a workload's own documentation should
-cover (quickstart, schema, restart semantics actually observed, findings,
-resource notes, evidence reproduction).
+A new workload gets its own top-level directory, its own `ci/validate`
+contract entrypoint, and an entry in [`workloads.json`](workloads.json)
+declaring its MSRV and provenance policy. It does not touch another
+workload's dependency version, database schema, or CI implementation.
+Repository-level discovery must fail closed until the new project is
+registered. See `csv-postgres/README.md` for what a workload's own
+documentation should cover (quickstart, schema, restart semantics actually
+observed, findings, resource notes, evidence reproduction).

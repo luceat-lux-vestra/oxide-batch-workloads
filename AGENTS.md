@@ -22,6 +22,8 @@ Each top-level workload is an independent consumer project. It owns its own depe
 
 `csv-postgres/` validates the published OxideBatch 0.6.0 CSV-to-PostgreSQL restartable chunk workload. Future workloads must be added because they test a materially different real-world contract, not merely to increase example count.
 
+CI is registry- and contract-driven, not workload-name-branched: the central workflow (`.github/workflows/ci.yml`) only knows how to validate/discover `workloads.json`, fan out over its entries, invoke each workload's own `<workload>/ci/validate <ci|msrv>` entrypoint, and compute an aggregate verdict with `.github/scripts/aggregate_verdict.py`. See `.github/WORKLOAD_CONTRACT.md` for the exact contract. `fixture-heterogeneous/` is not a validation workload and makes no OxideBatch claim — it is a bounded fixture proving that fan-out, and `provenance.required: false` in its registry entry (which exempts it from #29's "must declare an OxideBatch subject" rule) exists solely for that purpose. A real new workload must always set `provenance.required: true` and follow the process in "Adding a workload" in the top-level `README.md`, never copy the fixture's exemption.
+
 Framework-owned durable metadata and workload-owned business data are separate concerns. Production workload commands must use public OxideBatch APIs for framework metadata. Direct manipulation of framework metadata is allowed only in clearly identified disposable test/evidence teardown when no public cleanup API exists; document every such exception.
 
 ## Required workflow before implementation

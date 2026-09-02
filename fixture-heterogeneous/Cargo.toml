@@ -1,0 +1,17 @@
+[package]
+name = "fixture-heterogeneous"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Bounded, non-product CI-orchestration fixture proving the central workflow is contract-driven, not csv-postgres-specific. Not an OxideBatch validation workload."
+
+[[bin]]
+name = "fixture-heterogeneous"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.dev]
+opt-level = 0

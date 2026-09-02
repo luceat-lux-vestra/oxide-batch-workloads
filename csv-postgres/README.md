@@ -304,6 +304,20 @@ cargo run -- migrate
 cargo test -- --test-threads=1
 ```
 
+To reproduce exactly what the central CI workflow's `ci-shard` job runs for
+this workload (fmt, Clippy, build, the unwrap/expect guard, PostgreSQL
+bootstrap/teardown, migrate, the serialized integration suite, and the
+golden-path smoke check, in one shot), run this workload's own [CI
+contract](ci/validate) directly:
+
+```sh
+./ci/validate ci
+```
+
+See [`../.github/WORKLOAD_CONTRACT.md`](../.github/WORKLOAD_CONTRACT.md) for
+what this contract is and why the central workflow only ever invokes it by
+name.
+
 `--test-threads=1` is this suite's default, not just a suggestion: several
 tests either inspect global `pg_stat_activity` state or `reset()` the whole
 shared business table (each `tests/support::generate` call gets its own

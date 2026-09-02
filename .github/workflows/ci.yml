@@ -1,10 +1,15 @@
 name: CI
 
+# Every trigger here is unconditional (no `paths`/`paths-ignore`): the
+# stable aggregate contexts below (`workloads-ci`, `workloads-msrv`) must
+# always be producible on every relevant PR so they remain valid branch
+# protection required contexts.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -15,31 +20,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
-  CSV_POSTGRES_TEST_DATABASE_URL: postgresql://csv_postgres_ci:csv_postgres_ci@localhost:5432/csv_postgres_ci
 
 jobs:
-  ci:
-    name: ci
+  # Knows only the canonical registry and how to validate/discover it, plus
+  # repository-wide (not per-workload) dependency-provenance enforcement
+  # (#29). Never knows a workload's business logic.
+  discover:
+    name: discover
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: csv-postgres
-    services:
-      postgres:
-        image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280 # 18
-        env:
-          POSTGRES_USER: csv_postgres_ci
-          POSTGRES_PASSWORD: csv_postgres_ci
-          POSTGRES_DB: csv_postgres_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U csv_postgres_ci -d csv_postgres_ci"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
+    timeout-minutes: 5
+    outputs:
+      workloads: ${{ steps.discover.outputs.workloads }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,99 +38,256 @@ jobs:
           persist-credentials: false
 
       - name: Test fail-closed workload registry validation
-        working-directory: ${{ github.workspace }}
         run: python3 .github/scripts/test-workload-registry.py
 
       - name: Validate canonical workload registry
-        working-directory: ${{ github.workspace }}
         run: python3 .github/scripts/validate-workload-registry.py
 
       - name: Test OxideBatch provenance enforcement
-        working-directory: ${{ github.workspace }}
         run: python3 .github/scripts/test-oxidebatch-provenance.py
 
       - name: Validate exact published OxideBatch provenance
-        working-directory: ${{ github.workspace }}
         run: python3 .github/scripts/validate-oxidebatch-provenance.py
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
-        with:
-          components: rustfmt, clippy
+      - name: Test aggregate verdict logic
+        run: python3 .github/scripts/test_aggregate_verdict.py
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: csv-postgres
-
-      - name: Format check
-        run: cargo fmt --check
-
-      - name: Clippy (deny warnings)
-        run: cargo clippy --locked --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --locked --all-targets
-
-      - name: No unguarded unwrap/expect on the production path
+      - name: Discover workload fan-out matrix
+        id: discover
         run: |
-          if grep -rnE '\.(unwrap|expect)\(' src/ \
-              | grep -v 'fixed calendar date is always valid'; then
-            echo "::error::found .unwrap()/.expect() outside the documented exception in src/"
-            exit 1
-          fi
+          matrix=$(python3 .github/scripts/discover-workloads.py)
+          echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
 
-      - name: Migrate (OxideBatch metadata schema + business schema)
-        run: cargo run --locked -q -- migrate
-
-      - name: Integration tests
-        run: cargo test --locked -- --test-threads=1
-
-      - name: Golden-path smoke (reset -> generate -> run -> verify)
-        run: |
-          set -euo pipefail
-          cargo run --locked -q -- reset
-          cargo run --locked -q -- generate --output /tmp/ci_smoke.csv --profile tiny --seed 42
-          cargo run --locked -q -- run --input /tmp/ci_smoke.csv --import-name ci_smoke --chunk-size 200
-          cargo run --locked -q -- verify --input /tmp/ci_smoke.csv
-
-  msrv:
-    name: msrv
+  # Fans out over every registered workload and invokes its own `ci/validate
+  # ci` contract. Knows nothing about what that contract does.
+  ci-shard:
+    # Explicit name (not the GitHub-Actions-default matrix suffix, which
+    # stringifies non-primitive matrix values as the literal "Object"):
+    # guarantees the job display name is exactly `ci-shard (<workload>)`, the
+    # pattern workloads-ci's Jobs-API cross-check parses.
+    name: ci-shard (${{ matrix.name }})
+    needs: discover
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: csv-postgres
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.workloads) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Test fail-closed workload registry validation
-        working-directory: ${{ github.workspace }}
-        run: python3 .github/scripts/test-workload-registry.py
-
-      - name: Validate canonical workload registry
-        working-directory: ${{ github.workspace }}
-        run: python3 .github/scripts/validate-workload-registry.py
-
-      - name: Read declared rust-version
-        id: msrv
-        run: |
-          version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Install declared MSRV
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot; explicit toolchain input below overrides the default
-        with:
-          toolchain: ${{ steps.msrv.outputs.version }}
-
       - name: Cache Rust build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: csv-postgres
+          workspaces: ${{ matrix.path }}
 
-      - name: Build at declared MSRV
-        run: cargo build --locked --all-targets
+      - name: Run workload CI contract
+        id: contract
+        working-directory: ${{ matrix.path }}
+        run: |
+          set +e
+          ./ci/validate ci
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record shard result
+        if: always()
+        run: |
+          python3 .github/scripts/write-shard-result.py \
+            --workload "${{ matrix.name }}" \
+            --stage ci \
+            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --out "${{ runner.temp }}/result.json"
+
+      - name: Upload shard result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: result-ci-${{ matrix.name }}
+          path: ${{ runner.temp }}/result.json
+          retention-days: 7
+
+      - name: Fail shard job if contract failed
+        if: steps.contract.outputs.exit_code != '0'
+        run: exit 1
+
+  # Fans out over every registered workload. The toolchain *version* comes
+  # from registry data (matrix.msrv.version); the boolean branch is on
+  # registry-declared policy, never on a workload name.
+  msrv-shard:
+    name: msrv-shard (${{ matrix.name }})
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.workloads) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install declared MSRV toolchain
+        if: matrix.msrv.declared
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot; explicit toolchain input below overrides the default
+        with:
+          toolchain: ${{ matrix.msrv.version }}
+
+      - name: Cache Rust build
+        if: matrix.msrv.declared
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ${{ matrix.path }}
+
+      - name: Run workload MSRV contract
+        id: contract
+        if: matrix.msrv.declared
+        working-directory: ${{ matrix.path }}
+        run: |
+          set +e
+          ./ci/validate msrv
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record declared-MSRV shard result
+        if: always() && matrix.msrv.declared
+        run: |
+          python3 .github/scripts/write-shard-result.py \
+            --workload "${{ matrix.name }}" \
+            --stage msrv \
+            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --out "${{ runner.temp }}/result.json"
+
+      - name: Record explicit not-applicable MSRV disposition
+        if: always() && !matrix.msrv.declared
+        run: |
+          python3 .github/scripts/write-shard-result.py \
+            --workload "${{ matrix.name }}" \
+            --stage msrv \
+            --not-applicable \
+            --reason "${{ matrix.msrv.policy_reason }}" \
+            --out "${{ runner.temp }}/result.json"
+
+      - name: Upload shard result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: result-msrv-${{ matrix.name }}
+          path: ${{ runner.temp }}/result.json
+          retention-days: 7
+
+      - name: Fail shard job if declared MSRV contract failed
+        if: matrix.msrv.declared && steps.contract.outputs.exit_code != '0'
+        run: exit 1
+
+  # Stable, required aggregate context. Computes its verdict with the same
+  # testable script exercised by discover's "Test aggregate verdict logic"
+  # step above -- never opaque GitHub expressions.
+  workloads-ci:
+    name: workloads-ci
+    needs: [discover, ci-shard]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download shard results
+        if: needs.discover.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: result-ci-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: false
+
+      - name: Fetch shard job conclusions
+        if: needs.discover.result == 'success'
+        id: jobs
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
+              per_page: 100,
+            });
+            const statuses = {};
+            for (const job of data.jobs) {
+              const match = job.name.match(/^ci-shard \((.+)\)$/);
+              if (match) {
+                statuses[match[1]] = job.conclusion ?? job.status;
+              }
+            }
+            return statuses;
+          result-encoding: json
+
+      - name: Compute aggregate verdict
+        if: always()
+        run: |
+          python3 .github/scripts/aggregate_verdict.py \
+            --stage ci \
+            --discover-json '${{ needs.discover.outputs.workloads }}' \
+            --results-dir "${{ runner.temp }}/results" \
+            --discovery-ok "${{ needs.discover.result == 'success' }}" \
+            --upstream-job-ok "${{ needs.ci-shard.result == 'success' }}" \
+            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
+
+  workloads-msrv:
+    name: workloads-msrv
+    needs: [discover, msrv-shard]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download shard results
+        if: needs.discover.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: result-msrv-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: false
+
+      - name: Fetch shard job conclusions
+        if: needs.discover.result == 'success'
+        id: jobs
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
+              per_page: 100,
+            });
+            const statuses = {};
+            for (const job of data.jobs) {
+              const match = job.name.match(/^msrv-shard \((.+)\)$/);
+              if (match) {
+                statuses[match[1]] = job.conclusion ?? job.status;
+              }
+            }
+            return statuses;
+          result-encoding: json
+
+      - name: Compute aggregate verdict
+        if: always()
+        run: |
+          python3 .github/scripts/aggregate_verdict.py \
+            --stage msrv \
+            --discover-json '${{ needs.discover.outputs.workloads }}' \
+            --results-dir "${{ runner.temp }}/results" \
+            --discovery-ok "${{ needs.discover.result == 'success' }}" \
+            --upstream-job-ok "${{ needs.msrv-shard.result == 'success' }}" \
+            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
