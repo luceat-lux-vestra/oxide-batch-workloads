@@ -39,10 +39,10 @@ class LabelTaxonomyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "six-digit hex color"):
             self.write_and_load(data)
 
-    def test_missing_required_label_is_rejected(self):
+    def test_empty_managed_prefix_is_rejected(self):
         data = self.load_valid()
-        data["labels"] = [x for x in data["labels"] if x["name"] != "dependencies"]
-        with self.assertRaisesRegex(ValueError, "missing required labels"):
+        data["managed_prefixes"].append("status:")
+        with self.assertRaisesRegex(ValueError, "has no labels"):
             self.write_and_load(data)
 
     def test_singular_group_must_be_managed(self):
