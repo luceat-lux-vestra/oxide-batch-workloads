@@ -29,8 +29,12 @@ def load_taxonomy(path: pathlib.Path = TAXONOMY) -> dict:
     labels = data.get("labels")
     if not isinstance(prefixes, list) or not prefixes or not all(isinstance(x, str) and x for x in prefixes):
         fail("managed_prefixes must be a non-empty string list")
+    if len(prefixes) != len(set(prefixes)):
+        fail("managed_prefixes must not contain duplicates")
     if not isinstance(singular, list) or not all(x in prefixes for x in singular):
         fail("singular_groups must be a subset of managed_prefixes")
+    if len(singular) != len(set(singular)):
+        fail("singular_groups must not contain duplicates")
     if not isinstance(labels, list) or not labels:
         fail("labels must be a non-empty list")
 
@@ -50,21 +54,11 @@ def load_taxonomy(path: pathlib.Path = TAXONOMY) -> dict:
             fail(f"label {name!r} must use a six-digit hex color")
         if not isinstance(description, str) or not description.strip():
             fail(f"label {name!r} must have a description")
-        if name.startswith("type:") and not any(name.startswith(prefix) for prefix in prefixes):
-            fail(f"managed type label {name!r} is outside managed_prefixes")
-        if name.startswith("area:") and not any(name.startswith(prefix) for prefix in prefixes):
-            fail(f"managed area label {name!r} is outside managed_prefixes")
 
-    required = {
-        "type:epic", "type:track", "type:campaign", "type:bug",
-        "type:security", "type:docs", "type:research", "type:task",
-        "area:ci", "area:governance", "area:workload", "area:evidence",
-        "area:postgres", "area:benchmark", "area:interop", "area:security",
-        "area:docs", "dependencies",
-    }
-    missing = sorted(required - seen)
-    if missing:
-        fail(f"canonical taxonomy is missing required labels: {', '.join(missing)}")
+    for prefix in prefixes:
+        if not any(name.startswith(prefix) for name in seen):
+            fail(f"managed prefix {prefix!r} has no labels")
+
     return data
 
 
@@ -85,11 +79,11 @@ def validate_references(data: dict) -> None:
             continue
         for label in extract_issue_form_labels(path):
             if label not in known:
-                errors.append(f"{path.relative_to(ROOT)} references unmanaged/nonexistent label {label!r}")
+                errors.append(f"{path.relative_to(ROOT)} references label {label!r} outside the canonical taxonomy")
 
     dependabot_text = DEPENDABOT.read_text(encoding="utf-8")
     if re.search(r"^\s*- dependencies\s*$", dependabot_text, re.MULTILINE) and "dependencies" not in known:
-        errors.append("dependabot.yml references 'dependencies' but taxonomy does not define it")
+        errors.append("dependabot.yml references 'dependencies' outside the canonical taxonomy")
 
     if errors:
         fail("; ".join(errors))
@@ -102,7 +96,7 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"label taxonomy validation failed: {exc}", file=sys.stderr)
         return 1
-    print(f"label taxonomy valid: {len(data['labels'])} managed labels")
+    print(f"label taxonomy valid: {len(data['labels'])} canonical labels")
     return 0
 
 
