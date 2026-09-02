@@ -157,6 +157,14 @@ def validate_cargo_source_config(base_dir: Path) -> None:
 
 
 def load_workloads(root: Path) -> list[Path]:
+    """Only ever reads the `workloads` key -- never `fixtures`.
+
+    This is what makes the exemption in .github/WORKLOAD_CONTRACT.md
+    structural rather than a per-entry flag: there is no field a real
+    workload entry could set to weaken this exact-published-provenance
+    enforcement, because it is applied uniformly to every entry this
+    function returns.
+    """
     try:
         registry = json.loads((root / "workloads.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as exc:
@@ -172,6 +180,90 @@ def load_workloads(root: Path) -> list[Path]:
     return paths
 
 
+def load_fixtures(root: Path) -> list[Path]:
+    """Reads the `fixtures` key -- disjoint from, and checked differently
+    than, `workloads` (see validate_fixture_manifest)."""
+    try:
+        registry = json.loads((root / "workloads.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        fail(f"cannot read canonical workload registry: {exc}")
+    entries = registry.get("fixtures", []) if isinstance(registry, dict) else []
+    if not isinstance(entries, list):
+        fail("canonical workload registry fixtures must be an array")
+    paths: list[Path] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            fail("invalid fixture registry entry")
+        paths.append(root / entry["path"])
+    return paths
+
+
+def validate_fixture_manifest(manifest_path: Path) -> None:
+    """The exact opposite requirement from validate_manifest: a fixture must
+    declare ZERO first-party OxideBatch dependencies, direct or dev/build,
+    in any target. A fixture proves the CI contract is workload-agnostic; if
+    it actually consumed OxideBatch it would be a workload and #29's full
+    exact-published-provenance enforcement would need to apply to it --
+    registering it under `fixtures` instead would then be a live provenance
+    bypass, which is exactly what this check forecloses.
+    """
+    try:
+        document = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"missing manifest: {manifest_path}")
+    except tomllib.TOMLDecodeError as exc:
+        fail(f"invalid manifest {manifest_path}: {exc}")
+
+    for table_name, table in iter_dependency_tables(document):
+        for alias, spec in table.items():
+            package, _version, _detailed = dependency_package(alias, spec)
+            if is_first_party(package):
+                fail(
+                    f"fixture manifest declares first-party dependency {package!r} in [{table_name}] "
+                    f"({manifest_path}): fixtures must have zero OxideBatch dependencies -- register "
+                    "this as a workload under workloads.json's `workloads` array instead if it "
+                    "actually validates a published release"
+                )
+
+
+def validate_fixture_lockfile(lockfile_path: Path) -> None:
+    """The resolved dependency graph must contain zero first-party OxideBatch
+    packages -- this is what actually closes the escape hatch a manifest-only
+    check leaves open.
+
+    validate_fixture_manifest only sees the alias/spec text in the fixture's
+    own Cargo.toml. Two real Cargo mechanisms can make that text look clean
+    while OxideBatch still ends up in the build: workspace dependency
+    inheritance (`{ workspace = true }` resolves the real package from
+    [workspace.dependencies], never named at the point validate_fixture_manifest
+    reads), and a local/path helper crate that itself depends on OxideBatch
+    (the fixture's own manifest never mentions OxideBatch at all). Cargo.lock
+    is the resolved ground truth regardless of how a package got there, so
+    checking it is what actually proves "zero OxideBatch presence" rather
+    than merely "no direct manifest mention".
+    """
+    try:
+        document = tomllib.loads(lockfile_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"missing lockfile: {lockfile_path}")
+    except tomllib.TOMLDecodeError as exc:
+        fail(f"invalid lockfile {lockfile_path}: {exc}")
+    packages = document.get("package", [])
+    if not isinstance(packages, list):
+        fail(f"lockfile package entries must be an array: {lockfile_path}")
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        name = package.get("name")
+        if isinstance(name, str) and is_first_party(name):
+            fail(
+                f"fixture lockfile resolves first-party package {name!r} ({lockfile_path}): "
+                "fixtures must have zero OxideBatch presence anywhere in the resolved dependency "
+                "graph, not merely no direct manifest mention -- register this as a workload "
+                "instead if it actually validates a published release"
+            )
+
+
 def validate_repository(root: Path) -> dict[str, dict[str, str]]:
     validate_cargo_source_config(root)
     result: dict[str, dict[str, str]] = {}
@@ -180,6 +272,9 @@ def validate_repository(root: Path) -> dict[str, dict[str, str]]:
         subjects = validate_manifest(workload_dir / "Cargo.toml")
         validate_lockfile(workload_dir / "Cargo.lock", subjects)
         result[workload_dir.name] = subjects
+    for fixture_dir in load_fixtures(root):
+        validate_fixture_manifest(fixture_dir / "Cargo.toml")
+        validate_fixture_lockfile(fixture_dir / "Cargo.lock")
     return result
 
 

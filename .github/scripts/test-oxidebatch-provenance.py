@@ -30,10 +30,31 @@ class ProvenanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    def add_fixture(
+        self,
+        name: str,
+        manifest_body: str,
+        lock_packages: list[dict[str, str]] | None = None,
+    ) -> Path:
+        (self.root / "workloads.json").write_text(
+            json.dumps(
+                {
+                    "workloads": [{"name": "workload", "path": "workload"}],
+                    "fixtures": [{"name": name, "path": name}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        fixture_dir = self.root / name
+        fixture_dir.mkdir()
+        (fixture_dir / "Cargo.toml").write_text(manifest_body, encoding="utf-8")
+        self.render_lock_at(fixture_dir, lock_packages or [])
+        return fixture_dir
+
     def write_manifest(self, body: str) -> None:
         (self.workload / "Cargo.toml").write_text(body, encoding="utf-8")
 
-    def write_lock(self, packages: list[dict[str, str]]) -> None:
+    def render_lock_at(self, directory: Path, packages: list[dict[str, str]]) -> None:
         lines = ["version = 4", ""]
         for package in packages:
             lines.extend(
@@ -46,7 +67,10 @@ class ProvenanceTests(unittest.TestCase):
                     "",
                 ]
             )
-        (self.workload / "Cargo.lock").write_text("\n".join(lines), encoding="utf-8")
+        (directory / "Cargo.lock").write_text("\n".join(lines), encoding="utf-8")
+
+    def write_lock(self, packages: list[dict[str, str]]) -> None:
+        self.render_lock_at(self.workload, packages)
 
     def valid_lock(self, extra: list[dict[str, str]] | None = None) -> None:
         packages = [
@@ -68,6 +92,107 @@ class ProvenanceTests(unittest.TestCase):
         self.valid_lock()
         result = validator.validate_repository(self.root)
         self.assertEqual(result["workload"], {"oxide-batch": "0.6.0", "oxide-batch-test": "0.6.0"})
+
+    def test_rejects_missing_subject(self) -> None:
+        self.write_manifest('[dependencies]\nserde = "1"\n')
+        self.write_lock([])
+        self.assert_rejected("declares no first-party OxideBatch validation subject")
+
+    def test_fixture_with_no_oxidebatch_dependency_is_accepted_and_not_a_subject(self) -> None:
+        self.add_fixture("clean-fixture", '[dependencies]\nserde_json = "1"\n')
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        result = validator.validate_repository(self.root)
+        # The fixture is checked (it must have zero OxideBatch deps) but is
+        # never itself a provenance subject -- only `workload` appears.
+        self.assertEqual(set(result), {"workload"})
+
+    def test_fixture_with_no_dependencies_at_all_is_accepted(self) -> None:
+        self.add_fixture("clean-fixture", '[package]\nname = "clean-fixture"\nversion = "0.0.0"\n')
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        validator.validate_repository(self.root)
+
+    def test_rejects_fixture_declaring_first_party_direct_dependency(self) -> None:
+        # This is exactly the classification-escape-hatch scenario a strict
+        # reviewer flagged: registering a real OxideBatch consumer under
+        # `fixtures` must not let it skip #29 enforcement.
+        self.add_fixture("sneaky-fixture", '[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_declaring_first_party_dev_dependency(self) -> None:
+        self.add_fixture(
+            "sneaky-fixture",
+            '[dev-dependencies]\nob-test = { package = "oxide-batch-test", version = "=0.6.0" }\n',
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_declaring_first_party_target_specific_dependency(self) -> None:
+        self.add_fixture(
+            "sneaky-fixture",
+            "[target.'cfg(unix)'.dependencies]\noxide-batch = \"=0.6.0\"\n",
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_resolving_first_party_package_via_workspace_inheritance(self) -> None:
+        # The manifest text alone looks clean: `ob = { workspace = true }`
+        # names no package directly -- the real package only exists in
+        # [workspace.dependencies], which validate_fixture_manifest never
+        # resolves. The lockfile is the ground truth for what actually gets
+        # compiled, and this is exactly the bypass a manifest-only check
+        # leaves open.
+        self.add_fixture(
+            "sneaky-fixture",
+            '[package]\nname = "sneaky-fixture"\nversion = "0.0.0"\n'
+            "[workspace]\n"
+            '[workspace.dependencies]\nob = { package = "oxide-batch", version = "=0.6.0" }\n'
+            "[dependencies]\nob = { workspace = true }\n",
+            lock_packages=[{"name": "oxide-batch", "version": "0.6.0"}],
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixture lockfile resolves first-party package")
+
+    def test_rejects_fixture_resolving_first_party_package_via_local_helper_crate(self) -> None:
+        # The fixture's own manifest never mentions OxideBatch at all -- only
+        # an unrelated-looking local helper crate does. Only the resolved
+        # lockfile graph reveals the actual OxideBatch presence.
+        self.add_fixture(
+            "sneaky-fixture",
+            '[dependencies]\nhelper = { path = "../helper" }\n',
+            lock_packages=[{"name": "oxide-batch", "version": "0.6.0"}, {"name": "helper", "version": "0.0.0"}],
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixture lockfile resolves first-party package")
+
+    def test_rejects_fixture_with_missing_manifest(self) -> None:
+        (self.root / "workloads.json").write_text(
+            json.dumps(
+                {
+                    "workloads": [{"name": "workload", "path": "workload"}],
+                    "fixtures": [{"name": "ghost-fixture", "path": "ghost-fixture"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "ghost-fixture").mkdir()
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("missing manifest")
+
+    def test_rejects_fixture_with_missing_lockfile(self) -> None:
+        fixture_dir = self.add_fixture("clean-fixture", '[dependencies]\nserde_json = "1"\n')
+        (fixture_dir / "Cargo.lock").unlink()
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("missing lockfile")
 
     def test_ignores_non_first_party_workspace_dependency(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n')

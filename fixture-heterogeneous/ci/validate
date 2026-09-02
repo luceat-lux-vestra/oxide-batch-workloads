@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Workload-owned CI contract entrypoint for fixture-heterogeneous.
+# See ../../.github/WORKLOAD_CONTRACT.md for the contract this implements.
+#
+# Deliberately has no services, no database, no migration, and no smoke
+# command sequence in common with csv-postgres/ci/validate -- that
+# divergence is the entire point of this fixture.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+stage="${1:?usage: ci/validate <ci|msrv>}"
+
+case "$stage" in
+  ci)
+    cargo fmt --check
+    cargo clippy --locked --all-targets -- -D warnings
+    cargo build --locked --all-targets
+    cargo test --locked
+
+    echo "golden-path smoke: histogram over checked-in fixture input"
+    diff <(cargo run --locked -q -- histogram tests/fixtures/input.txt) tests/fixtures/golden.json
+    ;;
+  msrv)
+    echo "::error::fixture-heterogeneous declares msrv.declared=false; the central workflow must never invoke this stage" >&2
+    exit 1
+    ;;
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 1
+    ;;
+esac

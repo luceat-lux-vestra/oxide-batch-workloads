@@ -1,9 +1,20 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "workloads": [
     {
       "name": "csv-postgres",
-      "path": "csv-postgres"
+      "path": "csv-postgres",
+      "msrv": { "declared": true }
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "fixture-heterogeneous",
+      "path": "fixture-heterogeneous",
+      "msrv": {
+        "declared": false,
+        "policy_reason": "bounded CI-orchestration fixture proving contract-driven fan-out; not a versioned release artifact and carries no MSRV guarantee"
+      }
     }
   ],
   "reserved_top_level_cargo_projects": []
