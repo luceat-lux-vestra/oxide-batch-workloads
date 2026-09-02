@@ -1,7 +1,7 @@
 name: Workload bug
 description: Report a reproducible defect in workload code or validation behavior
 title: "bug: "
-labels: ["bug"]
+labels: ["type:bug", "area:workload"]
 body:
   - type: markdown
     attributes:
