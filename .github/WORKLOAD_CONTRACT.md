@@ -67,15 +67,24 @@ database/broker/object-store topology. It never branches on an entry's
 
   This is a two-sided structural guarantee, not merely "the validator
   doesn't look here": `validate-oxidebatch-provenance.py` *does* read every
-  `fixtures` entry's `Cargo.toml`, specifically to enforce the opposite
-  invariant -- a fixture must declare **zero** first-party
-  `oxide-batch`/`oxide-batch-*` dependencies (direct, dev, build, or
-  target-specific). Without that check, registering an actual OxideBatch
-  consumer under `fixtures` instead of `workloads` would itself become a
-  live #29 bypass -- a classification escape hatch replacing the boolean
-  one. A fixture that ever needs an OxideBatch dependency is no longer a
-  fixture; move it to `workloads` and give it full provenance and evidence
-  treatment.
+  `fixtures` entry's `Cargo.toml` **and** `Cargo.lock`, specifically to
+  enforce the opposite invariant -- a fixture must have **zero** first-party
+  `oxide-batch`/`oxide-batch-*` presence anywhere in its resolved dependency
+  graph. Without that check, registering an actual OxideBatch consumer under
+  `fixtures` instead of `workloads` would itself become a live #29 bypass --
+  a classification escape hatch replacing the boolean one. A fixture that
+  ever needs an OxideBatch dependency is no longer a fixture; move it to
+  `workloads` and give it full provenance and evidence treatment.
+
+  The manifest check alone is not enough: Cargo workspace dependency
+  inheritance (`{ workspace = true }`) resolves the real package from
+  `[workspace.dependencies]`, never named in the text the manifest check
+  reads, and a local/path helper crate can depend on OxideBatch without the
+  fixture's own manifest ever mentioning it. `Cargo.lock` is the resolved
+  ground truth regardless of how a package got there, so
+  `validate_fixture_lockfile` additionally rejects any `[[package]]` entry
+  whose `name` matches `oxide-batch`/`oxide-batch-*`, independent of what
+  the manifest declares.
 
 Both arrays share the same per-entry shape: `name`, `path`, `msrv`.
 

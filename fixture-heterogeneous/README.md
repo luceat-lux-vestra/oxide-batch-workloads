@@ -12,11 +12,14 @@ a workload to differ:
 
 - no OxideBatch dependency at all -- registered under `workloads.json`'s
   `fixtures` array, not `workloads`. `validate-oxidebatch-provenance.py`
-  (#29) checks this `Cargo.toml` too, but for the opposite invariant it
-  applies to every `fixtures` entry: zero first-party OxideBatch
-  dependencies, enforced fail-closed. That is what structurally (not just
-  declaratively) keeps this project outside #29's exact-published-provenance
-  scope, rather than merely being undeclared;
+  (#29) checks this project's `Cargo.toml` *and* `Cargo.lock` too, but for
+  the opposite invariant it applies to every `fixtures` entry: zero
+  first-party OxideBatch presence anywhere in the resolved dependency
+  graph, enforced fail-closed (the lockfile check exists specifically
+  because a manifest-only check can't see OxideBatch pulled in through
+  workspace dependency inheritance or a local helper crate). That is what
+  structurally (not just declaratively) keeps this project outside #29's
+  exact-published-provenance scope, rather than merely being undeclared;
 - no database, no services, no migration;
 - no declared MSRV (`msrv.declared: false`, with an explicit `policy_reason`
   instead of a silently skipped shard);

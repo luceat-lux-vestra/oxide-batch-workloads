@@ -226,6 +226,44 @@ def validate_fixture_manifest(manifest_path: Path) -> None:
                 )
 
 
+def validate_fixture_lockfile(lockfile_path: Path) -> None:
+    """The resolved dependency graph must contain zero first-party OxideBatch
+    packages -- this is what actually closes the escape hatch a manifest-only
+    check leaves open.
+
+    validate_fixture_manifest only sees the alias/spec text in the fixture's
+    own Cargo.toml. Two real Cargo mechanisms can make that text look clean
+    while OxideBatch still ends up in the build: workspace dependency
+    inheritance (`{ workspace = true }` resolves the real package from
+    [workspace.dependencies], never named at the point validate_fixture_manifest
+    reads), and a local/path helper crate that itself depends on OxideBatch
+    (the fixture's own manifest never mentions OxideBatch at all). Cargo.lock
+    is the resolved ground truth regardless of how a package got there, so
+    checking it is what actually proves "zero OxideBatch presence" rather
+    than merely "no direct manifest mention".
+    """
+    try:
+        document = tomllib.loads(lockfile_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"missing lockfile: {lockfile_path}")
+    except tomllib.TOMLDecodeError as exc:
+        fail(f"invalid lockfile {lockfile_path}: {exc}")
+    packages = document.get("package", [])
+    if not isinstance(packages, list):
+        fail(f"lockfile package entries must be an array: {lockfile_path}")
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        name = package.get("name")
+        if isinstance(name, str) and is_first_party(name):
+            fail(
+                f"fixture lockfile resolves first-party package {name!r} ({lockfile_path}): "
+                "fixtures must have zero OxideBatch presence anywhere in the resolved dependency "
+                "graph, not merely no direct manifest mention -- register this as a workload "
+                "instead if it actually validates a published release"
+            )
+
+
 def validate_repository(root: Path) -> dict[str, dict[str, str]]:
     validate_cargo_source_config(root)
     result: dict[str, dict[str, str]] = {}
@@ -236,6 +274,7 @@ def validate_repository(root: Path) -> dict[str, dict[str, str]]:
         result[workload_dir.name] = subjects
     for fixture_dir in load_fixtures(root):
         validate_fixture_manifest(fixture_dir / "Cargo.toml")
+        validate_fixture_lockfile(fixture_dir / "Cargo.lock")
     return result
 
 
