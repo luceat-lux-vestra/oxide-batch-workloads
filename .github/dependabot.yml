@@ -15,10 +15,10 @@ updates:
           - minor
           - patch
     ignore:
-      # A workload's OxideBatch version is its validation subject. Upgrading it
-      # is a deliberate validation campaign, never routine dependency churn.
-      - dependency-name: oxide-batch
-      - dependency-name: oxide-batch-test
+      # A workload's first-party OxideBatch crates are its validation subject.
+      # Advancing any oxide-batch* crate is a deliberate validation campaign,
+      # never routine dependency churn.
+      - dependency-name: "oxide-batch*"
     labels:
       - dependencies
 
