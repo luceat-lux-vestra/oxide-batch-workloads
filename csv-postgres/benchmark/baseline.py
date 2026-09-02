@@ -10,11 +10,11 @@ performance threshold.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import platform
-import re
 import statistics
 import subprocess
 import tempfile
@@ -23,10 +23,28 @@ from pathlib import Path
 from typing import Any
 
 TIME_FORMAT = "elapsed=%e\nuser=%U\nsystem=%S\nmax_rss_kib=%M\n"
+VERIFY_KEYS = {
+    "source_rows",
+    "db_row_count",
+    "row_counts_match",
+    "source_digest_sha256",
+    "db_digest_sha256",
+    "digests_match",
+}
 
 
-def run_checked(command: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def run_checked(
+    command: list[str], *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=True, text=True, env=env, capture_output=True)
+
+
+def sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def read_first_matching(path: Path, prefix: str) -> str | None:
@@ -37,6 +55,23 @@ def read_first_matching(path: Path, prefix: str) -> str | None:
     except OSError:
         return None
     return None
+
+
+def oxide_batch_subject() -> dict[str, Any]:
+    metadata = json.loads(
+        run_checked(["cargo", "metadata", "--locked", "--format-version", "1"]).stdout
+    )
+    packages = [package for package in metadata["packages"] if package["name"] == "oxide-batch"]
+    if len(packages) != 1:
+        raise RuntimeError(f"expected exactly one oxide-batch package, found {len(packages)}")
+    package = packages[0]
+    lock_path = Path("Cargo.lock")
+    return {
+        "name": package["name"],
+        "version": package["version"],
+        "source": package.get("source"),
+        "Cargo.lock_sha256": sha256_file(lock_path),
+    }
 
 
 def host_provenance() -> dict[str, Any]:
@@ -63,6 +98,7 @@ def host_provenance() -> dict[str, Any]:
         "cargo": optional(["cargo", "--version"]),
         "postgres": postgres_version,
         "postgres_image_id": image_id,
+        "oxide_batch_subject": oxide_batch_subject(),
         "github": {
             "repository": os.getenv("GITHUB_REPOSITORY"),
             "sha": os.getenv("GITHUB_SHA"),
@@ -87,6 +123,41 @@ def parse_time_file(path: Path) -> dict[str, float | int]:
     if set(values) != expected:
         raise RuntimeError(f"unexpected /usr/bin/time output keys: {sorted(values)}")
     return values
+
+
+def parse_verify_report(stdout: str) -> dict[str, Any]:
+    try:
+        report = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("verifier did not emit valid JSON") from exc
+    if not isinstance(report, dict) or set(report) != VERIFY_KEYS:
+        keys = sorted(report) if isinstance(report, dict) else []
+        raise RuntimeError(f"unexpected verifier report keys: {keys}")
+    if not report["row_counts_match"] or not report["digests_match"]:
+        raise RuntimeError(f"final-state verifier reported mismatch: {json.dumps(report, sort_keys=True)}")
+    if int(report["source_rows"]) != int(report["db_row_count"]):
+        raise RuntimeError("verifier row-count booleans contradict row counts")
+    if report["source_digest_sha256"] != report["db_digest_sha256"]:
+        raise RuntimeError("verifier digest booleans contradict digests")
+    return report
+
+
+def verify_final_state(
+    *, binary: Path, database_url: str, input_path: Path, env: dict[str, str]
+) -> dict[str, Any]:
+    completed = subprocess.run(
+        [str(binary), "verify", "--database-url", database_url, "--input", str(input_path)],
+        check=False,
+        text=True,
+        env=env,
+        capture_output=True,
+    )
+    report = parse_verify_report(completed.stdout)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"final-state verifier exited {completed.returncode}: {json.dumps(report, sort_keys=True)}"
+        )
+    return report
 
 
 def percentile(sorted_values: list[float], p: float) -> float:
@@ -161,17 +232,20 @@ def timed_import(
             str(chunk_size),
         ]
         started_at = time.time()
+        started_perf = time.perf_counter()
         subprocess.run(command, check=True, text=True, env=env)
+        elapsed = time.perf_counter() - started_perf
         finished_at = time.time()
         metrics = parse_time_file(time_path)
-        run_checked(
-            [str(binary), "verify", "--database-url", database_url, "--input", str(input_path)],
+        verification = verify_final_state(
+            binary=binary,
+            database_url=database_url,
+            input_path=input_path,
             env=env,
         )
     finally:
         time_path.unlink(missing_ok=True)
 
-    elapsed = float(metrics["elapsed"])
     if elapsed <= 0.0:
         raise RuntimeError("timed import reported non-positive elapsed time")
     return {
@@ -179,11 +253,12 @@ def timed_import(
         "started_at_unix": started_at,
         "finished_at_unix": finished_at,
         "elapsed_seconds": elapsed,
+        "gnu_time_elapsed_seconds": float(metrics["elapsed"]),
         "user_cpu_seconds": float(metrics["user"]),
         "system_cpu_seconds": float(metrics["system"]),
         "max_rss_kib": int(metrics["max_rss_kib"]),
         "rows_per_second": rows / elapsed,
-        "verification": "passed",
+        "verification": verification,
     }
 
 
@@ -225,6 +300,9 @@ def main() -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(manifest.get("rows", -1)) != args.rows or int(manifest.get("seed", -1)) != args.seed:
         raise SystemExit("input manifest rows/seed do not match benchmark configuration")
+    actual_input_sha256 = sha256_file(args.input)
+    if manifest.get("sha256") != actual_input_sha256:
+        raise SystemExit("input bytes do not match the generated manifest sha256")
 
     env = os.environ.copy()
     env.setdefault("RUST_LOG", "error")
@@ -242,6 +320,7 @@ def main() -> int:
             "measured_runs": args.measured_runs,
             "binary": str(args.binary),
             "input": str(args.input),
+            "input_sha256": actual_input_sha256,
             "input_manifest": manifest,
         },
         "environment": host_provenance(),
@@ -283,7 +362,9 @@ def main() -> int:
         report["failure"] = {"type": type(exc).__name__, "message": str(exc)}
         return_code = 1
     finally:
-        args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
     print(json.dumps(report.get("summary", {}), indent=2, sort_keys=True))
     return return_code
