@@ -30,19 +30,20 @@ class ProvenanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def add_fixture_entry_pointing_nowhere(self) -> None:
-        # A `fixtures` array entry whose path doesn't even exist -- proving
-        # load_workloads() never reads this key at all, not merely that it
-        # happens to be well-formed.
+    def add_fixture(self, name: str, manifest_body: str) -> Path:
         (self.root / "workloads.json").write_text(
             json.dumps(
                 {
                     "workloads": [{"name": "workload", "path": "workload"}],
-                    "fixtures": [{"name": "decoy", "path": "does-not-exist"}],
+                    "fixtures": [{"name": name, "path": name}],
                 }
             ),
             encoding="utf-8",
         )
+        fixture_dir = self.root / name
+        fixture_dir.mkdir()
+        (fixture_dir / "Cargo.toml").write_text(manifest_body, encoding="utf-8")
+        return fixture_dir
 
     def write_manifest(self, body: str) -> None:
         (self.workload / "Cargo.toml").write_text(body, encoding="utf-8")
@@ -88,14 +89,62 @@ class ProvenanceTests(unittest.TestCase):
         self.write_lock([])
         self.assert_rejected("declares no first-party OxideBatch validation subject")
 
-    def test_fixtures_array_is_never_read_even_when_it_would_fail_validation(self) -> None:
-        # A `fixtures` entry pointing at a nonexistent path would blow up
-        # instantly if load_workloads() looked at it. It must not.
-        self.add_fixture_entry_pointing_nowhere()
+    def test_fixture_with_no_oxidebatch_dependency_is_accepted_and_not_a_subject(self) -> None:
+        self.add_fixture("clean-fixture", '[dependencies]\nserde_json = "1"\n')
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
         self.valid_lock()
         result = validator.validate_repository(self.root)
+        # The fixture is checked (it must have zero OxideBatch deps) but is
+        # never itself a provenance subject -- only `workload` appears.
         self.assertEqual(set(result), {"workload"})
+
+    def test_fixture_with_no_dependencies_at_all_is_accepted(self) -> None:
+        self.add_fixture("clean-fixture", '[package]\nname = "clean-fixture"\nversion = "0.0.0"\n')
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        validator.validate_repository(self.root)
+
+    def test_rejects_fixture_declaring_first_party_direct_dependency(self) -> None:
+        # This is exactly the classification-escape-hatch scenario a strict
+        # reviewer flagged: registering a real OxideBatch consumer under
+        # `fixtures` must not let it skip #29 enforcement.
+        self.add_fixture("sneaky-fixture", '[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_declaring_first_party_dev_dependency(self) -> None:
+        self.add_fixture(
+            "sneaky-fixture",
+            '[dev-dependencies]\nob-test = { package = "oxide-batch-test", version = "=0.6.0" }\n',
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_declaring_first_party_target_specific_dependency(self) -> None:
+        self.add_fixture(
+            "sneaky-fixture",
+            "[target.'cfg(unix)'.dependencies]\noxide-batch = \"=0.6.0\"\n",
+        )
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("fixtures must have zero OxideBatch dependencies")
+
+    def test_rejects_fixture_with_missing_manifest(self) -> None:
+        (self.root / "workloads.json").write_text(
+            json.dumps(
+                {
+                    "workloads": [{"name": "workload", "path": "workload"}],
+                    "fixtures": [{"name": "ghost-fixture", "path": "ghost-fixture"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "ghost-fixture").mkdir()
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
+        self.assert_rejected("missing manifest")
 
     def test_ignores_non_first_party_workspace_dependency(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n')

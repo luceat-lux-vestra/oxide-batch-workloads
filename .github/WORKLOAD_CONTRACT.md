@@ -61,9 +61,21 @@ database/broker/object-store topology. It never branches on an entry's
 - **`fixtures`** are bounded, non-product CI-orchestration proofs (see
   below). They still go through the identical `ci/validate`
   fan-out/aggregate machinery as `workloads` -- that shared path is what
-  proves the machinery is contract-driven -- but the provenance validator
-  never reads this key, so a fixture is never an OxideBatch validation
-  claim.
+  proves the machinery is contract-driven -- but `validate-oxidebatch-provenance.py`
+  never treats a fixture as a provenance subject requiring #29's exact-version
+  enforcement.
+
+  This is a two-sided structural guarantee, not merely "the validator
+  doesn't look here": `validate-oxidebatch-provenance.py` *does* read every
+  `fixtures` entry's `Cargo.toml`, specifically to enforce the opposite
+  invariant -- a fixture must declare **zero** first-party
+  `oxide-batch`/`oxide-batch-*` dependencies (direct, dev, build, or
+  target-specific). Without that check, registering an actual OxideBatch
+  consumer under `fixtures` instead of `workloads` would itself become a
+  live #29 bypass -- a classification escape hatch replacing the boolean
+  one. A fixture that ever needs an OxideBatch dependency is no longer a
+  fixture; move it to `workloads` and give it full provenance and evidence
+  treatment.
 
 Both arrays share the same per-entry shape: `name`, `path`, `msrv`.
 

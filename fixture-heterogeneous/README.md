@@ -11,9 +11,12 @@ It deliberately differs from `csv-postgres` in every way the contract allows
 a workload to differ:
 
 - no OxideBatch dependency at all -- registered under `workloads.json`'s
-  `fixtures` array, not `workloads`, which is what structurally (not just
-  declaratively) keeps `validate-oxidebatch-provenance.py` (#29) from ever
-  looking at this project;
+  `fixtures` array, not `workloads`. `validate-oxidebatch-provenance.py`
+  (#29) checks this `Cargo.toml` too, but for the opposite invariant it
+  applies to every `fixtures` entry: zero first-party OxideBatch
+  dependencies, enforced fail-closed. That is what structurally (not just
+  declaratively) keeps this project outside #29's exact-published-provenance
+  scope, rather than merely being undeclared;
 - no database, no services, no migration;
 - no declared MSRV (`msrv.declared: false`, with an explicit `policy_reason`
   instead of a silently skipped shard);
