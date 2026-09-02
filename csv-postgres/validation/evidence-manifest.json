@@ -148,13 +148,13 @@
       {
         "name": "declared-rust-msrv",
         "value": "1.95",
-        "trust": "deterministically-recomputed",
+        "trust": "recorded-metadata",
         "source": "producer Cargo.toml in semantic closure"
       },
       {
         "name": "database-image",
         "value": "postgres:18",
-        "trust": "deterministically-recomputed",
+        "trust": "recorded-metadata",
         "source": "producer docker-compose.yml in semantic closure"
       },
       {
