@@ -240,8 +240,9 @@ shard's pass/fail signal. The GitHub workflow is a thin, workload-name-agnostic
 caller of this script, not a second implementation of the scan -- #33's
 planned scheduled advisory-drift audit is expected to install the same
 pinned cargo-deny version and invoke this exact script per workload, rather
-than reimplementing it. (#33 does not exist yet as of this document; nothing
-here should be read as claiming scheduled auditing is already wired up.)
+than reimplementing it. (#33's scheduled audit implementation does not exist
+yet as of this document; nothing here should be read as claiming scheduled
+auditing is already wired up.)
 
 **`supply-chain` is the stable aggregate, and it is policy-uncompromising.**
 Unlike `msrv`, the `supply-chain` stage has no policy-exemption concept
@@ -262,9 +263,10 @@ advisory data, and stays a required context in its own right. `supply-chain`
 is a full-current-graph control: it re-evaluates every registered real
 workload's entire locked dependency graph against the canonical policy on
 every PR, catching pre-existing graph issues a diff-scoped review would
-never see (for example, a license or advisory finding introduced by an
-upstream release with no dependency change in the PR at all, or a graph
-that predates `dependency-review` being enabled). Removing either would
+never see (for example, a newly published advisory affecting an
+already-locked dependency, or a pre-existing license-policy violation
+outside the PR diff, or a graph that predates `dependency-review` being
+enabled). Removing either would
 leave a real gap the other does not cover.
 
 **Policy exceptions: none, as of this writing.** `deny.toml`'s `ignore`,
