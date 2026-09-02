@@ -46,20 +46,30 @@ non-empty rationale; it must not be silently omitted from the inventory.
 ## CI: registry-driven aggregate gates
 
 The merge-gate workflow (`.github/workflows/ci.yml`) never hardcodes a
-workload's build/test/service commands. It fans out over every workload in
-`workloads.json` and invokes a small, stable, workload-owned contract
-(`<workload>/ci/validate`) — see
-[`.github/WORKLOAD_CONTRACT.md`](.github/WORKLOAD_CONTRACT.md) for exactly
-what that contract is, why `workloads.json` structurally separates real
-`workloads` from bounded CI `fixtures`, and why MSRV is always resolved from
-each entry's own `Cargo.toml` rather than duplicated in the registry. The
-target stable branch-protection contexts are the aggregate verdicts
-(`workloads-ci`, `workloads-msrv`), computed by a small testable tool
-(`.github/scripts/aggregate_verdict.py`) rather than opaque workflow
-expressions — never a per-workload job name. Live branch protection still
-requires `ci`/`msrv` today; `ci.yml` keeps emitting those as thin
-compatibility shims until the ruleset migration described in
-`.github/WORKLOAD_CONTRACT.md` completes.
+workload's build/test/service commands. It fans out over every registered entry
+and invokes a small, stable, workload-owned contract (`<workload>/ci/validate`)
+— see [`.github/WORKLOAD_CONTRACT.md`](.github/WORKLOAD_CONTRACT.md) for the
+full contract, including the structural separation between real `workloads`
+and bounded CI `fixtures` and the per-entry MSRV policy resolved from each
+`Cargo.toml`.
+
+The protected stable workload contexts are `workloads-ci` and
+`workloads-msrv`, computed by `.github/scripts/aggregate_verdict.py`; the old
+single-workload compatibility contexts `ci` and `msrv` were removed after the
+staged ruleset migration completed. `supply-chain` is also a protected stable
+aggregate for every registered real workload's locked dependency graph, while
+`dependency-review` remains separately required for its distinct diff-scoped
+dependency-change coverage.
+
+The live `Protect main` ruleset therefore requires these four stable contexts:
+
+- `dependency-review`
+- `workloads-ci`
+- `workloads-msrv`
+- `supply-chain`
+
+Per-workload shard job names are implementation details and are never branch
+protection contracts.
 
 ## Adding a workload
 
