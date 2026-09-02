@@ -51,6 +51,12 @@ class LabelTaxonomyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "subset of managed_prefixes"):
             self.write_and_load(data)
 
+    def test_structural_type_must_reference_defined_type_label(self):
+        data = self.load_valid()
+        data["structural_types"].append("type:missing")
+        with self.assertRaisesRegex(ValueError, "is not defined in labels"):
+            self.write_and_load(data)
+
 
 if __name__ == "__main__":
     unittest.main()
