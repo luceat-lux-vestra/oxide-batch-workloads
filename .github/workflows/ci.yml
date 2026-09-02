@@ -1,9 +1,9 @@
 name: CI
 
 # Every trigger here is unconditional (no `paths`/`paths-ignore`): the
-# stable aggregate contexts below (`workloads-ci`, `workloads-msrv`) must
-# always be producible on every relevant PR so they remain valid branch
-# protection required contexts.
+# stable aggregate contexts below (`workloads-ci`, `workloads-msrv`,
+# `supply-chain`) must always be producible on every relevant PR so they
+# remain valid branch protection required contexts.
 on:
   push:
     branches: [main]
@@ -28,9 +28,10 @@ jobs:
   discover:
     name: discover
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     outputs:
       workloads: ${{ steps.discover.outputs.workloads }}
+      supply-chain-workloads: ${{ steps.discover-supply-chain.outputs.workloads }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,11 +56,29 @@ jobs:
       - name: Test shard-result normalization
         run: python3 .github/scripts/test_write_shard_result.py
 
+      - name: Test supply-chain discovery projection
+        run: python3 .github/scripts/test-discover-supply-chain-workloads.py
+
       - name: Discover workload fan-out matrix
         id: discover
         run: |
           matrix=$(python3 .github/scripts/discover-workloads.py)
           echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
+
+      - name: Discover supply-chain fan-out matrix
+        id: discover-supply-chain
+        run: |
+          matrix=$(python3 .github/scripts/discover-supply-chain-workloads.py)
+          echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version "=0.20.2" --locked
+
+      - name: Test supply-chain validator
+        run: python3 .github/scripts/test-validate-supply-chain.py
+
+      - name: Test supply-chain policy fixtures
+        run: python3 .github/scripts/test-supply-chain-policy.py
 
   # Fans out over every registered workload and invokes its own `ci/validate
   # ci` contract. Knows nothing about what that contract does.
@@ -189,6 +208,59 @@ jobs:
         if: matrix.msrv.declared && steps.contract.outputs.exit_code != '0'
         run: exit 1
 
+  # Fans out only over every registered REAL workload (workloads.json's
+  # `workloads` array -- never `fixtures`, via discover's separate
+  # supply-chain discovery projection). Invokes the repository-owned
+  # validator, which is the only place that knows how to turn a registry
+  # name into a cargo-deny invocation against root deny.toml. Contains no
+  # workload-name conditionals: adding a second real workload to the
+  # registry fans this job out automatically (see
+  # test-discover-supply-chain-workloads.py).
+  supply-chain-shard:
+    name: supply-chain-shard (${{ matrix.name }})
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.supply-chain-workloads) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version "=0.20.2" --locked
+
+      - name: Run supply-chain policy validator
+        id: contract
+        run: |
+          set +e
+          python3 .github/scripts/validate-supply-chain.py --workload "${{ matrix.name }}"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Record shard result
+        if: always()
+        run: |
+          python3 .github/scripts/write-shard-result.py \
+            --workload "${{ matrix.name }}" \
+            --stage supply-chain \
+            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --out "${{ runner.temp }}/result.json"
+
+      - name: Upload shard result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: result-supply-chain-${{ matrix.name }}
+          path: ${{ runner.temp }}/result.json
+          retention-days: 7
+
+      - name: Fail shard job if supply-chain policy check failed
+        if: steps.contract.outputs.exit_code != '0'
+        run: exit 1
+
   # Stable, required aggregate context. Computes its verdict with the same
   # testable script exercised by discover's "Test aggregate verdict logic"
   # step above -- never opaque GitHub expressions.
@@ -298,4 +370,64 @@ jobs:
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "${{ needs.discover.result == 'success' }}" \
             --upstream-job-ok "${{ needs.msrv-shard.result == 'success' }}" \
+            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
+
+  # Stable, required aggregate context for #32's repository-wide
+  # supply-chain policy (deny.toml). Fans out only over real workloads (see
+  # supply-chain-shard above); `dependency-review` remains a separate,
+  # diff-scoped required context protecting a distinct surface -- this is
+  # a full-current-graph control, not an alias for it. Not yet registered
+  # in the live branch-protection ruleset; see .github/WORKLOAD_CONTRACT.md.
+  supply-chain:
+    name: supply-chain
+    needs: [discover, supply-chain-shard]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download shard results
+        if: needs.discover.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: result-supply-chain-*
+          path: ${{ runner.temp }}/results
+          merge-multiple: false
+
+      - name: Fetch shard job conclusions
+        if: needs.discover.result == 'success'
+        id: jobs
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
+              per_page: 100,
+            });
+            const statuses = {};
+            for (const job of data.jobs) {
+              const match = job.name.match(/^supply-chain-shard \((.+)\)$/);
+              if (match) {
+                statuses[match[1]] = job.conclusion ?? job.status;
+              }
+            }
+            return statuses;
+          result-encoding: json
+
+      - name: Compute aggregate verdict
+        if: always()
+        run: |
+          python3 .github/scripts/aggregate_verdict.py \
+            --stage supply-chain \
+            --discover-json '${{ needs.discover.outputs.supply-chain-workloads }}' \
+            --results-dir "${{ runner.temp }}/results" \
+            --discovery-ok "${{ needs.discover.result == 'success' }}" \
+            --upstream-job-ok "${{ needs.supply-chain-shard.result == 'success' }}" \
             --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'

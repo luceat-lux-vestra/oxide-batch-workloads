@@ -38,6 +38,14 @@ class ExpectedOutcomeForTests(unittest.TestCase):
         self.assertEqual(agg.expected_outcome_for("msrv", {"declared": False}), "not-applicable")
         self.assertEqual(agg.expected_outcome_for("msrv", None), "not-applicable")
 
+    def test_supply_chain_stage_always_requires_validated(self) -> None:
+        # Unlike msrv, supply-chain has no policy-exemption concept: every
+        # registered real workload is always expected to have actually run
+        # the scan, regardless of its (irrelevant) msrv policy.
+        self.assertEqual(agg.expected_outcome_for("supply-chain", {"declared": True}), "validated")
+        self.assertEqual(agg.expected_outcome_for("supply-chain", {"declared": False}), "validated")
+        self.assertEqual(agg.expected_outcome_for("supply-chain", None), "validated")
+
 
 class ComputeVerdictTests(unittest.TestCase):
     def test_full_matching_set_passes(self) -> None:
@@ -167,6 +175,82 @@ class ComputeVerdictTests(unittest.TestCase):
         self.assertIn("beta", reasons)
         self.assertIn("duplicate", reasons)
         self.assertIn("gamma", reasons)
+
+
+class SupplyChainStageCoverageTests(unittest.TestCase):
+    """Explicit incomplete-coverage proof for the supply-chain stage (#32).
+
+    Exercises the exact same production `compute_verdict` used by the other
+    stages, with two expected real workloads A + B, covering every
+    incomplete/duplicate/malformed/upstream-failure scenario the aggregate
+    must fail closed on, plus the one scenario where it must pass.
+    """
+
+    def sc_exp(self, name: str) -> agg.ExpectedShard:
+        return agg.ExpectedShard(name=name, expected_outcome="validated")
+
+    def sc_ok(self, name: str) -> agg.ShardResult:
+        return agg.ShardResult(workload=name, stage="supply-chain", status="success", outcome="validated", source=f"{name}.json")
+
+    def test_a_only_fails(self) -> None:
+        verdict = agg.compute_verdict([self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A")])
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("B" in r and "missing" in r for r in verdict.reasons))
+
+    def test_b_cancelled_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A")], job_statuses={"B": "cancelled"}
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("B" in r and "cancelled" in r for r in verdict.reasons))
+
+    def test_b_skipped_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A")], job_statuses={"B": "skipped"}
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("B" in r and "unexpectedly skipped" in r for r in verdict.reasons))
+
+    def test_duplicate_a_fails(self) -> None:
+        dup1 = self.sc_ok("A")
+        dup2 = agg.ShardResult(workload="A", stage="supply-chain", status="success", outcome="validated", source="A-2.json")
+        verdict = agg.compute_verdict([self.sc_exp("A"), self.sc_exp("B")], [dup1, dup2, self.sc_ok("B")])
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("duplicate" in r and "A" in r for r in verdict.reasons))
+
+    def test_unexpected_c_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A"), self.sc_ok("B"), self.sc_ok("C")]
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("unexpected extra result" in r and "C" in r for r in verdict.reasons))
+
+    def test_malformed_result_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")],
+            [self.sc_ok("A"), self.sc_ok("B")],
+            parse_errors=["B-2.json: invalid JSON"],
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("malformed result" in r for r in verdict.reasons))
+
+    def test_discovery_failure_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A"), self.sc_ok("B")], discovery_ok=False
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("registry/discovery" in r for r in verdict.reasons))
+
+    def test_fan_out_failure_fails(self) -> None:
+        verdict = agg.compute_verdict(
+            [self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A"), self.sc_ok("B")], upstream_job_ok=False
+        )
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("fan-out job did not report success" in r for r in verdict.reasons))
+
+    def test_a_and_b_both_validated_passes(self) -> None:
+        verdict = agg.compute_verdict([self.sc_exp("A"), self.sc_exp("B")], [self.sc_ok("A"), self.sc_ok("B")])
+        self.assertTrue(verdict.ok, verdict.reasons)
 
 
 class LoadResultsTests(unittest.TestCase):

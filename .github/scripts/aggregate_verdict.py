@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Canonical, unit-testable aggregate verdict logic for the workload CI fan-out.
 
-The central workflow's aggregate jobs (`workloads-ci`, `workloads-msrv`) call
-this module's CLI. All decision logic lives in `compute_verdict`, a pure
+The central workflow's aggregate jobs (`workloads-ci`, `workloads-msrv`, and
+`supply-chain`) call this module's CLI. All decision logic lives in
+`compute_verdict`, a pure
 function over plain data, so it can be exercised by
 `test_aggregate_verdict.py` without any GitHub Actions runtime.
 
@@ -54,13 +55,15 @@ class Verdict:
 
 
 def expected_outcome_for(stage: str, msrv: dict | None) -> str:
-    """The ci stage always requires a real validation. The msrv stage's
-    required outcome mirrors the workload's own registered MSRV policy: a
-    declared MSRV always requires `validated`, and no declared MSRV always
-    requires the explicit `not-applicable` disposition -- never the other
-    way around, for either stage.
+    """The ci and supply-chain stages always require a real validation --
+    supply-chain has no policy-exemption concept analogous to undeclared
+    MSRV, so every registered real workload is always expected to have run
+    the actual scan. The msrv stage's required outcome instead mirrors the
+    workload's own registered MSRV policy: a declared MSRV always requires
+    `validated`, and no declared MSRV always requires the explicit
+    `not-applicable` disposition -- never the other way around.
     """
-    if stage == "ci":
+    if stage in ("ci", "supply-chain"):
         return "validated"
     declared = bool((msrv or {}).get("declared"))
     return "validated" if declared else "not-applicable"
@@ -221,7 +224,7 @@ def _load_expected(discover_json: str, stage: str) -> list[ExpectedShard]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", required=True, choices=["ci", "msrv"])
+    parser.add_argument("--stage", required=True, choices=["ci", "msrv", "supply-chain"])
     parser.add_argument("--discover-json", required=True, help="raw JSON emitted by discover-workloads.py")
     parser.add_argument("--results-dir", required=True, type=Path)
     parser.add_argument("--discovery-ok", required=True, choices=["true", "false"])
