@@ -3,7 +3,30 @@
   "workloads": [
     {
       "name": "csv-postgres",
-      "path": "csv-postgres"
+      "path": "csv-postgres",
+      "contracts": {
+        "ci": {
+          "run": "ci/validate.sh"
+        },
+        "msrv": {
+          "policy": "required",
+          "toolchain": "1.95",
+          "run": "ci/msrv.sh"
+        }
+      }
+    },
+    {
+      "name": "fixture-heterogeneous",
+      "path": "fixture-heterogeneous",
+      "contracts": {
+        "ci": {
+          "run": "ci/validate.sh"
+        },
+        "msrv": {
+          "policy": "not-applicable",
+          "reason": "fixture workload intentionally omits a declared MSRV"
+        }
+      }
     }
   ],
   "reserved_top_level_cargo_projects": []

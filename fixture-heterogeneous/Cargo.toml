@@ -1,0 +1,10 @@
+[package]
+name = "fixture-heterogeneous"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Heterogeneous CI-contract fixture workload for aggregate orchestration validation"
+
+[dependencies]
+oxide-batch = "=0.6.0"
