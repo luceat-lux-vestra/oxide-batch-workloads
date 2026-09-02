@@ -132,9 +132,9 @@ def reconcile_labels(current_labels, inferred_type, inferred_areas, policy):
     else:
         raise ValueError(f"multiple managed type labels without an authoritative signal: {type_labels}")
 
-    desired = [label for label in current if not label.startswith(type_prefix)]
-    if selected_type:
-        desired.append(selected_type)
+    non_type = [label for label in current if not label.startswith(type_prefix)]
+    desired = [selected_type] if selected_type else []
+    desired.extend(non_type)
 
     for area in sorted(inferred_areas):
         if area in policy["known"] and area not in desired:
