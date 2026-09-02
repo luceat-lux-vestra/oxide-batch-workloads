@@ -172,28 +172,21 @@ This is what prevents a workload that actually declares an MSRV from ever
 being satisfied by a stray `not-applicable` disposition, and vice versa,
 even though both are `status: "success"` at the shard level.
 
-## Legacy required-context compatibility during ruleset migration
+## Protected aggregate contexts
 
-Live branch protection ("Protect main") requires exactly `ci`, `msrv`, and
-`dependency-review` today. `ci.yml` still emits jobs literally named `ci`
-and `msrv` -- but they are now thin compatibility shims, each a single step
-that mirrors `workloads-ci`'s / `workloads-msrv`'s verdict:
+Issue #28's staged ruleset migration is complete. The stable workload merge
+gates are now the aggregate contexts `workloads-ci` and `workloads-msrv`.
+The temporary compatibility jobs named `ci` and `msrv`, which existed only
+to keep the previous required contexts producible during migration, have
+been removed.
 
-```yaml
-ci:
-  needs: workloads-ci
-  if: always()
-  steps:
-    - run: '[ "${{ needs.workloads-ci.result }}" = "success" ]'
-```
+`dependency-review` remains a separate required context because it protects
+a distinct diff-scoped dependency-change surface; it is not an alias for the
+registry-driven full workload aggregates.
 
-This exists solely so the currently-required `ci`/`msrv` contexts stay
-producible while `workloads-ci`/`workloads-msrv` are proven out and added to
-the live ruleset alongside them (issue #28's staged migration: prove new
-contexts -> independent strict review -> add new contexts to the ruleset
-while keeping the old ones required -> read back -> remove `ci`/`msrv` from
-required contexts -> read back again). Delete both shim jobs only after that
-last read-back confirms `ci`/`msrv` are no longer required.
+The aggregate context names are the protection contract. Per-workload shard
+job names are implementation details and must not be registered as required
+contexts.
 
 ## Why a fixture workload exists
 
