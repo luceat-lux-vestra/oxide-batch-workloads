@@ -1,7 +1,7 @@
 name: New workload / validation campaign
 description: Propose a materially new real-world validation workload
 title: "workload: "
-labels: ["enhancement"]
+labels: ["type:campaign", "area:workload"]
 body:
   - type: textarea
     id: contract

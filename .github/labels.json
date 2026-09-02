@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "managed_prefixes": ["type:", "area:"],
+  "singular_groups": ["type:"],
+  "structural_types": ["type:epic", "type:track", "type:campaign"],
+  "labels": [
+    {"name": "type:epic", "color": "5319e7", "description": "Long-lived parent initiative spanning multiple tracked work items"},
+    {"name": "type:track", "color": "7057ff", "description": "Durable validation track beneath an epic"},
+    {"name": "type:campaign", "color": "0e8a16", "description": "Executable workload, validation, or benchmark campaign"},
+    {"name": "type:bug", "color": "d73a4a", "description": "Reproducible defect in workload or repository behavior"},
+    {"name": "type:security", "color": "b60205", "description": "Non-structural security or supply-chain work item"},
+    {"name": "type:docs", "color": "0075ca", "description": "Documentation-only work item"},
+    {"name": "type:research", "color": "d876e3", "description": "Investigation or decision work without committed implementation scope"},
+    {"name": "type:task", "color": "cfd3d7", "description": "Non-structural implementation or governance task"},
+    {"name": "area:ci", "color": "1d76db", "description": "Continuous integration and protected validation gates"},
+    {"name": "area:governance", "color": "0052cc", "description": "Repository policy, tracking, settings, and automation"},
+    {"name": "area:workload", "color": "0e8a16", "description": "External workload implementation and workload-owned validation"},
+    {"name": "area:evidence", "color": "006b75", "description": "Validation evidence, provenance, integrity, and retention"},
+    {"name": "area:postgres", "color": "336791", "description": "PostgreSQL-specific workload or portability concerns"},
+    {"name": "area:benchmark", "color": "fbca04", "description": "Benchmark methodology, baselines, and performance evidence"},
+    {"name": "area:interop", "color": "c2e0c6", "description": "Scheduler, event, control-plane, or external-system interoperability"},
+    {"name": "area:security", "color": "e99695", "description": "Security, dependency policy, secrets, and supply-chain concerns"},
+    {"name": "area:docs", "color": "bfdadc", "description": "Documentation ownership or documentation-heavy scope"},
+    {"name": "dependencies", "color": "0366d6", "description": "Dependency maintenance managed independently from work-item type"}
+  ]
+}
