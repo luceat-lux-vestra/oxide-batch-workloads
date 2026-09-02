@@ -31,6 +31,11 @@ VERIFY_KEYS = {
     "db_digest_sha256",
     "digests_match",
 }
+MAX_ROWS = 10_000_000
+MAX_CHUNK_SIZE = 1_000_000
+MAX_WARMUPS = 10
+MAX_MEASURED_RUNS = 20
+MAX_U64 = (1 << 64) - 1
 
 
 def run_checked(
@@ -277,11 +282,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> None:
-    for name in ("rows", "chunk_size", "measured_runs"):
-        if getattr(args, name) <= 0:
-            raise SystemExit(f"--{name.replace('_', '-')} must be > 0")
-    if args.warmups < 0:
-        raise SystemExit("--warmups must be >= 0")
+    bounded = {
+        "rows": (1, MAX_ROWS),
+        "chunk_size": (1, MAX_CHUNK_SIZE),
+        "warmups": (0, MAX_WARMUPS),
+        "measured_runs": (1, MAX_MEASURED_RUNS),
+        "seed": (0, MAX_U64),
+    }
+    for name, (minimum, maximum) in bounded.items():
+        value = getattr(args, name)
+        if not minimum <= value <= maximum:
+            raise SystemExit(
+                f"--{name.replace('_', '-')} must be between {minimum} and {maximum}"
+            )
     if not args.binary.is_file():
         raise SystemExit(f"release binary not found: {args.binary}")
     if not args.input.is_file():
