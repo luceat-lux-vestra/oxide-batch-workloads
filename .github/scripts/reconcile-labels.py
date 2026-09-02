@@ -13,6 +13,26 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 TAXONOMY_PATH = ROOT / ".github" / "labels.json"
 WORKLOADS_PATH = ROOT / "workloads.json"
 
+TYPE_RULES = (
+    (r"^epic\s*:", "type:epic"),
+    (r"^track(?:\([^)]*\))?\s*:", "type:track"),
+    (r"^(?:workload|campaign)\s*:", "type:campaign"),
+    (r"^(?:bug|fix)\s*:", "type:bug"),
+    (r"^security\s*:", "type:security"),
+    (r"^(?:docs?|documentation)\s*:", "type:docs"),
+    (r"^research\s*:", "type:research"),
+    (r"^(?:task|chore|governance|ci|evidence|deps?)\s*:", "type:task"),
+    (r"^chore\(deps\)\s*:", "type:task"),
+)
+
+AREA_PREFIX_RULES = (
+    (r"^ci\s*:", "area:ci"),
+    (r"^(?:governance|chore)\s*:", "area:governance"),
+    (r"^evidence\s*:", "area:evidence"),
+    (r"^security\s*:", "area:security"),
+    (r"^(?:docs?|documentation)\s*:", "area:docs"),
+)
+
 
 def load_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -23,6 +43,18 @@ def load_policy():
     workloads = load_json(WORKLOADS_PATH)
     known = {entry["name"] for entry in taxonomy["labels"]}
     structural = set(taxonomy["structural_types"])
+    singular_groups = taxonomy.get("singular_groups", [])
+    matching_groups = [prefix for prefix in singular_groups if structural and all(name.startswith(prefix) for name in structural)]
+    if len(matching_groups) != 1:
+        raise ValueError("canonical taxonomy must define exactly one singular group containing all structural types")
+    type_prefix = matching_groups[0]
+
+    referenced = {label for _, label in TYPE_RULES + AREA_PREFIX_RULES}
+    referenced.update(("area:benchmark", "area:interop", "area:postgres", "area:workload", "area:evidence", "area:ci", "area:governance", "area:docs", "area:security"))
+    missing = sorted(referenced - known)
+    if missing:
+        raise ValueError(f"automation references labels missing from canonical taxonomy: {', '.join(missing)}")
+
     workload_paths = []
     for group in ("workloads", "fixtures"):
         for entry in workloads.get(group, []):
@@ -30,24 +62,14 @@ def load_policy():
     return {
         "known": known,
         "structural": structural,
+        "type_prefix": type_prefix,
         "workload_paths": workload_paths,
     }
 
 
 def strong_type_from_title(title):
     value = title.strip().lower()
-    mappings = (
-        (r"^epic\s*:", "type:epic"),
-        (r"^track(?:\([^)]*\))?\s*:", "type:track"),
-        (r"^(?:workload|campaign)\s*:", "type:campaign"),
-        (r"^(?:bug|fix)\s*:", "type:bug"),
-        (r"^security\s*:", "type:security"),
-        (r"^(?:docs?|documentation)\s*:", "type:docs"),
-        (r"^research\s*:", "type:research"),
-        (r"^(?:task|chore|governance|ci|evidence|deps?)\s*:", "type:task"),
-        (r"^chore\(deps\)\s*:", "type:task"),
-    )
-    for pattern, label in mappings:
+    for pattern, label in TYPE_RULES:
         if re.search(pattern, value):
             return label
     return None
@@ -56,14 +78,7 @@ def strong_type_from_title(title):
 def infer_title_areas(title):
     value = title.strip().lower()
     areas = set()
-    prefixes = (
-        (r"^ci\s*:", "area:ci"),
-        (r"^(?:governance|chore)\s*:", "area:governance"),
-        (r"^evidence\s*:", "area:evidence"),
-        (r"^security\s*:", "area:security"),
-        (r"^(?:docs?|documentation)\s*:", "area:docs"),
-    )
-    for pattern, label in prefixes:
+    for pattern, label in AREA_PREFIX_RULES:
         if re.search(pattern, value):
             areas.add(label)
     if "benchmark" in value:
@@ -101,7 +116,8 @@ def infer_path_areas(paths, policy):
 
 def reconcile_labels(current_labels, inferred_type, inferred_areas, policy):
     current = list(dict.fromkeys(current_labels))
-    type_labels = [label for label in current if label.startswith("type:")]
+    type_prefix = policy["type_prefix"]
+    type_labels = [label for label in current if label.startswith(type_prefix)]
     structural = [label for label in type_labels if label in policy["structural"]]
 
     if len(structural) > 1:
@@ -116,7 +132,7 @@ def reconcile_labels(current_labels, inferred_type, inferred_areas, policy):
     else:
         raise ValueError(f"multiple managed type labels without an authoritative signal: {type_labels}")
 
-    desired = [label for label in current if not label.startswith("type:")]
+    desired = [label for label in current if not label.startswith(type_prefix)]
     if selected_type:
         desired.append(selected_type)
 
@@ -129,7 +145,6 @@ def reconcile_labels(current_labels, inferred_type, inferred_areas, policy):
 
 class GitHubClient:
     def __init__(self, repository, token):
-        self.repository = repository
         self.base = f"https://api.github.com/repos/{repository}"
         self.headers = {
             "Accept": "application/vnd.github+json",
@@ -219,10 +234,9 @@ def main():
         print("GITHUB_REPOSITORY and GITHUB_TOKEN are required", file=sys.stderr)
         return 2
 
-    policy = load_policy()
-    client = GitHubClient(repository, token)
-
     try:
+        policy = load_policy()
+        client = GitHubClient(repository, token)
         if args.backfill:
             changed = 0
             for item in client.open_items():
@@ -238,8 +252,7 @@ def main():
         if not item:
             print("event has no issue or pull_request payload; nothing to do")
             return 0
-        number = item["number"]
-        fresh = client.issue(number)
+        fresh = client.issue(item["number"])
         apply_item(client, fresh, policy, args.dry_run)
         return 0
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
