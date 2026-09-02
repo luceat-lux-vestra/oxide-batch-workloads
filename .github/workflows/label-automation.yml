@@ -1,0 +1,58 @@
+name: Label automation
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: Reconcile all currently open issues and pull requests
+        required: true
+        type: boolean
+        default: true
+      dry_run:
+        description: Report proposed changes without mutating labels
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: label-automation-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # This workflow has write permission, so it must never execute PR-head code.
+      # Always load the reconciler and its policy inputs from the trusted default branch.
+      - name: Check out trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Reconcile event labels
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/reconcile-labels.py
+
+      - name: Reconcile open backlog
+        if: github.event_name == 'workflow_dispatch' && inputs.backfill
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          args=(--backfill)
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python3 .github/scripts/reconcile-labels.py "${args[@]}"
