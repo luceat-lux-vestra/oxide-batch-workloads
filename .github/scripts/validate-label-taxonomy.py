@@ -26,6 +26,7 @@ def load_taxonomy(path: pathlib.Path = TAXONOMY) -> dict:
 
     prefixes = data.get("managed_prefixes")
     singular = data.get("singular_groups")
+    structural = data.get("structural_types")
     labels = data.get("labels")
     if not isinstance(prefixes, list) or not prefixes or not all(isinstance(x, str) and x for x in prefixes):
         fail("managed_prefixes must be a non-empty string list")
@@ -35,6 +36,10 @@ def load_taxonomy(path: pathlib.Path = TAXONOMY) -> dict:
         fail("singular_groups must be a subset of managed_prefixes")
     if len(singular) != len(set(singular)):
         fail("singular_groups must not contain duplicates")
+    if not isinstance(structural, list) or not structural or not all(isinstance(x, str) and x for x in structural):
+        fail("structural_types must be a non-empty string list")
+    if len(structural) != len(set(structural)):
+        fail("structural_types must not contain duplicates")
     if not isinstance(labels, list) or not labels:
         fail("labels must be a non-empty list")
 
@@ -58,6 +63,11 @@ def load_taxonomy(path: pathlib.Path = TAXONOMY) -> dict:
     for prefix in prefixes:
         if not any(name.startswith(prefix) for name in seen):
             fail(f"managed prefix {prefix!r} has no labels")
+    for name in structural:
+        if name not in seen:
+            fail(f"structural type {name!r} is not defined in labels")
+        if not name.startswith("type:"):
+            fail(f"structural type {name!r} must be a type label")
 
     return data
 
