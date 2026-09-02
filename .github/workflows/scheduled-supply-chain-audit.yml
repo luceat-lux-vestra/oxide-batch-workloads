@@ -1,0 +1,95 @@
+name: Scheduled supply-chain audit
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: Live audit or bounded synthetic lifecycle test
+        required: true
+        type: choice
+        default: live
+        options:
+          - live
+          - policy-finding
+          - infrastructure-failure
+          - clean
+
+concurrency:
+  group: scheduled-supply-chain-audit
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned cargo-deny
+        id: install
+        if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
+        continue-on-error: true
+        run: cargo install cargo-deny --version "=0.20.2" --locked
+
+      - name: Run canonical supply-chain audit
+        id: audit
+        if: always()
+        continue-on-error: true
+        env:
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'live' }}
+        run: |
+          python3 .github/scripts/run-scheduled-supply-chain-audit.py \
+            --test-mode "$TEST_MODE" \
+            --output "${{ runner.temp }}/supply-chain-audit.json"
+
+      - name: Upload trusted audit result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scheduled-supply-chain-audit-result
+          path: ${{ runner.temp }}/supply-chain-audit.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce audit result
+        if: steps.install.outcome == 'failure' || steps.audit.outcome != 'success'
+        run: exit 1
+
+  report:
+    needs: detect
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download audit result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: scheduled-supply-chain-audit-result
+          path: ${{ runner.temp }}/audit-result
+
+      - name: Reconcile owned audit issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .github/scripts/report-supply-chain-audit.py \
+            --result "${{ runner.temp }}/audit-result/supply-chain-audit.json" \
+            --run-url "$RUN_URL"
