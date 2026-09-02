@@ -39,6 +39,11 @@ jobs:
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5433/csv_postgres_workload
       RUST_LOG: error
+      BENCH_ROWS: ${{ inputs.rows }}
+      BENCH_SEED: ${{ inputs.seed }}
+      BENCH_CHUNK_SIZE: ${{ inputs.chunk_size }}
+      BENCH_WARMUPS: ${{ inputs.warmups }}
+      BENCH_MEASURED_RUNS: ${{ inputs.measured_runs }}
     defaults:
       run:
         working-directory: csv-postgres
@@ -63,12 +68,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for value in '${{ inputs.rows }}' '${{ inputs.seed }}' '${{ inputs.chunk_size }}' '${{ inputs.warmups }}' '${{ inputs.measured_runs }}'; do
+          for value in "$BENCH_ROWS" "$BENCH_SEED" "$BENCH_CHUNK_SIZE" "$BENCH_WARMUPS" "$BENCH_MEASURED_RUNS"; do
             [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::benchmark inputs must be non-negative integers"; exit 1; }
           done
-          (( ${{ inputs.rows }} > 0 )) || { echo "::error::rows must be > 0"; exit 1; }
-          (( ${{ inputs.chunk_size }} > 0 )) || { echo "::error::chunk_size must be > 0"; exit 1; }
-          (( ${{ inputs.measured_runs }} > 0 )) || { echo "::error::measured_runs must be > 0"; exit 1; }
+          (( BENCH_ROWS > 0 )) || { echo "::error::rows must be > 0"; exit 1; }
+          (( BENCH_CHUNK_SIZE > 0 )) || { echo "::error::chunk_size must be > 0"; exit 1; }
+          (( BENCH_MEASURED_RUNS > 0 )) || { echo "::error::measured_runs must be > 0"; exit 1; }
 
       - name: Build release workload once
         run: cargo build --locked --release
@@ -83,8 +88,8 @@ jobs:
         run: |
           target/release/csv-postgres generate \
             --output /tmp/oxide-baseline.csv \
-            --rows '${{ inputs.rows }}' \
-            --seed '${{ inputs.seed }}'
+            --rows "$BENCH_ROWS" \
+            --seed "$BENCH_SEED"
 
       - name: Run baseline campaign
         id: campaign
@@ -94,11 +99,11 @@ jobs:
             --binary "$(pwd)/target/release/csv-postgres" \
             --input /tmp/oxide-baseline.csv \
             --database-url "$DATABASE_URL" \
-            --rows '${{ inputs.rows }}' \
-            --seed '${{ inputs.seed }}' \
-            --chunk-size '${{ inputs.chunk_size }}' \
-            --warmups '${{ inputs.warmups }}' \
-            --measured-runs '${{ inputs.measured_runs }}' \
+            --rows "$BENCH_ROWS" \
+            --seed "$BENCH_SEED" \
+            --chunk-size "$BENCH_CHUNK_SIZE" \
+            --warmups "$BENCH_WARMUPS" \
+            --measured-runs "$BENCH_MEASURED_RUNS" \
             --output "$RUNNER_TEMP/oxide-csv-postgres-baseline.json"
 
       - name: Upload baseline evidence
