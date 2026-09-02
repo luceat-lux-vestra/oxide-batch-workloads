@@ -50,18 +50,25 @@ workload's build/test/service commands. It fans out over every workload in
 `workloads.json` and invokes a small, stable, workload-owned contract
 (`<workload>/ci/validate`) — see
 [`.github/WORKLOAD_CONTRACT.md`](.github/WORKLOAD_CONTRACT.md) for exactly
-what that contract is and what `workloads.json`'s `msrv`/`provenance` fields
-mean. The required, stable branch-protection contexts are the aggregate
-verdicts (`workloads-ci`, `workloads-msrv`), computed by a small testable
-tool (`.github/scripts/aggregate_verdict.py`) rather than opaque workflow
-expressions — never a per-workload job name.
+what that contract is, why `workloads.json` structurally separates real
+`workloads` from bounded CI `fixtures`, and why MSRV is always resolved from
+each entry's own `Cargo.toml` rather than duplicated in the registry. The
+target stable branch-protection contexts are the aggregate verdicts
+(`workloads-ci`, `workloads-msrv`), computed by a small testable tool
+(`.github/scripts/aggregate_verdict.py`) rather than opaque workflow
+expressions — never a per-workload job name. Live branch protection still
+requires `ci`/`msrv` today; `ci.yml` keeps emitting those as thin
+compatibility shims until the ruleset migration described in
+`.github/WORKLOAD_CONTRACT.md` completes.
 
 ## Adding a workload
 
 A new workload gets its own top-level directory, its own `ci/validate`
-contract entrypoint, and an entry in [`workloads.json`](workloads.json)
-declaring its MSRV and provenance policy. It does not touch another
-workload's dependency version, database schema, or CI implementation.
+contract entrypoint, and an entry under `workloads` (never `fixtures`) in
+[`workloads.json`](workloads.json) declaring its MSRV policy (resolved from
+its own `Cargo.toml`, never duplicated in the registry). It does not touch
+another workload's dependency version, database schema, or CI
+implementation.
 Repository-level discovery must fail closed until the new project is
 registered. See `csv-postgres/README.md` for what a workload's own
 documentation should cover (quickstart, schema, restart semantics actually

@@ -30,12 +30,17 @@ class ProvenanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def set_provenance_required(self, required: bool, reason: str = "fixture") -> None:
-        entry = {"name": "workload", "path": "workload", "provenance": {"required": required}}
-        if not required:
-            entry["provenance"]["reason"] = reason
+    def add_fixture_entry_pointing_nowhere(self) -> None:
+        # A `fixtures` array entry whose path doesn't even exist -- proving
+        # load_workloads() never reads this key at all, not merely that it
+        # happens to be well-formed.
         (self.root / "workloads.json").write_text(
-            json.dumps({"workloads": [entry]}),
+            json.dumps(
+                {
+                    "workloads": [{"name": "workload", "path": "workload"}],
+                    "fixtures": [{"name": "decoy", "path": "does-not-exist"}],
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -78,23 +83,19 @@ class ProvenanceTests(unittest.TestCase):
         result = validator.validate_repository(self.root)
         self.assertEqual(result["workload"], {"oxide-batch": "0.6.0", "oxide-batch-test": "0.6.0"})
 
-    def test_rejects_missing_subject_when_provenance_required_by_default(self) -> None:
+    def test_rejects_missing_subject(self) -> None:
         self.write_manifest('[dependencies]\nserde = "1"\n')
         self.write_lock([])
         self.assert_rejected("declares no first-party OxideBatch validation subject")
 
-    def test_allows_missing_subject_when_provenance_not_required(self) -> None:
-        self.set_provenance_required(False)
-        self.write_manifest('[dependencies]\nserde = "1"\n')
-        self.write_lock([{"name": "serde", "version": "1.0.0"}])
+    def test_fixtures_array_is_never_read_even_when_it_would_fail_validation(self) -> None:
+        # A `fixtures` entry pointing at a nonexistent path would blow up
+        # instantly if load_workloads() looked at it. It must not.
+        self.add_fixture_entry_pointing_nowhere()
+        self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\n')
+        self.valid_lock()
         result = validator.validate_repository(self.root)
-        self.assertEqual(result["workload"], {})
-
-    def test_still_enforces_exact_provenance_when_not_required_but_subject_present(self) -> None:
-        self.set_provenance_required(False)
-        self.write_manifest('[dependencies]\noxide-batch = "0.6"\n')
-        self.write_lock([{"name": "oxide-batch", "version": "0.6.0"}])
-        self.assert_rejected("must use an exact")
+        self.assertEqual(set(result), {"workload"})
 
     def test_ignores_non_first_party_workspace_dependency(self) -> None:
         self.write_manifest('[dependencies]\noxide-batch = "=0.6.0"\nserde = { workspace = true }\n')

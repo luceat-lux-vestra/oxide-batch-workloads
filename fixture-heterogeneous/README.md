@@ -10,8 +10,10 @@ workload-name-specific branching.
 It deliberately differs from `csv-postgres` in every way the contract allows
 a workload to differ:
 
-- no OxideBatch dependency at all (`provenance.required: false` in
-  `workloads.json`, with an explicit reason);
+- no OxideBatch dependency at all -- registered under `workloads.json`'s
+  `fixtures` array, not `workloads`, which is what structurally (not just
+  declaratively) keeps `validate-oxidebatch-provenance.py` (#29) from ever
+  looking at this project;
 - no database, no services, no migration;
 - no declared MSRV (`msrv.declared: false`, with an explicit `policy_reason`
   instead of a silently skipped shard);

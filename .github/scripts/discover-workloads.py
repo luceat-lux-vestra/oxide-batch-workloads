@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Emit the canonical, validated workload fan-out matrix as JSON.
+"""Emit the canonical, validated fan-out matrix as JSON.
 
-This is the only place the central CI workflow learns which workloads exist
-and what their MSRV/provenance policy is. It never inspects a workload's
-business logic: everything it emits comes straight from the already
-fail-closed-validated `workloads.json` registry entries.
+This is the only place the central CI workflow learns which workloads and
+fixtures exist and what their MSRV policy is (always resolved from each
+entry's own Cargo.toml -- see validate-workload-registry.py). It never
+inspects business logic: everything it emits comes straight from the
+already fail-closed-validated `workloads.json` registry.
+
+Workloads and fixtures both participate in the exact same fan-out/aggregate
+machinery (that is what proves the machinery is contract-driven), but only
+`workloads` are ever read by validate-oxidebatch-provenance.py.
 """
 
 import json
@@ -22,8 +27,9 @@ SPEC.loader.exec_module(validator)
 
 
 def discover(root: Path) -> dict:
-    entries = validator.validate_repository(root)
-    return {"include": entries}
+    result = validator.validate_repository(root)
+    include = result["workloads"] + result["fixtures"]
+    return {"include": include}
 
 
 def main() -> None:
@@ -34,7 +40,7 @@ def main() -> None:
         print(f"::error::{exc}")
         raise SystemExit(1) from exc
     if not matrix["include"]:
-        print("::error::canonical workload discovery produced zero workloads")
+        print("::error::canonical workload discovery produced zero entries")
         raise SystemExit(1)
     print(json.dumps(matrix))
 

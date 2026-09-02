@@ -1,22 +1,19 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "workloads": [
     {
       "name": "csv-postgres",
       "path": "csv-postgres",
-      "msrv": { "declared": true, "version": "1.95" },
-      "provenance": { "required": true }
-    },
+      "msrv": { "declared": true }
+    }
+  ],
+  "fixtures": [
     {
       "name": "fixture-heterogeneous",
       "path": "fixture-heterogeneous",
       "msrv": {
         "declared": false,
         "policy_reason": "bounded CI-orchestration fixture proving contract-driven fan-out; not a versioned release artifact and carries no MSRV guarantee"
-      },
-      "provenance": {
-        "required": false,
-        "reason": "bounded CI-orchestration fixture; not an OxideBatch consumer and makes no published-dependency provenance claim"
       }
     }
   ],

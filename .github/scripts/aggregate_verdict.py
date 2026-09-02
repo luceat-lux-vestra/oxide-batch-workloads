@@ -7,9 +7,13 @@ function over plain data, so it can be exercised by
 `test_aggregate_verdict.py` without any GitHub Actions runtime.
 
 Fail-closed contract: aggregate success requires an exact, complete,
-duplicate-free set of matching per-shard results for every workload the
-canonical registry/discovery step produced, with every upstream stage
-(discovery, and the fan-out job as a whole) itself reporting success.
+duplicate-free set of matching per-shard results for every workload/fixture
+the canonical registry/discovery step produced, with every upstream stage
+(discovery, and the fan-out job as a whole) itself reporting success, AND
+each shard's outcome matching what that workload's own registered MSRV
+policy requires -- a "success" status alone is not enough: a declared-MSRV
+workload reporting `not-applicable`, or an undeclared one reporting
+`validated`, is exactly as fail-closed as a missing result.
 """
 
 from __future__ import annotations
@@ -22,6 +26,12 @@ from pathlib import Path
 
 VALID_STATUSES = {"success", "failure"}
 VALID_OUTCOMES = {"validated", "not-applicable"}
+
+
+@dataclass
+class ExpectedShard:
+    name: str
+    expected_outcome: str  # "validated" | "not-applicable"
 
 
 @dataclass
@@ -41,6 +51,19 @@ class Verdict:
     def fail(self, reason: str) -> None:
         self.ok = False
         self.reasons.append(reason)
+
+
+def expected_outcome_for(stage: str, msrv: dict | None) -> str:
+    """The ci stage always requires a real validation. The msrv stage's
+    required outcome mirrors the workload's own registered MSRV policy: a
+    declared MSRV always requires `validated`, and no declared MSRV always
+    requires the explicit `not-applicable` disposition -- never the other
+    way around, for either stage.
+    """
+    if stage == "ci":
+        return "validated"
+    declared = bool((msrv or {}).get("declared"))
+    return "validated" if declared else "not-applicable"
 
 
 def _parse_result_file(path: Path) -> tuple[dict | None, str | None]:
@@ -91,7 +114,7 @@ def load_results(results_dir: Path, stage: str) -> tuple[list[ShardResult], list
 
 
 def compute_verdict(
-    expected: list[str],
+    expected: list[ExpectedShard],
     results: list[ShardResult],
     *,
     discovery_ok: bool = True,
@@ -101,7 +124,11 @@ def compute_verdict(
 ) -> Verdict:
     """Compute the aggregate pass/fail verdict and human-readable reasons.
 
-    expected: canonical workload names from registry discovery for this stage.
+    expected: canonical (name, required-outcome) pairs from registry
+        discovery for this stage -- the required outcome comes from each
+        entry's own MSRV policy (see expected_outcome_for), never a bare
+        name list, so a policy/result mismatch is exactly as fail-closed as
+        a missing result.
     results: parsed per-shard result records (may contain duplicates/extras;
         that is exactly what this function must detect).
     discovery_ok: whether the registry/discovery step itself succeeded.
@@ -124,9 +151,12 @@ def compute_verdict(
         # expected set; still fall through so extra/duplicate results (if
         # any) are reported too.
 
-    expected_set = set(expected)
-    if len(expected_set) != len(expected):
-        verdict.fail("internal error: expected workload list contains duplicates")
+    expected_by_name: dict[str, ExpectedShard] = {}
+    for entry in expected:
+        if entry.name in expected_by_name:
+            verdict.fail(f"internal error: expected workload list contains duplicate name {entry.name!r}")
+        expected_by_name[entry.name] = entry
+    expected_set = set(expected_by_name)
 
     for error in parse_errors or []:
         verdict.fail(f"malformed result: {error}")
@@ -159,6 +189,13 @@ def compute_verdict(
         entry = entries[0]
         if entry.status != "success":
             verdict.fail(f"workload {workload!r} shard reported failure ({entry.stage})")
+            continue
+        required_outcome = expected_by_name[workload].expected_outcome
+        if entry.outcome != required_outcome:
+            verdict.fail(
+                f"workload {workload!r} {entry.stage} result has outcome {entry.outcome!r} "
+                f"but its registered policy requires {required_outcome!r}"
+            )
 
     if not upstream_job_ok:
         verdict.fail("fan-out job did not report success at the GitHub Actions job level")
@@ -166,7 +203,7 @@ def compute_verdict(
     return verdict
 
 
-def _load_expected(discover_json: str) -> list[str]:
+def _load_expected(discover_json: str, stage: str) -> list[ExpectedShard]:
     try:
         matrix = json.loads(discover_json)
     except json.JSONDecodeError as exc:
@@ -174,12 +211,12 @@ def _load_expected(discover_json: str) -> list[str]:
     include = matrix.get("include") if isinstance(matrix, dict) else None
     if not isinstance(include, list):
         raise SystemExit("::error::discovery output missing an 'include' array")
-    names = []
+    expected: list[ExpectedShard] = []
     for entry in include:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             raise SystemExit("::error::discovery output contains a malformed workload entry")
-        names.append(entry["name"])
-    return names
+        expected.append(ExpectedShard(name=entry["name"], expected_outcome=expected_outcome_for(stage, entry.get("msrv"))))
+    return expected
 
 
 def main() -> None:
@@ -192,7 +229,7 @@ def main() -> None:
     parser.add_argument("--job-statuses-json", default="{}", help='optional {"workload": "conclusion"} JSON')
     args = parser.parse_args()
 
-    expected = _load_expected(args.discover_json)
+    expected = _load_expected(args.discover_json, args.stage)
     results, parse_errors = load_results(args.results_dir, args.stage)
     try:
         job_statuses = json.loads(args.job_statuses_json)
@@ -209,10 +246,10 @@ def main() -> None:
     )
 
     print(f"stage: {args.stage}")
-    print(f"expected workloads ({len(expected)}): {', '.join(sorted(expected)) or '(none)'}")
+    print(f"expected workloads ({len(expected)}): {', '.join(sorted(e.name for e in expected)) or '(none)'}")
     print(f"observed results ({len(results)}): {', '.join(sorted(r.workload for r in results)) or '(none)'}")
     if verdict.ok:
-        print("verdict: PASS - complete matching result set, all shards succeeded")
+        print("verdict: PASS - complete matching result set, all shards succeeded with policy-correct outcomes")
     else:
         print("verdict: FAIL")
         for reason in verdict.reasons:
