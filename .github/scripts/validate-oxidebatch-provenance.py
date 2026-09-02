@@ -2,7 +2,6 @@
 
 import json
 import re
-import sys
 import tomllib
 from pathlib import Path
 
@@ -43,7 +42,7 @@ def iter_dependency_tables(document: dict):
                     yield f"target.{target_name}.{table_name}", table
 
 
-def dependency_package(alias: str, spec: object) -> tuple[str, str, dict | None]:
+def dependency_package(alias: str, spec: object) -> tuple[str, str | None, dict | None]:
     if isinstance(spec, str):
         return alias, spec, None
     if not isinstance(spec, dict):
@@ -52,8 +51,8 @@ def dependency_package(alias: str, spec: object) -> tuple[str, str, dict | None]
     if not isinstance(package, str) or not package:
         fail(f"dependency {alias!r} has invalid package name")
     version = spec.get("version")
-    if not isinstance(version, str):
-        fail(f"first-party dependency {alias!r} must declare an explicit exact version")
+    if version is not None and not isinstance(version, str):
+        fail(f"dependency {alias!r} has invalid version")
     return package, version, spec
 
 
@@ -89,6 +88,8 @@ def validate_manifest(manifest_path: Path) -> dict[str, str]:
                         f"first-party dependency {alias!r} ({package}) in [{table_name}] "
                         f"uses forbidden provenance field(s): {', '.join(forbidden)}"
                     )
+            if version is None:
+                fail(f"first-party dependency {alias!r} ({package}) must declare an explicit exact version")
             if not EXACT_VERSION.fullmatch(version):
                 fail(
                     f"first-party dependency {alias!r} ({package}) in [{table_name}] "
