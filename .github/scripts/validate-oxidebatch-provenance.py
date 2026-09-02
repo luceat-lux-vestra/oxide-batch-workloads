@@ -30,7 +30,6 @@ def iter_dependency_tables(document: dict):
         table = document.get(table_name)
         if isinstance(table, dict):
             yield table_name, table
-
     target = document.get("target")
     if isinstance(target, dict):
         for target_name, target_config in target.items():
@@ -75,6 +74,13 @@ def validate_manifest(manifest_path: Path) -> dict[str, str]:
                     if is_first_party(package):
                         fail(f"first-party dependency {package} must not be overridden by [patch.{registry}]")
 
+    replace = document.get("replace")
+    if isinstance(replace, dict):
+        for key in replace:
+            package = key.split(":", 1)[0]
+            if is_first_party(package):
+                fail(f"first-party dependency {package} must not be overridden by [replace]")
+
     subjects: dict[str, str] = {}
     for table_name, table in iter_dependency_tables(document):
         for alias, spec in table.items():
@@ -113,11 +119,9 @@ def validate_lockfile(lockfile_path: Path, subjects: dict[str, str]) -> None:
         fail(f"missing lockfile: {lockfile_path}")
     except tomllib.TOMLDecodeError as exc:
         fail(f"invalid lockfile {lockfile_path}: {exc}")
-
     packages = document.get("package")
     if not isinstance(packages, list):
         fail(f"lockfile has no package array: {lockfile_path}")
-
     by_name_version: dict[tuple[str, str], list[dict]] = {}
     for package in packages:
         if not isinstance(package, dict):
@@ -126,7 +130,6 @@ def validate_lockfile(lockfile_path: Path, subjects: dict[str, str]) -> None:
         version = package.get("version")
         if isinstance(name, str) and isinstance(version, str):
             by_name_version.setdefault((name, version), []).append(package)
-
     for name, version in sorted(subjects.items()):
         matches = by_name_version.get((name, version), [])
         if len(matches) != 1:
@@ -140,9 +143,9 @@ def validate_lockfile(lockfile_path: Path, subjects: dict[str, str]) -> None:
             fail(f"lockfile {name} {version} is missing a valid crates.io checksum")
 
 
-def validate_cargo_source_config(workload_dir: Path) -> None:
+def validate_cargo_source_config(base_dir: Path) -> None:
     for relative in (Path(".cargo/config.toml"), Path(".cargo/config")):
-        path = workload_dir / relative
+        path = base_dir / relative
         if not path.exists():
             continue
         try:
@@ -150,7 +153,7 @@ def validate_cargo_source_config(workload_dir: Path) -> None:
         except tomllib.TOMLDecodeError as exc:
             fail(f"invalid Cargo config {path}: {exc}")
         if "source" in document:
-            fail(f"workload Cargo source replacement is forbidden for validation subjects: {path}")
+            fail(f"Cargo source replacement is forbidden for validation subjects: {path}")
 
 
 def load_workloads(root: Path) -> list[Path]:
@@ -170,6 +173,7 @@ def load_workloads(root: Path) -> list[Path]:
 
 
 def validate_repository(root: Path) -> dict[str, dict[str, str]]:
+    validate_cargo_source_config(root)
     result: dict[str, dict[str, str]] = {}
     for workload_dir in load_workloads(root):
         validate_cargo_source_config(workload_dir)
