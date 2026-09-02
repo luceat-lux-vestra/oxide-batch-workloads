@@ -1,0 +1,105 @@
+# Canonical repository-wide supply-chain policy (#32).
+#
+# This is the single policy every registered real workload (see
+# workloads.json's `workloads` array) is independently checked against, each
+# against its own committed, locked dependency graph:
+#
+#   cargo deny --config deny.toml --manifest-path <workload>/Cargo.toml \
+#     --locked --all-features check advisories licenses bans sources
+#
+# See .github/scripts/validate-supply-chain.py (the repository-owned runner
+# that actually invokes this) and .github/WORKLOAD_CONTRACT.md for the full
+# architecture. `fixtures` entries are bounded CI-orchestration proofs, not
+# supply-chain scanning subjects, and are never checked against this policy.
+#
+# cargo-deny version is pinned repository-wide to exactly 0.20.2 (see the
+# `cargo install cargo-deny --version "=0.20.2" --locked` step in
+# .github/workflows/ci.yml) -- this file is not validated against, and must
+# not rely on, any other version's defaults.
+#
+# Policy exceptions: none. Every section below is zero-exception as of this
+# writing; if a future workload genuinely requires one, scope it as tightly
+# as the cargo-deny schema allows (exact crate/version/advisory-id), give it
+# a concrete owner/reason comment immediately above the entry, and never add
+# a broad/indefinite/generic bypass.
+
+[graph]
+# The repository's CI fleet only ever builds and validates real workloads on
+# ubuntu-24.04 runners (see .github/workflows/ci.yml's `runs-on`), so the
+# supply-chain graph is restricted to the one triple that is ever actually
+# compiled and shipped. Without this, the graph would also include packages
+# that only resolve for targets this repository never builds for at all
+# (e.g. the UEFI-only `r-efi` crate, which is LGPL-2.1-or-later and would
+# otherwise force an unjustified license exception for code that never
+# runs). This is a documented, deliberate narrowing, not an accidental one.
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+
+# This section is considered when running `cargo deny check advisories`.
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Actual RUSTSEC vulnerability advisories are unconditionally hard errors in
+# cargo-deny itself (not a configurable lint level); the fields below cover
+# the advisory classes that *are* configurable, set explicitly rather than
+# left to defaults that can drift across cargo-deny versions.
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+unused-ignored-advisory = "deny"
+maximum-db-staleness = "P90D"
+ignore = []
+
+# This section is considered when running `cargo deny check licenses`.
+[licenses]
+# Derived from the actual resolved license set of every currently
+# registered real workload's locked dependency graph (csv-postgres, as of
+# this writing) restricted to the `[graph].targets` above -- every one of
+# these is a standard permissive OSS license already present in that graph.
+# There are no per-crate exceptions.
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+# This section is considered when running `cargo deny check bans`.
+[bans]
+# Duplicate transitive dependency versions are a routine, expected fact of
+# this graph (e.g. the digest/futures/syn/hashbrown families each currently
+# resolve two major versions via unrelated dependents) and are not, on their
+# own, a supply-chain risk -- so this stays advisory rather than blocking.
+# Revisit only if a future audit ties a specific duplicate to real risk.
+multiple-versions = "warn"
+# An unpinned `*` version requirement lets a dependency silently resolve to
+# any future (including compromised/yanked) release; the current graph has
+# none, so denying this costs nothing today and closes off that class going
+# forward.
+wildcards = "deny"
+allow-wildcard-paths = false
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+# This section is considered when running `cargo deny check sources`.
+[sources]
+# Fail-closed dependency origin policy: only the canonical crates.io
+# registry is trusted. No git source, of any origin, is pre-authorized --
+# there is deliberately no broad org/repo allow-list here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

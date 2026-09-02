@@ -21,6 +21,22 @@ class BuildResultTests(unittest.TestCase):
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["outcome"], "validated")
 
+    def test_successful_supply_chain_exit_code(self) -> None:
+        result = writer.build_result(workload="csv-postgres", stage="supply-chain", exit_code=0)
+        self.assertEqual(
+            result,
+            {"workload": "csv-postgres", "stage": "supply-chain", "status": "success", "outcome": "validated", "exit_code": 0},
+        )
+
+    def test_failed_supply_chain_exit_code(self) -> None:
+        result = writer.build_result(workload="csv-postgres", stage="supply-chain", exit_code=1)
+        self.assertEqual(result["status"], "failure")
+        self.assertEqual(result["outcome"], "validated")
+
+    def test_not_applicable_rejected_for_supply_chain_stage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only valid for --stage msrv"):
+            writer.build_result(workload="csv-postgres", stage="supply-chain", not_applicable=True, reason="whatever")
+
     def test_msrv_not_applicable(self) -> None:
         result = writer.build_result(workload="fixture-heterogeneous", stage="msrv", not_applicable=True, reason="no MSRV policy")
         self.assertEqual(

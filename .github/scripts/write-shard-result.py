@@ -31,8 +31,9 @@ def build_result(
 
     if not_applicable:
         # A not-applicable disposition only ever means "this workload
-        # declares no MSRV policy" -- it is meaningless for the ci stage,
-        # where every workload/fixture must actually be validated.
+        # declares no MSRV policy" -- it is meaningless for the ci and
+        # supply-chain stages, where every workload/fixture (ci) or every
+        # real workload (supply-chain) must actually be validated.
         if stage != "msrv":
             raise ValueError("--not-applicable is only valid for --stage msrv")
         if not reason or not reason.strip():
@@ -57,7 +58,7 @@ def build_result(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workload", required=True)
-    parser.add_argument("--stage", required=True, choices=["ci", "msrv"])
+    parser.add_argument("--stage", required=True, choices=["ci", "msrv", "supply-chain"])
     parser.add_argument("--out", required=True, type=Path)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--exit-code", type=int, help="observed exit code of the contract invocation")

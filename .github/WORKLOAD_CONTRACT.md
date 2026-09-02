@@ -188,6 +188,96 @@ The aggregate context names are the protection contract. Per-workload shard
 job names are implementation details and must not be registered as required
 contexts.
 
+`supply-chain` (see below) is intended to become a third protected aggregate
+context once it has emitted successfully on a real PR under strict review.
+It is not yet registered in the live branch-protection ruleset -- that
+migration is staged separately, the same way #28 staged `workloads-ci` and
+`workloads-msrv` before requiring them.
+
+## Repository-wide supply-chain policy (#32)
+
+Root [`deny.toml`](../deny.toml) is the single canonical supply-chain policy
+for this repository, enforced with [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)
+(version pinned exactly -- see `cargo install cargo-deny --version "=0.20.2"
+--locked` in `.github/workflows/ci.yml`). It covers four policy classes:
+advisories, licenses, bans, and sources. The source policy is fail-closed by
+design: only the canonical crates.io registry is trusted, and there is no
+git source, of any origin, pre-authorized -- unknown registries and unknown
+git sources are both denied outright rather than merely warned about.
+
+**Scope: `workloads`, never `fixtures`.** Supply-chain scanning is a
+full-current-dependency-graph production control, structurally distinct
+from `ci`/`msrv`'s shared fan-out. `.github/scripts/discover-supply-chain-workloads.py`
+is a separate, narrower discovery projection from `discover-workloads.py`:
+it selects only `workloads.json`'s `workloads` array and never `fixtures`.
+A fixture participating in the ordinary `ci`/`msrv` machinery is not, and
+must never become, an equivalent-weight supply-chain scanning subject.
+
+**Each workload is checked independently, against its own locked graph.**
+There is one canonical policy (`deny.toml`), but no single root-level
+cargo-deny invocation stands in for every workload. For every registered
+real workload, the central workflow runs a dedicated `supply-chain-shard
+(<workload>)` job that is conceptually equivalent to:
+
+```sh
+cargo deny --config deny.toml --manifest-path <workload>/Cargo.toml \
+  --locked --all-features check advisories licenses bans sources
+```
+
+`--locked` means a missing lockfile, a stale lockfile, or any attempt at
+dependency re-resolution fails the shard outright -- the scan always
+operates on the exact graph actually committed to the repository, never a
+graph cargo is allowed to re-resolve on the fly.
+
+**The repository-owned validator, not the workflow, implements the
+semantics.** `.github/scripts/validate-supply-chain.py` is what actually
+turns a canonical registry *name* into that cargo-deny invocation: it loads
+and validates the registry through the existing `validate-workload-registry.py`,
+resolves the requested name against `workloads` only (rejecting a fixture
+name or an arbitrary path outright), verifies the manifest/lockfile are
+present, and then propagates cargo-deny's own exit code verbatim as the
+shard's pass/fail signal. The GitHub workflow is a thin, workload-name-agnostic
+caller of this script, not a second implementation of the scan -- #33's
+planned scheduled advisory-drift audit is expected to install the same
+pinned cargo-deny version and invoke this exact script per workload, rather
+than reimplementing it. (#33's scheduled audit implementation does not exist
+yet as of this document; nothing here should be read as claiming scheduled
+auditing is already wired up.)
+
+**`supply-chain` is the stable aggregate, and it is policy-uncompromising.**
+Unlike `msrv`, the `supply-chain` stage has no policy-exemption concept
+analogous to an undeclared MSRV: every registered real workload is always
+expected to report the `validated` outcome, full stop. The aggregate is
+computed by the same `aggregate_verdict.py` used by `workloads-ci` and
+`workloads-msrv` (extended with a third `supply-chain` stage, not a second
+parallel implementation), so it fails closed on exactly the same class of
+incomplete-coverage conditions: a missing, cancelled, skipped, duplicate, or
+unexpected-extra result; a malformed result file; a failed discovery step;
+or a failed fan-out job.
+
+**Why both `supply-chain` and `dependency-review` exist.** They protect
+different surfaces and neither can substitute for the other.
+`dependency-review` (`.github/workflows/dependency-review.yml`) is diff-scoped:
+it flags newly introduced dependency changes in a given PR against GitHub's
+advisory data, and stays a required context in its own right. `supply-chain`
+is a full-current-graph control: it re-evaluates every registered real
+workload's entire locked dependency graph against the canonical policy on
+every PR, catching pre-existing graph issues a diff-scoped review would
+never see (for example, a newly published advisory affecting an
+already-locked dependency, or a pre-existing license-policy violation
+outside the PR diff, or a graph that predates `dependency-review` being
+enabled). Removing either would
+leave a real gap the other does not cover.
+
+**Policy exceptions: none, as of this writing.** `deny.toml`'s `ignore`,
+`exceptions`, `allow`/`deny` (bans), and similar lists are all empty. If a
+future real workload genuinely requires one, it must be scoped as tightly
+as the cargo-deny schema allows (an exact advisory ID, crate, version, or
+source -- never a blanket suppression), carry a concrete reason comment
+directly in `deny.toml` next to the entry, and never take the form of a
+generic `ignore = true`, a workload-level opt-out field, a registry escape
+hatch, an environment-variable bypass, or `continue-on-error`.
+
 ## Why a fixture workload exists
 
 `fixture-heterogeneous/` is not a validation workload and makes no OxideBatch
