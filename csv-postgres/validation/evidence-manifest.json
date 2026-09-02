@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "workload": "csv-postgres",
+  "producer": {
+    "base_revision": "e0294d62747270d8b4ae959dc1b5f23e27bd9363",
+    "revision_role": "legacy-source-snapshot",
+    "run": {
+      "kind": "manual-local",
+      "identity": null,
+      "binding": "recorded-metadata"
+    }
+  },
+  "semantic_closure": {
+    "algorithm": "sha256-git-tree-entries-v1",
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "docker-compose.yml",
+      "migrations",
+      "src",
+      "validation/generate-evidence.sh"
+    ],
+    "excluded_generated_paths": [
+      "validation/clean-run.json",
+      "validation/crash-run.json",
+      "validation/restart-run.json"
+    ],
+    "digest_sha256": "6b35c1f6e1bb397b777e322d883a8d003401b16cc883a43f3180fb55a4dc886e"
+  },
+  "validation_subject": {
+    "lockfile": {
+      "path": "Cargo.lock",
+      "git_blob_oid": "1f18ba2c8f480aae063037fb5ad46f0f54ddabc3"
+    },
+    "crates": [
+      {
+        "name": "oxide-batch",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
+      },
+      {
+        "name": "oxide-batch-test",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "8bad1e49c191f276402c7092b441c2a38dc33ff57b49d5911c801eafa42cb49e"
+      }
+    ]
+  },
+  "records": [
+    {
+      "scenario": "clean_run",
+      "artifact": {
+        "path": "validation/clean-run.json",
+        "sha256": "42b2f7cedef7bf62b609bbbbd097825b6731eebdbc553c15ac3c22d8d83312ef",
+        "size_bytes": 641
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-csv",
+          "sha256": "8a748d720051a49a8ecceeb4e02c16afb58362f789457764539b36bfaa3e83fa",
+          "size_bytes": 7746930
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 100000,
+          "seed": 20260831,
+          "id_offset": 1
+        }
+      },
+      "parameters": {
+        "chunk_size": 500,
+        "import_name": "evidence_clean_run"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "crash_run",
+      "artifact": {
+        "path": "validation/crash-run.json",
+        "sha256": "0f19d5f48364c786b2c77d63755f0a6c54fe6577b8ea89d68b2275c7321f11e0",
+        "size_bytes": 678
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-csv",
+          "sha256": "8a748d720051a49a8ecceeb4e02c16afb58362f789457764539b36bfaa3e83fa",
+          "size_bytes": 7746930
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 100000,
+          "seed": 20260831,
+          "id_offset": 1
+        }
+      },
+      "parameters": {
+        "chunk_size": 500,
+        "import_name": "evidence_crash_run"
+      },
+      "failure_point": {
+        "fail_at": "chunk:50",
+        "failure_mode": "after-business-commit",
+        "hard_crash": true
+      }
+    },
+    {
+      "scenario": "restart_run",
+      "artifact": {
+        "path": "validation/restart-run.json",
+        "sha256": "7dc5cdb6911ca873c9c9de7a427f54ecbce7d0f4909dffe014eb911ded4ca5b4",
+        "size_bytes": 1190
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-csv",
+          "sha256": "8a748d720051a49a8ecceeb4e02c16afb58362f789457764539b36bfaa3e83fa",
+          "size_bytes": 7746930
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 100000,
+          "seed": 20260831,
+          "id_offset": 1
+        }
+      },
+      "parameters": {
+        "chunk_size": 500,
+        "import_name": "evidence_crash_run",
+        "recovery_of": "crash_run"
+      },
+      "failure_point": null
+    }
+  ],
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-retained-evidence.py",
+      "sha256": "ce22bcde336d915261f10c00745815b376de87da911e44669d7dd43319e0b0ad",
+      "result_model": "violations-v1"
+    },
+    "producer": {
+      "path": "src/verify.rs",
+      "git_blob_oid": "1b88914272ec43fe2dc036f6517a5ba89f2de502"
+    }
+  },
+  "environment": {
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "value": "1.95",
+        "trust": "deterministically-recomputed",
+        "source": "producer Cargo.toml in semantic closure"
+      },
+      {
+        "name": "database-image",
+        "value": "postgres:18",
+        "trust": "deterministically-recomputed",
+        "source": "producer docker-compose.yml in semantic closure"
+      },
+      {
+        "name": "container-runtime",
+        "value": "Colima",
+        "trust": "recorded-metadata",
+        "source": "legacy producer commit narrative"
+      }
+    ],
+    "limitations": [
+      "The legacy evidence did not retain the exact rustc patch version, host OS build, or Colima version.",
+      "The producer run had no durable workflow/run identifier or external attestation."
+    ]
+  },
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 3,
+      "max_total_bytes": 16384,
+      "supersession": "One current clean/crash/restart set; replacement requires an atomic manifest update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "external_artifacts": []
+}
