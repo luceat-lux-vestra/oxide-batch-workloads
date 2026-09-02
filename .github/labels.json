@@ -2,6 +2,7 @@
   "schema_version": 1,
   "managed_prefixes": ["type:", "area:"],
   "singular_groups": ["type:"],
+  "structural_types": ["type:epic", "type:track", "type:campaign"],
   "labels": [
     {"name": "type:epic", "color": "5319e7", "description": "Long-lived parent initiative spanning multiple tracked work items"},
     {"name": "type:track", "color": "7057ff", "description": "Durable validation track beneath an epic"},
