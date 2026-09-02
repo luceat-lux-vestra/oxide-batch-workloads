@@ -44,6 +44,33 @@ class BaselineTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 baseline.parse_time_file(path)
 
+    def test_parse_verify_report_preserves_digest_evidence(self):
+        digest = "a" * 64
+        report = baseline.parse_verify_report(
+            '{"source_rows":100,"db_row_count":100,"row_counts_match":true,'
+            f'"source_digest_sha256":"{digest}","db_digest_sha256":"{digest}",'
+            '"digests_match":true}'
+        )
+        self.assertEqual(report["source_rows"], 100)
+        self.assertEqual(report["source_digest_sha256"], digest)
+
+    def test_parse_verify_report_rejects_contradictory_success(self):
+        with self.assertRaises(RuntimeError):
+            baseline.parse_verify_report(
+                '{"source_rows":100,"db_row_count":99,"row_counts_match":true,'
+                '"source_digest_sha256":"a","db_digest_sha256":"a",'
+                '"digests_match":true}'
+            )
+
+    def test_sha256_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "input.txt"
+            path.write_text("abc", encoding="utf-8")
+            self.assertEqual(
+                baseline.sha256_file(path),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
