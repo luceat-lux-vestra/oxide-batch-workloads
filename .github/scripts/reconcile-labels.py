@@ -7,7 +7,6 @@ import pathlib
 import re
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -23,7 +22,6 @@ def load_policy():
     taxonomy = load_json(TAXONOMY_PATH)
     workloads = load_json(WORKLOADS_PATH)
     known = {entry["name"] for entry in taxonomy["labels"]}
-    managed_prefixes = tuple(taxonomy["managed_prefixes"])
     structural = set(taxonomy["structural_types"])
     workload_paths = []
     for group in ("workloads", "fixtures"):
@@ -31,7 +29,6 @@ def load_policy():
             workload_paths.append((entry["name"], entry["path"].rstrip("/") + "/"))
     return {
         "known": known,
-        "managed_prefixes": managed_prefixes,
         "structural": structural,
         "workload_paths": workload_paths,
     }
@@ -119,11 +116,7 @@ def reconcile_labels(current_labels, inferred_type, inferred_areas, policy):
     else:
         raise ValueError(f"multiple managed type labels without an authoritative signal: {type_labels}")
 
-    desired = []
-    for label in current:
-        if label.startswith("type:"):
-            continue
-        desired.append(label)
+    desired = [label for label in current if not label.startswith("type:")]
     if selected_type:
         desired.append(selected_type)
 
@@ -200,7 +193,7 @@ def classify_item(item, policy, client=None):
 def apply_item(client, item, policy, dry_run=False):
     desired = classify_item(item, policy, client)
     current = labels_from_item(item)
-    if desired == current:
+    if len(desired) == len(current) and set(desired) == set(current):
         print(f"#{item['number']}: labels already reconciled")
         return False
     print(f"#{item['number']}: {current} -> {desired}")
