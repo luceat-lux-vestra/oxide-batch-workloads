@@ -7,7 +7,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
-USES = re.compile(r"^\s*uses:\s*([^\s#]+)")
+USES = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
 
 
 class WorkflowSecurityError(ValueError):
