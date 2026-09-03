@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib.util
 import json
 import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github" / "repository-settings-policy.json"
 LABELS_PATH = ROOT / ".github" / "labels.json"
+
+
+def load_reconciler():
+    path = ROOT / ".github" / "scripts" / "reconcile-labels.py"
+    spec = importlib.util.spec_from_file_location("hardening_drift_label_reconciler", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+RECONCILER = load_reconciler()
 
 
 class ApiFailure(RuntimeError):
@@ -51,6 +65,9 @@ class GitHubReadClient:
                 return result
             page += 1
 
+    def pr_paths(self, number):
+        return [entry["filename"] for entry in self.get_all(f"/pulls/{number}/files")]
+
 
 def command(command):
     return subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -74,11 +91,18 @@ def run_canonical_checks(run=command):
         if completed.returncode != 0:
             findings.append(finding(control, completed.stdout.strip() or f"exit {completed.returncode}"))
 
-    supply = run([sys.executable, ".github/scripts/run-scheduled-supply-chain-audit.py", "--output", "/tmp/hardening-supply-chain.json"])
-    try:
-        supply_result = json.loads(pathlib.Path("/tmp/hardening-supply-chain.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return findings, [finding("supply-chain", f"cannot read canonical supply-chain audit result: {exc}; output={supply.stdout}")]
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output = pathlib.Path(temp_dir) / "supply-chain.json"
+        supply = run([
+            sys.executable,
+            ".github/scripts/run-scheduled-supply-chain-audit.py",
+            "--output",
+            str(output),
+        ])
+        try:
+            supply_result = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return findings, [finding("supply-chain", f"cannot read canonical supply-chain audit result: {exc}; output={supply.stdout}")]
     classification = supply_result.get("classification")
     if classification == "policy-finding":
         findings.append(finding("supply-chain", supply_result.get("details", "confirmed supply-chain policy finding")))
@@ -204,6 +228,26 @@ def run_live_label_checks(client):
     return findings
 
 
+def run_live_label_automation_checks(client):
+    try:
+        policy = RECONCILER.load_policy()
+        items = client.get_all("/issues?state=open")
+        findings = []
+        for item in items:
+            current = RECONCILER.labels_from_item(item)
+            desired = RECONCILER.classify_item(item, policy, client)
+            if len(current) != len(desired) or set(current) != set(desired):
+                findings.append(
+                    finding(
+                        "label-automation",
+                        f"open item #{item.get('number')} is not reconciled: live {current!r}, canonical {desired!r}",
+                    )
+                )
+        return findings
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError, KeyError) as exc:
+        raise ApiFailure(f"label automation readback failed: {exc}") from exc
+
+
 def result(classification, policy_findings, infrastructure_failures, manual_readback):
     return {
         "schema_version": 1,
@@ -233,6 +277,7 @@ def run_audit(client, run=command):
         live_findings, manual = run_live_policy_checks(client, policy)
         policy_findings.extend(live_findings)
         policy_findings.extend(run_live_label_checks(client))
+        policy_findings.extend(run_live_label_automation_checks(client))
     except (ApiFailure, OSError, json.JSONDecodeError) as exc:
         infrastructure.append(finding("live-readback", str(exc)))
     return result(classify(policy_findings, infrastructure), policy_findings, infrastructure, manual)
