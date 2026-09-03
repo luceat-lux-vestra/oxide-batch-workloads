@@ -166,13 +166,22 @@ def actual_repository_value(control_id, repository, client):
         "repository.web_commit_signoff_required": "web_commit_signoff_required",
     }
     if control_id in mapping:
-        return repository.get(mapping[control_id])
+        key = mapping[control_id]
+        if not isinstance(repository, dict) or key not in repository:
+            raise ApiFailure(
+                f"repository readback omitted field {key!r} required by automated control {control_id!r}"
+            )
+        return repository[key]
     if control_id == "security.dependency_graph":
         sbom = client.get("/dependency-graph/sbom")
-        return isinstance(sbom, dict) and isinstance(sbom.get("sbom"), dict)
+        if not isinstance(sbom, dict) or not isinstance(sbom.get("sbom"), dict):
+            raise ApiFailure("dependency-graph/sbom returned a malformed or incomplete readback payload")
+        return True
     if control_id == "security.private_vulnerability_reporting":
         value = client.get("/private-vulnerability-reporting")
-        return value.get("enabled") if isinstance(value, dict) else None
+        if not isinstance(value, dict) or "enabled" not in value:
+            raise ApiFailure("private-vulnerability-reporting returned a malformed or incomplete readback payload")
+        return value["enabled"]
     raise KeyError(control_id)
 
 
