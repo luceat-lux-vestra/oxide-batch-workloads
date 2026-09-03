@@ -1,0 +1,60 @@
+name: Hardening drift audit policy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/repository-settings-policy.json"
+      - ".github/labels.json"
+      - ".github/scripts/audit_issue.py"
+      - ".github/scripts/run-hardening-drift-audit.py"
+      - ".github/scripts/report-hardening-drift-audit.py"
+      - ".github/scripts/report-supply-chain-audit.py"
+      - ".github/scripts/validate-workflow-security.py"
+      - ".github/scripts/test-hardening-drift-audit.py"
+      - ".github/scripts/test-scheduled-supply-chain-audit.py"
+      - ".github/workflows/*.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/repository-settings-policy.json"
+      - ".github/labels.json"
+      - ".github/scripts/audit_issue.py"
+      - ".github/scripts/run-hardening-drift-audit.py"
+      - ".github/scripts/report-hardening-drift-audit.py"
+      - ".github/scripts/report-supply-chain-audit.py"
+      - ".github/scripts/validate-workflow-security.py"
+      - ".github/scripts/test-hardening-drift-audit.py"
+      - ".github/scripts/test-scheduled-supply-chain-audit.py"
+      - ".github/workflows/*.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardening-drift-audit-policy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy-contract:
+    name: hardening-drift-audit-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test hardening drift audit
+        run: python3 .github/scripts/test-hardening-drift-audit.py
+
+      - name: Test existing scheduled supply-chain audit lifecycle
+        run: python3 .github/scripts/test-scheduled-supply-chain-audit.py
+
+      - name: Validate workflow security invariants
+        run: python3 .github/scripts/validate-workflow-security.py
+
+      - name: Test repository settings policy contract
+        run: python3 .github/scripts/test-repository-settings-policy.py
