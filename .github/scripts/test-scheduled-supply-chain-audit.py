@@ -79,8 +79,8 @@ class FakeClient:
     def all_issues(self):
         return iter(self.issues)
 
-    def create_issue(self, body):
-        issue = {"number": self.next_number, "state": "open", "body": body, "title": REPORTER.TITLE}
+    def create_issue(self, title, body, labels):
+        issue = {"number": self.next_number, "state": "open", "body": body, "title": title, "labels": labels}
         self.next_number += 1
         self.issues.append(issue)
         return issue

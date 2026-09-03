@@ -1,0 +1,106 @@
+name: Repository hardening drift audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/**"
+      - "SECURITY.md"
+      - "workloads.json"
+      - "*/Cargo.toml"
+      - "*/Cargo.lock"
+      - "*/validation/**"
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: Live audit or bounded synthetic lifecycle test
+        required: true
+        type: choice
+        default: live
+        options:
+          - live
+          - policy-drift
+          - infrastructure-failure
+          - clean
+
+concurrency:
+  group: hardening-drift-audit
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned cargo-deny
+        if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
+        continue-on-error: true
+        run: cargo install cargo-deny --version "=0.20.2" --locked
+
+      - name: Run hardening drift audit
+        id: audit
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'live' }}
+        run: |
+          python3 .github/scripts/run-hardening-drift-audit.py \
+            --test-mode "$TEST_MODE" \
+            --output "${{ runner.temp }}/hardening-drift-audit.json"
+
+      - name: Upload trusted audit result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hardening-drift-audit-result
+          path: ${{ runner.temp }}/hardening-drift-audit.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce audit result
+        if: steps.audit.outcome != 'success'
+        run: exit 1
+
+  report:
+    needs: detect
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download audit result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hardening-drift-audit-result
+          path: ${{ runner.temp }}/audit-result
+
+      - name: Reconcile owned audit issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .github/scripts/report-hardening-drift-audit.py \
+            --result "${{ runner.temp }}/audit-result/hardening-drift-audit.json" \
+            --run-url "$RUN_URL"
