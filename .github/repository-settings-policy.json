@@ -5,13 +5,55 @@
   "controls": [
     {"id": "repository.visibility", "classification": "required", "readback": "repository-api", "expected": "public"},
     {"id": "repository.default_branch", "classification": "required", "readback": "repository-api", "expected": "main"},
-    {"id": "repository.allow_squash_merge", "classification": "required", "readback": "repository-api", "expected": true},
-    {"id": "repository.allow_merge_commit", "classification": "required", "readback": "repository-api", "expected": false},
-    {"id": "repository.allow_rebase_merge", "classification": "required", "readback": "repository-api", "expected": false},
-    {"id": "repository.delete_branch_on_merge", "classification": "advisory/hygiene", "readback": "repository-api", "expected": true},
-    {"id": "repository.allow_update_branch", "classification": "advisory/hygiene", "readback": "repository-api", "expected": true},
-    {"id": "repository.squash_merge_commit_title", "classification": "advisory/hygiene", "readback": "repository-api", "expected": "COMMIT_OR_PR_TITLE"},
-    {"id": "repository.squash_merge_commit_message", "classification": "advisory/hygiene", "readback": "repository-api", "expected": "COMMIT_MESSAGES"},
+    {
+      "id": "repository.allow_squash_merge",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": true,
+      "rationale": "Confirmed enabled by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this field, so absence cannot be interpreted as a live false value."
+    },
+    {
+      "id": "repository.allow_merge_commit",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": false,
+      "rationale": "Confirmed disabled by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this field."
+    },
+    {
+      "id": "repository.allow_rebase_merge",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": false,
+      "rationale": "Confirmed disabled by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this field."
+    },
+    {
+      "id": "repository.delete_branch_on_merge",
+      "classification": "advisory/hygiene",
+      "readback": "manual-readback",
+      "expected": true,
+      "rationale": "Confirmed enabled by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this hygiene field."
+    },
+    {
+      "id": "repository.allow_update_branch",
+      "classification": "advisory/hygiene",
+      "readback": "manual-readback",
+      "expected": true,
+      "rationale": "Confirmed enabled by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this hygiene field."
+    },
+    {
+      "id": "repository.squash_merge_commit_title",
+      "classification": "advisory/hygiene",
+      "readback": "manual-readback",
+      "expected": "COMMIT_OR_PR_TITLE",
+      "rationale": "Confirmed by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this squash-history field."
+    },
+    {
+      "id": "repository.squash_merge_commit_message",
+      "classification": "advisory/hygiene",
+      "readback": "manual-readback",
+      "expected": "COMMIT_MESSAGES",
+      "rationale": "Confirmed by admin-scoped repository readback during #37. The first low-privilege #38 run (33726136040) proved the scheduled GITHUB_TOKEN repository payload omits this squash-history field."
+    },
     {
       "id": "repository.web_commit_signoff_required",
       "classification": "conditional",
