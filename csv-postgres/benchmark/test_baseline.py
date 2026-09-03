@@ -33,7 +33,7 @@ class BaselineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "time.txt"
             path.write_text(
-                "elapsed=1.25\nuser=0.80\nsystem=0.10\nmax_rss_kib=12345\n",
+                "elapsed=1.25\nuser=0.80\nsystem=0.10\nmax_rss_kib=12345\n\n",
                 encoding="utf-8",
             )
             parsed = baseline.parse_time_file(path)
