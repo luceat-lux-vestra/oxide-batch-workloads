@@ -222,6 +222,25 @@ class AuditClassifierTests(unittest.TestCase):
         findings, _manual = RUNNER.run_live_policy_checks(client, policy)
         self.assertTrue(any(item["control"] == "repository.default_branch" for item in findings))
 
+    def test_missing_automated_repository_field_is_infrastructure_failure_not_policy_drift(self):
+        repository = canonical_repository()
+        del repository["default_branch"]
+        client = FakeReadClient(
+            repository,
+            canonical_ruleset(),
+            canonical_labels(),
+            {
+                "/dependency-graph/sbom": {"sbom": {}},
+                "/private-vulnerability-reporting": {"enabled": True},
+            },
+        )
+        audit = RUNNER.run_audit(client, self.canonical_run_fixture())
+        self.assertEqual(audit["classification"], "infrastructure-failure")
+        self.assertFalse(any(item["control"] == "repository.default_branch" for item in audit["policy_findings"]))
+        self.assertTrue(
+            any("omitted field 'default_branch'" in item["details"] for item in audit["infrastructure_failures"])
+        )
+
     def test_live_managed_label_metadata_drift_is_detected(self):
         labels = canonical_labels()
         labels[0]["color"] = "ffffff"
@@ -247,6 +266,19 @@ class AuditClassifierTests(unittest.TestCase):
         self.assertEqual(audit["classification"], "clean")
         self.assertTrue(audit["manual_readback"])
         self.assertTrue(all("id" in entry and "expected" in entry for entry in audit["manual_readback"]))
+        manual_ids = {entry["id"] for entry in audit["manual_readback"]}
+        self.assertTrue(
+            {
+                "repository.allow_squash_merge",
+                "repository.allow_merge_commit",
+                "repository.allow_rebase_merge",
+                "repository.delete_branch_on_merge",
+                "repository.allow_update_branch",
+                "repository.squash_merge_commit_title",
+                "repository.squash_merge_commit_message",
+            }
+            <= manual_ids
+        )
 
 
 class WorkflowSecurityFixtureTests(unittest.TestCase):
