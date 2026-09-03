@@ -24,11 +24,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 class FakeReadClient:
-    def __init__(self, repository, ruleset, labels, special=None):
+    def __init__(self, repository, ruleset, labels, special=None, open_items=None, pr_files=None):
         self.repository = repository
         self.ruleset = ruleset
         self.labels = labels
         self.special = special or {}
+        self.open_items = open_items or []
+        self.pr_files = pr_files or {}
 
     def get(self, path):
         if path == "":
@@ -42,7 +44,15 @@ class FakeReadClient:
     def get_all(self, path):
         if path == "/labels":
             return self.labels
+        if path == "/issues?state=open":
+            return self.open_items
+        if path.startswith("/pulls/") and path.endswith("/files"):
+            number = int(path.split("/")[2])
+            return [{"filename": value} for value in self.pr_files.get(number, [])]
         raise RUNNER.ApiFailure(f"unexpected fake paged API path: {path}")
+
+    def pr_paths(self, number):
+        return list(self.pr_files.get(number, []))
 
 
 def canonical_repository():
@@ -108,6 +118,7 @@ class AuditClassifierTests(unittest.TestCase):
             "oxidebatch-provenance",
             "supply-chain",
             "managed-labels",
+            "label-automation",
             "evidence-contract",
             "repository.default_branch",
         ]
@@ -162,6 +173,19 @@ class AuditClassifierTests(unittest.TestCase):
         client = FakeReadClient({}, {}, labels)
         findings = RUNNER.run_live_label_checks(client)
         self.assertTrue(any(item["control"] == "managed-labels" for item in findings))
+
+    def test_live_label_automation_backlog_drift_is_detected_read_only(self):
+        item = {
+            "number": 999,
+            "title": "governance: fixture missing canonical labels",
+            "labels": [],
+        }
+        client = FakeReadClient({}, {}, canonical_labels(), open_items=[item])
+        findings = RUNNER.run_live_label_automation_checks(client)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["control"], "label-automation")
+        self.assertIn("type:task", findings[0]["details"])
+        self.assertIn("area:governance", findings[0]["details"])
 
     def test_manual_readback_controls_are_explicit_in_synthetic_result(self):
         audit = RUNNER.synthetic("clean")
