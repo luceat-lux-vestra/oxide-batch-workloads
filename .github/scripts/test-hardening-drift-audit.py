@@ -4,6 +4,7 @@ import importlib.util
 import json
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -125,6 +126,60 @@ class AuditClassifierTests(unittest.TestCase):
         for control in controls:
             with self.subTest(control=control):
                 self.assertEqual(RUNNER.classify([RUNNER.finding(control, "safe negative fixture")], []), "policy-drift")
+
+    def canonical_run_fixture(self, failing_script=None, supply_classification="clean"):
+        def fake_run(argv):
+            script = pathlib.Path(argv[1]).name if len(argv) > 1 else ""
+            if script == "run-scheduled-supply-chain-audit.py":
+                output = pathlib.Path(argv[argv.index("--output") + 1])
+                output.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "classification": supply_classification,
+                            "workloads": ["fixture"],
+                            "details": f"safe {supply_classification} fixture",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(argv, 0 if supply_classification == "clean" else 1, stdout="supply fixture")
+            if script == failing_script:
+                return subprocess.CompletedProcess(argv, 1, stdout=f"safe negative fixture from {script}")
+            return subprocess.CompletedProcess(argv, 0, stdout="ok")
+
+        return fake_run
+
+    def test_canonical_validator_failures_are_promoted_to_hardening_findings(self):
+        cases = {
+            "validate-workload-registry.py": "workload-registry",
+            "validate-oxidebatch-provenance.py": "oxidebatch-provenance",
+            "validate-evidence.py": "evidence-contract",
+            "validate-label-taxonomy.py": "label-taxonomy",
+            "validate-workflow-security.py": "workflow-security",
+        }
+        for script, control in cases.items():
+            with self.subTest(script=script):
+                findings, infrastructure = RUNNER.run_canonical_checks(self.canonical_run_fixture(failing_script=script))
+                self.assertFalse(infrastructure)
+                self.assertTrue(any(item["control"] == control for item in findings))
+                self.assertEqual(RUNNER.classify(findings, infrastructure), "policy-drift")
+
+    def test_supply_chain_policy_finding_is_promoted_to_hardening_drift(self):
+        findings, infrastructure = RUNNER.run_canonical_checks(
+            self.canonical_run_fixture(supply_classification="policy-finding")
+        )
+        self.assertFalse(infrastructure)
+        self.assertTrue(any(item["control"] == "supply-chain" for item in findings))
+        self.assertEqual(RUNNER.classify(findings, infrastructure), "policy-drift")
+
+    def test_supply_chain_infrastructure_failure_remains_distinct(self):
+        findings, infrastructure = RUNNER.run_canonical_checks(
+            self.canonical_run_fixture(supply_classification="infrastructure-failure")
+        )
+        self.assertFalse(findings)
+        self.assertTrue(any(item["control"] == "supply-chain" for item in infrastructure))
+        self.assertEqual(RUNNER.classify(findings, infrastructure), "infrastructure-failure")
 
     def test_infrastructure_failure_has_precedence_over_confirmed_drift(self):
         self.assertEqual(
