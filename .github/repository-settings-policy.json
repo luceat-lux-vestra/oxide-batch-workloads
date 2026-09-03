@@ -3,60 +3,15 @@
   "repository": "luceat-lux-vestra/oxide-batch-workloads",
   "ruleset_id": 21944159,
   "controls": [
-    {
-      "id": "repository.visibility",
-      "classification": "required",
-      "readback": "repository-api",
-      "expected": "public"
-    },
-    {
-      "id": "repository.default_branch",
-      "classification": "required",
-      "readback": "repository-api",
-      "expected": "main"
-    },
-    {
-      "id": "repository.allow_squash_merge",
-      "classification": "required",
-      "readback": "repository-api",
-      "expected": true
-    },
-    {
-      "id": "repository.allow_merge_commit",
-      "classification": "required",
-      "readback": "repository-api",
-      "expected": false
-    },
-    {
-      "id": "repository.allow_rebase_merge",
-      "classification": "required",
-      "readback": "repository-api",
-      "expected": false
-    },
-    {
-      "id": "repository.delete_branch_on_merge",
-      "classification": "advisory/hygiene",
-      "readback": "repository-api",
-      "expected": true
-    },
-    {
-      "id": "repository.allow_update_branch",
-      "classification": "advisory/hygiene",
-      "readback": "repository-api",
-      "expected": true
-    },
-    {
-      "id": "repository.squash_merge_commit_title",
-      "classification": "advisory/hygiene",
-      "readback": "repository-api",
-      "expected": "COMMIT_OR_PR_TITLE"
-    },
-    {
-      "id": "repository.squash_merge_commit_message",
-      "classification": "advisory/hygiene",
-      "readback": "repository-api",
-      "expected": "COMMIT_MESSAGES"
-    },
+    {"id": "repository.visibility", "classification": "required", "readback": "repository-api", "expected": "public"},
+    {"id": "repository.default_branch", "classification": "required", "readback": "repository-api", "expected": "main"},
+    {"id": "repository.allow_squash_merge", "classification": "required", "readback": "repository-api", "expected": true},
+    {"id": "repository.allow_merge_commit", "classification": "required", "readback": "repository-api", "expected": false},
+    {"id": "repository.allow_rebase_merge", "classification": "required", "readback": "repository-api", "expected": false},
+    {"id": "repository.delete_branch_on_merge", "classification": "advisory/hygiene", "readback": "repository-api", "expected": true},
+    {"id": "repository.allow_update_branch", "classification": "advisory/hygiene", "readback": "repository-api", "expected": true},
+    {"id": "repository.squash_merge_commit_title", "classification": "advisory/hygiene", "readback": "repository-api", "expected": "COMMIT_OR_PR_TITLE"},
+    {"id": "repository.squash_merge_commit_message", "classification": "advisory/hygiene", "readback": "repository-api", "expected": "COMMIT_MESSAGES"},
     {
       "id": "repository.web_commit_signoff_required",
       "classification": "conditional",
@@ -64,56 +19,14 @@
       "expected": false,
       "rationale": "DCO-style web signoff is not cryptographic signed-commit enforcement and is not required by this hardening policy."
     },
-    {
-      "id": "ruleset.enforcement",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": "active"
-    },
-    {
-      "id": "ruleset.target_default_branch",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
-    {
-      "id": "ruleset.deletion_protection",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
-    {
-      "id": "ruleset.non_fast_forward_protection",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
-    {
-      "id": "ruleset.required_linear_history",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
-    {
-      "id": "ruleset.pull_request_required",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
-    {
-      "id": "ruleset.allowed_merge_methods",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": [
-        "squash"
-      ]
-    },
-    {
-      "id": "ruleset.review_thread_resolution",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
+    {"id": "ruleset.enforcement", "classification": "required", "readback": "ruleset-api", "expected": "active"},
+    {"id": "ruleset.target_default_branch", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {"id": "ruleset.deletion_protection", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {"id": "ruleset.non_fast_forward_protection", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {"id": "ruleset.required_linear_history", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {"id": "ruleset.pull_request_required", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {"id": "ruleset.allowed_merge_methods", "classification": "required", "readback": "ruleset-api", "expected": ["squash"]},
+    {"id": "ruleset.review_thread_resolution", "classification": "required", "readback": "ruleset-api", "expected": true},
     {
       "id": "ruleset.required_approving_review_count",
       "classification": "conditional",
@@ -128,41 +41,16 @@
       "expected": false,
       "rationale": "With required_approving_review_count=0 this setting is not counted as an effective hardening control."
     },
-    {
-      "id": "ruleset.strict_required_status_checks",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": true
-    },
+    {"id": "ruleset.strict_required_status_checks", "classification": "required", "readback": "ruleset-api", "expected": true},
     {
       "id": "ruleset.required_status_contexts",
       "classification": "required",
       "readback": "ruleset-api",
-      "expected": [
-        "dependency-review",
-        "supply-chain",
-        "workloads-ci",
-        "workloads-msrv"
-      ]
+      "expected": ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"]
     },
-    {
-      "id": "ruleset.bypass_actors",
-      "classification": "required",
-      "readback": "ruleset-api",
-      "expected": []
-    },
-    {
-      "id": "actions.default_workflow_permissions",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": "read"
-    },
-    {
-      "id": "actions.can_approve_pull_request_reviews",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": false
-    },
+    {"id": "ruleset.bypass_actors", "classification": "required", "readback": "ruleset-api", "expected": []},
+    {"id": "actions.default_workflow_permissions", "classification": "required", "readback": "manual-readback", "expected": "read"},
+    {"id": "actions.can_approve_pull_request_reviews", "classification": "required", "readback": "manual-readback", "expected": false},
     {
       "id": "actions.fork_pull_request_policy",
       "classification": "required",
@@ -175,47 +63,18 @@
       "readback": "manual-readback",
       "expected": "reviewed repository policy"
     },
-    {
-      "id": "security.dependency_graph",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": true
-    },
-    {
-      "id": "security.dependabot_alerts",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": true
-    },
-    {
-      "id": "security.dependabot_security_updates",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": true
-    },
-    {
-      "id": "security.secret_scanning",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": "enabled where supported by the repository/plan"
-    },
-    {
-      "id": "security.secret_scanning_push_protection",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": "enabled where supported by the repository/plan"
-    },
-    {
-      "id": "security.private_vulnerability_reporting",
-      "classification": "required",
-      "readback": "manual-readback",
-      "expected": true
-    },
+    {"id": "security.dependency_graph", "classification": "required", "readback": "manual-readback", "expected": true},
+    {"id": "security.dependabot_alerts", "classification": "required", "readback": "manual-readback", "expected": true},
+    {"id": "security.dependabot_security_updates", "classification": "required", "readback": "manual-readback", "expected": true},
+    {"id": "security.secret_scanning", "classification": "required", "readback": "manual-readback", "expected": "enabled where supported by the repository/plan"},
+    {"id": "security.secret_scanning_push_protection", "classification": "required", "readback": "manual-readback", "expected": "enabled where supported by the repository/plan"},
+    {"id": "security.private_vulnerability_reporting", "classification": "required", "readback": "manual-readback", "expected": true},
     {
       "id": "security.code_scanning",
       "classification": "conditional",
       "readback": "manual-readback",
-      "expected": "default setup enabled when supported and useful for the repository language/tooling; otherwise document the omission"
+      "expected": true,
+      "rationale": "CodeQL default setup is currently enabled; PR #56 produced GitHub's dynamic CodeQL analysis jobs for python and actions. The admin setting itself remains manual-readback for future drift audits."
     },
     {
       "id": "security.signed_commits",
