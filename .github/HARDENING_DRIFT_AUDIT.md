@@ -7,11 +7,12 @@ scheduled supply-chain audit.
 
 ## Execution and trust boundary
 
-`.github/workflows/hardening-drift-audit.yml` runs weekly and may also be
-started manually with bounded synthetic lifecycle modes. The `detect` job is
-read-only and produces a trusted JSON result artifact. Only the separate
-`report` job receives `issues: write`, and that job consumes the detector
-artifact without executing untrusted pull-request code.
+`.github/workflows/hardening-drift-audit.yml` runs weekly, after policy-relevant
+changes land on `main`, and may also be started manually with bounded synthetic
+lifecycle modes. The `detect` job is read-only and produces a trusted JSON
+result artifact. Only the separate `report` job receives `issues: write`, and
+that job consumes the detector artifact without executing untrusted
+pull-request code.
 
 The detector classifies a run as:
 
