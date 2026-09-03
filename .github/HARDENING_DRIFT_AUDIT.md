@@ -55,6 +55,15 @@ but the low-privilege scheduled workflow does not claim to verify them. No
 high-privilege PAT or repository-admin secret is introduced merely to improve
 automation coverage.
 
+The first live `main` audit after PR #60, workflow run `33726136040`, provided
+an additional permission-boundary proof. Its low-privilege `GITHUB_TOKEN`
+repository payload omitted the merge-mode and squash-history fields that had
+previously been observed with an admin-scoped #37 readback. Those fields are
+therefore classified `manual-readback`; an omitted field is not a confirmed
+policy mismatch. For any control still classified as automated, a missing
+required API field is treated fail-closed as `infrastructure-failure` rather
+than being coerced to `None` and misreported as drift.
+
 ## Owned issue lifecycle
 
 Non-clean results are reported through exactly one issue containing:
@@ -69,11 +78,17 @@ are an error rather than a reason to create another issue.
 The generic owned-issue lifecycle is shared with the existing scheduled
 supply-chain reporter. Detection remains domain-specific.
 
+The first live audit also exercised this path end-to-end by creating owned
+issue #61. That issue is intentionally left to the reporter lifecycle: after
+the readback boundary correction lands, the next clean `main` audit should add
+the recovery comment and close #61 itself rather than requiring manual cleanup.
+
 ## Validation
 
 `test-hardening-drift-audit.py` supplies safe negative fixtures that reach the
 audit-level classifier for workload coverage, required contexts, workflow
 action/permission security, OxideBatch provenance, supply-chain policy,
 managed labels/automation, evidence retention, and live settings. It also
-covers infrastructure-vs-policy classification, explicit manual-readback
-inventory, and the complete owned-issue lifecycle.
+covers infrastructure-vs-policy classification, omitted low-privilege API
+fields, explicit manual-readback inventory, and the complete owned-issue
+lifecycle.
