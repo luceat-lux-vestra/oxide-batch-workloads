@@ -119,6 +119,8 @@ def host_provenance() -> dict[str, Any]:
 def parse_time_file(path: Path) -> dict[str, float | int]:
     values: dict[str, float | int] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
         key, value = line.split("=", 1)
         if key == "max_rss_kib":
             values[key] = int(value)
