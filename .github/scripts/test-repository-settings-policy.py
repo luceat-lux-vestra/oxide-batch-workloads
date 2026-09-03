@@ -22,6 +22,16 @@ ACCEPTANCE_CRITICAL_SECURITY_CONTROL_IDS = {
     "security.private_vulnerability_reporting",
 }
 
+LOW_PRIVILEGE_OMITTED_REPOSITORY_CONTROLS = {
+    "repository.allow_squash_merge",
+    "repository.allow_merge_commit",
+    "repository.allow_rebase_merge",
+    "repository.delete_branch_on_merge",
+    "repository.allow_update_branch",
+    "repository.squash_merge_commit_title",
+    "repository.squash_merge_commit_message",
+}
+
 
 class RepositorySettingsPolicyTests(unittest.TestCase):
     @classmethod
@@ -29,10 +39,7 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         cls.policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
 
     def test_top_level_shape_is_strict(self) -> None:
-        self.assertEqual(
-            set(self.policy),
-            {"schema_version", "repository", "ruleset_id", "controls"},
-        )
+        self.assertEqual(set(self.policy), {"schema_version", "repository", "ruleset_id", "controls"})
         self.assertEqual(self.policy["schema_version"], 1)
         self.assertEqual(self.policy["repository"], "luceat-lux-vestra/oxide-batch-workloads")
         self.assertIsInstance(self.policy["ruleset_id"], int)
@@ -63,20 +70,33 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         for control in manual:
             self.assertIn(control["classification"], CLASSIFICATIONS)
 
+    def test_low_privilege_omitted_repository_fields_stay_manual_readback(self) -> None:
+        controls = {c["id"]: c for c in self.policy["controls"]}
+        for control_id in LOW_PRIVILEGE_OMITTED_REPOSITORY_CONTROLS:
+            with self.subTest(control=control_id):
+                control = controls[control_id]
+                self.assertEqual(control["readback"], "manual-readback")
+                self.assertIn("33726136040", control.get("rationale", ""))
+
+    def test_repository_api_controls_are_safe_low_privilege_reads(self) -> None:
+        automated_repository_ids = {
+            c["id"] for c in self.policy["controls"] if c["readback"] == "repository-api"
+        }
+        self.assertTrue(
+            automated_repository_ids.isdisjoint(LOW_PRIVILEGE_OMITTED_REPOSITORY_CONTROLS)
+        )
+        self.assertTrue(
+            {"repository.visibility", "repository.default_branch", "repository.web_commit_signoff_required"}
+            <= automated_repository_ids
+        )
+
     def test_required_contexts_are_the_stable_aggregate_gate_set(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_status_contexts")
-        self.assertCountEqual(
-            control["expected"],
-            ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"],
-        )
+        self.assertCountEqual(control["expected"], ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"])
 
     def test_zero_approval_policy_does_not_claim_extra_approval_as_effective(self) -> None:
         approvals = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_approving_review_count")
-        unattributed = next(
-            c
-            for c in self.policy["controls"]
-            if c["id"] == "ruleset.require_extra_approval_for_unattributed_changes"
-        )
+        unattributed = next(c for c in self.policy["controls"] if c["id"] == "ruleset.require_extra_approval_for_unattributed_changes")
         self.assertEqual(approvals["expected"], 0)
         self.assertEqual(approvals["classification"], "conditional")
         self.assertFalse(unattributed["expected"])
@@ -101,9 +121,7 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         self.assertIn("configured", rationale)
 
     def test_pvr_expected_state_is_not_contradicted_by_security_md(self) -> None:
-        control = next(
-            c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting"
-        )
+        control = next(c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting")
         security_md = SECURITY_MD_PATH.read_text(encoding="utf-8")
         if control["expected"] is True:
             self.assertIn("Private Vulnerability Reporting", security_md)
