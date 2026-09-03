@@ -5,7 +5,6 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOWS = ROOT / ".github" / "workflows"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 USES = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
 
@@ -18,10 +17,29 @@ def fail(message):
     raise WorkflowSecurityError(message)
 
 
+def workflow_paths(root):
+    directory = root / ".github" / "workflows"
+    return sorted(set(directory.glob("*.yml")) | set(directory.glob("*.yaml")))
+
+
+def active_lines(path):
+    return [
+        line.rstrip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def active_text(path):
+    return "\n".join(active_lines(path))
+
+
 def validate_action_pins(root=ROOT):
     violations = []
-    for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+    for path in workflow_paths(root):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
             match = USES.match(line)
             if not match:
                 continue
@@ -40,7 +58,7 @@ def validate_action_pins(root=ROOT):
 
 def validate_label_automation_boundary(root=ROOT):
     path = root / ".github" / "workflows" / "label-automation.yml"
-    text = path.read_text(encoding="utf-8")
+    text = active_text(path)
     required = [
         "pull_request_target:",
         "issues: write",
@@ -56,6 +74,22 @@ def validate_label_automation_boundary(root=ROOT):
         fail("label automation must not check out pull-request head code under write permissions")
 
 
+def job_section(lines, job_name, next_job_name=None):
+    start_marker = f"  {job_name}:"
+    try:
+        start = lines.index(start_marker)
+    except ValueError as exc:
+        fail(f"missing workflow job: {job_name}")
+    if next_job_name is None:
+        return lines[start:]
+    end_marker = f"  {next_job_name}:"
+    try:
+        end = lines.index(end_marker, start + 1)
+    except ValueError as exc:
+        fail(f"missing workflow job: {next_job_name}")
+    return lines[start:end]
+
+
 def validate_audit_permission_boundaries(root=ROOT):
     for filename in ("scheduled-supply-chain-audit.yml", "hardening-drift-audit.yml"):
         path = root / ".github" / "workflows" / filename
@@ -63,16 +97,15 @@ def validate_audit_permission_boundaries(root=ROOT):
             if filename == "hardening-drift-audit.yml":
                 continue
             fail(f"missing required workflow: {filename}")
-        text = path.read_text(encoding="utf-8")
-        if "permissions: {}" not in text:
+        lines = active_lines(path)
+        if "permissions: {}" not in [line.strip() for line in lines]:
             fail(f"{filename} must default to no workflow permissions")
-        detect = text.split("report:", 1)[0]
+        detect = "\n".join(job_section(lines, "detect", "report"))
+        report = "\n".join(job_section(lines, "report"))
         if "issues: write" in detect:
             fail(f"{filename} detection path must not have issues: write")
-        if "report:" in text:
-            report = text.split("report:", 1)[1]
-            if "issues: write" not in report:
-                fail(f"{filename} reporting job must isolate issues: write")
+        if "issues: write" not in report:
+            fail(f"{filename} reporting job must isolate issues: write")
 
 
 def validate(root=ROOT):
