@@ -7,10 +7,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github" / "repository-settings-policy.json"
 SECURITY_MD_PATH = ROOT / "SECURITY.md"
-CLASSIFICATIONS = {"required", "conditional", "advisory/hygiene", "manual-readback"}
+CLASSIFICATIONS = {"required", "conditional", "advisory/hygiene"}
 READBACKS = {"repository-api", "ruleset-api", "manual-readback"}
 
-REQUIRED_MANUAL_SECURITY_CONTROL_IDS = {
+ACCEPTANCE_CRITICAL_SECURITY_CONTROL_IDS = {
     "actions.default_workflow_permissions",
     "actions.can_approve_pull_request_reviews",
     "actions.fork_pull_request_policy",
@@ -61,11 +61,11 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         manual = [c for c in self.policy["controls"] if c["readback"] == "manual-readback"]
         self.assertTrue(manual)
         for control in manual:
-            self.assertIn(control["classification"], {"required", "conditional", "manual-readback"})
+            self.assertIn(control["classification"], CLASSIFICATIONS)
 
     def test_required_contexts_are_the_stable_aggregate_gate_set(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_status_contexts")
-        self.assertEqual(
+        self.assertCountEqual(
             control["expected"],
             ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"],
         )
@@ -88,9 +88,9 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         self.assertFalse(signed["expected"])
         self.assertEqual(signed["readback"], "ruleset-api")
 
-    def test_required_manual_security_controls_are_all_present(self) -> None:
+    def test_acceptance_critical_security_controls_are_all_present(self) -> None:
         ids = {c["id"] for c in self.policy["controls"]}
-        missing = REQUIRED_MANUAL_SECURITY_CONTROL_IDS - ids
+        missing = ACCEPTANCE_CRITICAL_SECURITY_CONTROL_IDS - ids
         self.assertFalse(missing, f"acceptance-critical controls missing from policy: {missing}")
 
     def test_codeql_expected_state_is_backed_by_live_evidence(self) -> None:

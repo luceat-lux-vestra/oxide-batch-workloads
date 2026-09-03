@@ -7,21 +7,24 @@ high-privilege credential. The machine-readable source of truth is
 
 ## Control semantics
 
-Controls are classified by enforcement value, not by visual parity with
-another repository:
+Every control has two independent fields, and the two vocabularies must not
+be conflated:
 
-- `required`: the live value is part of the accepted hardening posture;
-- `conditional`: the value is intentional but becomes a stronger requirement
-  only when its prerequisite governance/compatibility decision is made;
-- `advisory/hygiene`: useful repository hygiene, not a security boundary;
-- `manual-readback`: reserved for controls that cannot be safely or
-  deterministically audited with the credentials/API surface available to the
-  repository automation.
-
-The `readback` field is separate from classification. `repository-api` and
-`ruleset-api` controls are suitable for low-privilege drift auditing. Controls
-marked `manual-readback` must not cause #38 to introduce a high-privilege PAT
-solely for convenience.
+- `classification` says how binding the value is, by enforcement weight, not
+  by visual parity with another repository: `required` (the live value is
+  part of the accepted hardening posture), `conditional` (intentional today,
+  becomes a stronger requirement only once its prerequisite
+  governance/compatibility decision is made), or `advisory/hygiene` (useful
+  repository hygiene, not a security boundary).
+- `readback` says how the live value can be verified: `repository-api` or
+  `ruleset-api` for controls a low-privilege, repo-scoped credential (or, for
+  a handful of endpoints, no credential at all) can read deterministically;
+  `manual-readback` for controls that cannot be safely or deterministically
+  audited with the credentials/API surface available to ordinary repository
+  automation. `manual-readback` is a `readback` value only — it is never a
+  valid `classification`. Controls marked `manual-readback` must not cause
+  #38 to introduce a high-privilege PAT solely to convert them into
+  automated checks.
 
 ## Live API readback established for #37
 
@@ -94,24 +97,43 @@ remains a manual readback item below.
 
 An admin-scoped `gh api` credential was used once, directly by the #37
 agent, to perform the readback below and to confirm every value already
-matched the accepted policy — no live settings changes were required. This
-is distinct from what #38 can safely do: #38 must not add an
-administration-scoped PAT, so these controls remain classified
-`manual-readback` in the machine policy even though a human/agent session
-was able to read them here.
+matched the accepted policy — no live settings changes were required. That
+credential is **not** available to #38, so each row is labeled with the
+`readback` mode it actually keeps in the machine policy:
 
-| Control | Live value (confirmed 2026-09-03) | Evidence |
-| --- | --- | --- |
-| Actions default workflow permissions | `read`, cannot approve PRs | `gh api repos/.../actions/permissions/workflow` |
-| Actions/reusable-workflow policy | `allowed_actions=all`, `sha_pinning_required=false` | `gh api repos/.../actions/permissions` |
-| Fork pull-request contributor approval | `first_time_contributors` | `gh api repos/.../actions/permissions/fork-pr-contributor-approval` |
-| Dependency Graph | Active (235-package SBOM returned) | `gh api repos/.../dependency-graph/sbom` |
-| Dependabot alerts | Enabled (HTTP 204) | `gh api repos/.../vulnerability-alerts` |
-| Dependabot security updates | Enabled | `security_and_analysis.dependabot_security_updates.status` |
-| Secret scanning | Enabled | `security_and_analysis.secret_scanning.status` |
-| Secret scanning push protection | Enabled | `security_and_analysis.secret_scanning_push_protection.status` |
-| Private Vulnerability Reporting | Enabled | `gh api repos/.../private-vulnerability-reporting` |
-| CodeQL default setup | `configured`, languages `actions`+`python`, weekly schedule | `gh api repos/.../code-scanning/default-setup` |
+- **admin-gated (`manual-readback`)** — verified by re-issuing the same
+  request with no `Authorization` header at all: it returns HTTP 401
+  ("Requires authentication"). A low-privilege, repo-scoped `GITHUB_TOKEN`
+  cannot be assumed to pass where an unauthenticated request fails, so #38
+  must not treat these as automatable without further verification, and
+  must not add an administration-scoped PAT to convert them.
+- **publicly readable (`repository-api`)** — verified by re-issuing the same
+  request with no `Authorization` header: it returns HTTP 200 with the same
+  body. These do not need any elevated credential and are safe for #38 to
+  poll with an ordinary token or none at all.
+
+| Control | Live value (confirmed 2026-09-03) | Evidence | Readback mode |
+| --- | --- | --- | --- |
+| Actions default workflow permissions | `read`, cannot approve PRs | `gh api repos/.../actions/permissions/workflow` | admin-gated |
+| Actions/reusable-workflow policy | `allowed_actions=all`, `sha_pinning_required=false` | `gh api repos/.../actions/permissions` | admin-gated |
+| Fork pull-request contributor approval | `first_time_contributors` | `gh api repos/.../actions/permissions/fork-pr-contributor-approval` | admin-gated |
+| Dependency Graph | Active (235-package SBOM returned) | `gh api repos/.../dependency-graph/sbom` | **publicly readable** |
+| Dependabot alerts | Enabled (HTTP 204) | `gh api repos/.../vulnerability-alerts` | admin-gated |
+| Dependabot security updates | Enabled | `security_and_analysis.dependabot_security_updates.status` | admin-gated |
+| Secret scanning | Enabled | `security_and_analysis.secret_scanning.status` | admin-gated |
+| Secret scanning push protection | Enabled | `security_and_analysis.secret_scanning_push_protection.status` | admin-gated |
+| Private Vulnerability Reporting | Enabled | `gh api repos/.../private-vulnerability-reporting` | **publicly readable** |
+| CodeQL default setup | `configured`, languages `actions`+`python`, weekly schedule | `gh api repos/.../code-scanning/default-setup` | admin-gated |
+
+`security.dependency_graph` and `security.private_vulnerability_reporting`
+are therefore classified `readback: repository-api` in the machine policy,
+not `manual-readback` — #38 can poll them with an ordinary low-privilege
+token (or no token). Every other row above stays `manual-readback`.
+`vulnerability-alerts`, `security_and_analysis` (returned inside the repo
+GET response only for an authenticated caller with push access or higher —
+confirmed absent from an unauthenticated GET), `actions/permissions/*`, and
+`code-scanning/default-setup` all returned HTTP 401 when re-issued without
+authentication, consistent with requiring elevated access.
 
 The `allowed_actions=all` policy was intentionally left unrestricted rather
 than narrowed to a selected-actions allowlist: CI depends on several

@@ -74,9 +74,9 @@
     {
       "id": "security.dependency_graph",
       "classification": "required",
-      "readback": "manual-readback",
+      "readback": "repository-api",
       "expected": true,
-      "rationale": "Confirmed 2026-09-03: `gh api repos/.../dependency-graph/sbom` returned a populated SBOM (235 packages), direct evidence the graph is active. Public repositories cannot disable Dependency Graph, so no repository-update call was needed."
+      "rationale": "Confirmed 2026-09-03: GET /repos/.../dependency-graph/sbom returned a populated SBOM (235 packages), direct evidence the graph is active. Verified this endpoint requires no authentication at all (plain unauthenticated curl returns HTTP 200 with the SBOM body), so unlike the other manual-readback controls, a future #38 low-privilege GITHUB_TOKEN (or no token) can read this deterministically. Public repositories cannot disable Dependency Graph, so no repository-update call was needed."
     },
     {
       "id": "security.dependabot_alerts",
@@ -109,9 +109,9 @@
     {
       "id": "security.private_vulnerability_reporting",
       "classification": "required",
-      "readback": "manual-readback",
+      "readback": "repository-api",
       "expected": true,
-      "rationale": "Confirmed 2026-09-03: `gh api repos/.../private-vulnerability-reporting` returned {\"enabled\": true}. SECURITY.md directs in-scope reports to GitHub PVR and framework reports to luceat-lux-vestra/oxide-batch Security Advisories, consistent with this state."
+      "rationale": "Confirmed 2026-09-03: GET /repos/.../private-vulnerability-reporting returned {\"enabled\": true}. Verified this endpoint requires no authentication at all (plain unauthenticated curl returns HTTP 200 with the same body), so unlike the other manual-readback controls, a future #38 low-privilege GITHUB_TOKEN (or no token) can read this deterministically. SECURITY.md directs in-scope reports to GitHub PVR and framework reports to luceat-lux-vestra/oxide-batch Security Advisories, consistent with this state."
     },
     {
       "id": "security.code_scanning",
