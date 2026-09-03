@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: oxide_batch_workload
+      POSTGRES_PASSWORD: oxide_batch_workload
+      POSTGRES_DB: postgres_postgres_workload
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oxide_batch_workload -d postgres_postgres_workload"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      # PostgreSQL 18's official image expects a single mount at
+      # /var/lib/postgresql (not .../data): it lays out data in a
+      # pg_ctlcluster-style, major-version-specific subdirectory. Mounting
+      # at .../data directly fails to start (confirmed against this exact
+      # image by csv-postgres, see its own docker-compose.yml).
+      - postgres_postgres_workload_data:/var/lib/postgresql
+
+volumes:
+  postgres_postgres_workload_data:
