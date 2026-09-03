@@ -6,8 +6,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / ".github" / "repository-settings-policy.json"
+SECURITY_MD_PATH = ROOT / "SECURITY.md"
 CLASSIFICATIONS = {"required", "conditional", "advisory/hygiene", "manual-readback"}
 READBACKS = {"repository-api", "ruleset-api", "manual-readback"}
+
+REQUIRED_MANUAL_SECURITY_CONTROL_IDS = {
+    "actions.default_workflow_permissions",
+    "actions.can_approve_pull_request_reviews",
+    "actions.fork_pull_request_policy",
+    "security.dependency_graph",
+    "security.dependabot_alerts",
+    "security.dependabot_security_updates",
+    "security.secret_scanning",
+    "security.secret_scanning_push_protection",
+    "security.private_vulnerability_reporting",
+}
 
 
 class RepositorySettingsPolicyTests(unittest.TestCase):
@@ -74,6 +87,27 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         self.assertEqual(signed["classification"], "conditional")
         self.assertFalse(signed["expected"])
         self.assertEqual(signed["readback"], "ruleset-api")
+
+    def test_required_manual_security_controls_are_all_present(self) -> None:
+        ids = {c["id"] for c in self.policy["controls"]}
+        missing = REQUIRED_MANUAL_SECURITY_CONTROL_IDS - ids
+        self.assertFalse(missing, f"acceptance-critical controls missing from policy: {missing}")
+
+    def test_codeql_expected_state_is_backed_by_live_evidence(self) -> None:
+        control = next(c for c in self.policy["controls"] if c["id"] == "security.code_scanning")
+        self.assertTrue(control["expected"])
+        rationale = control.get("rationale", "")
+        self.assertIn("code-scanning/default-setup", rationale)
+        self.assertIn("configured", rationale)
+
+    def test_pvr_expected_state_is_not_contradicted_by_security_md(self) -> None:
+        control = next(
+            c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting"
+        )
+        security_md = SECURITY_MD_PATH.read_text(encoding="utf-8")
+        if control["expected"] is True:
+            self.assertIn("Private Vulnerability Reporting", security_md)
+            self.assertNotIn("when it is enabled", security_md.lower())
 
 
 if __name__ == "__main__":

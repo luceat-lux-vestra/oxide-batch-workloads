@@ -72,7 +72,10 @@ The machine policy still classifies CodeQL as `manual-readback` for future
 #38 drift auditing because the connected low-privilege surface does not expose
 the administrative default-setup setting itself. A recent dynamic run is
 useful acceptance evidence, but absence of a recent run is not a reliable
-proof that the setting was disabled.
+proof that the setting was disabled. #37 additionally confirmed the admin
+`code-scanning/default-setup` state directly (see the readback table above):
+`state=configured`, languages `actions` and `python`, default query suite,
+`remote` threat model, weekly schedule.
 
 ## Workflow-level token posture
 
@@ -87,30 +90,45 @@ This is defense in depth, but it is **not** a substitute for reading the live
 repository-wide Actions default `GITHUB_TOKEN` setting. That live admin setting
 remains a manual readback item below.
 
-## Manual live readback still required
+## Actions and security administration readback (#37)
 
-The connected GitHub API surface used for #37 does not expose the repository
-Actions-permission or security-and-analysis administration endpoints. The
-following controls therefore require one authoritative Settings UI readback
-before #37 can be accepted:
+An admin-scoped `gh api` credential was used once, directly by the #37
+agent, to perform the readback below and to confirm every value already
+matched the accepted policy — no live settings changes were required. This
+is distinct from what #38 can safely do: #38 must not add an
+administration-scoped PAT, so these controls remain classified
+`manual-readback` in the machine policy even though a human/agent session
+was able to read them here.
 
-| Control | Required/accepted state |
-| --- | --- |
-| Actions default workflow permissions | Read repository contents/packages permission by default; not read/write |
-| Actions ability to approve PRs | Disabled |
-| Fork pull-request workflow policy | Untrusted fork code cannot receive write-capable `GITHUB_TOKEN` permissions or repository secrets without an explicit trusted approval path |
-| Actions/reusable-workflow policy | Review the live allowed-actions/reusable-workflows policy; do not broaden it merely for parity |
-| Dependency Graph | Enabled |
-| Dependabot alerts | Enabled |
-| Dependabot security updates | Enabled |
-| Secret scanning | Enabled where GitHub supports it for this repository/plan |
-| Secret scanning push protection | Enabled where GitHub supports it for this repository/plan |
-| Private Vulnerability Reporting | Enabled |
+| Control | Live value (confirmed 2026-09-03) | Evidence |
+| --- | --- | --- |
+| Actions default workflow permissions | `read`, cannot approve PRs | `gh api repos/.../actions/permissions/workflow` |
+| Actions/reusable-workflow policy | `allowed_actions=all`, `sha_pinning_required=false` | `gh api repos/.../actions/permissions` |
+| Fork pull-request contributor approval | `first_time_contributors` | `gh api repos/.../actions/permissions/fork-pr-contributor-approval` |
+| Dependency Graph | Active (235-package SBOM returned) | `gh api repos/.../dependency-graph/sbom` |
+| Dependabot alerts | Enabled (HTTP 204) | `gh api repos/.../vulnerability-alerts` |
+| Dependabot security updates | Enabled | `security_and_analysis.dependabot_security_updates.status` |
+| Secret scanning | Enabled | `security_and_analysis.secret_scanning.status` |
+| Secret scanning push protection | Enabled | `security_and_analysis.secret_scanning_push_protection.status` |
+| Private Vulnerability Reporting | Enabled | `gh api repos/.../private-vulnerability-reporting` |
+| CodeQL default setup | `configured`, languages `actions`+`python`, weekly schedule | `gh api repos/.../code-scanning/default-setup` |
 
-`SECURITY.md` currently tells reporters to use GitHub Private Vulnerability
-Reporting only when it is enabled and directs OxideBatch framework reports to
-the framework repository. Final #37 acceptance must compare this wording to
-the live PVR state rather than assuming the feature is enabled.
+The `allowed_actions=all` policy was intentionally left unrestricted rather
+than narrowed to a selected-actions allowlist: CI depends on several
+third-party actions and a compatibility pass for a narrower allowlist was
+not performed during #37. The binding fork-PR protection is not this
+allowlist; it is GitHub's default read-only, secret-less `GITHUB_TOKEN` for
+`pull_request`-triggered runs, combined with the contributor-approval gate
+above. This repository has exactly one `pull_request_target` consumer,
+`label-automation.yml`; it always checks out the trusted default branch and
+never PR-head code (see the comment at the top of its `reconcile` job), so
+it does not combine a privileged token with untrusted code.
+
+`SECURITY.md` tells reporters to use GitHub Private Vulnerability Reporting
+for issues in scope of this repository and to route OxideBatch framework
+vulnerabilities to the framework repository's Security Advisories. This now
+reflects the confirmed-enabled PVR state above rather than a conditional
+"when enabled" hedge.
 
 ## #38 boundary
 

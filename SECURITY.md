@@ -10,7 +10,7 @@ Security defects specific to workload code, CI, fixtures, evidence generation, o
 
 Do not open a public issue for a suspected vulnerability.
 
-Use GitHub private vulnerability reporting when it is enabled for the affected repository. For an OxideBatch framework vulnerability, use the **Security → Advisories → Report a vulnerability** flow in `luceat-lux-vestra/oxide-batch`.
+Use GitHub Private Vulnerability Reporting (Security → Report a vulnerability) for vulnerabilities specific to this repository. For an OxideBatch framework vulnerability, use the **Security → Advisories → Report a vulnerability** flow in `luceat-lux-vestra/oxide-batch`.
 
 Include the affected workload/commit or OxideBatch release, realistic impact, reproduction steps or proof of concept, and any known mitigation. State whether the issue is already public.
 
