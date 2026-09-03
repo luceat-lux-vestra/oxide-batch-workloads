@@ -31,6 +31,7 @@ run_ci_stage() {
   cargo fmt --check
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
+  python3 benchmark/test_baseline.py
 
   echo "guard: no unguarded unwrap/expect on the production path"
   if grep -rnE '\.(unwrap|expect)\(' src/ \
