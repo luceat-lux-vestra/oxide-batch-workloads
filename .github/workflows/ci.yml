@@ -23,8 +23,8 @@ env:
 
 jobs:
   # Knows only the canonical registry and how to validate/discover it, plus
-  # repository-wide (not per-workload) dependency-provenance enforcement
-  # (#29). Never knows a workload's business logic.
+  # repository-wide provenance/evidence policy. Never knows a workload's
+  # business logic.
   discover:
     name: discover
     runs-on: ubuntu-24.04
@@ -37,6 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Test fail-closed workload registry validation
         run: python3 .github/scripts/test-workload-registry.py
@@ -49,6 +50,12 @@ jobs:
 
       - name: Validate exact published OxideBatch provenance
         run: python3 .github/scripts/validate-oxidebatch-provenance.py
+
+      - name: Test canonical evidence contract
+        run: python3 .github/scripts/test-evidence.py
+
+      - name: Validate retained workload evidence
+        run: python3 .github/scripts/validate-evidence.py
 
       - name: Test aggregate verdict logic
         run: python3 .github/scripts/test_aggregate_verdict.py
@@ -376,8 +383,7 @@ jobs:
   # supply-chain policy (deny.toml). Fans out only over real workloads (see
   # supply-chain-shard above); `dependency-review` remains a separate,
   # diff-scoped required context protecting a distinct surface -- this is
-  # a full-current-graph control, not an alias for it. Not yet registered
-  # in the live branch-protection ruleset; see .github/WORKLOAD_CONTRACT.md.
+  # a full-current-graph control, not an alias for it.
   supply-chain:
     name: supply-chain
     needs: [discover, supply-chain-shard]
