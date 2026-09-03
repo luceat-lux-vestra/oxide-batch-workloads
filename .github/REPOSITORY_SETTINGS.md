@@ -60,6 +60,20 @@ There is no `required_signatures` rule in the accepted ruleset. Signed commits
 remain conditional until compatibility with Dependabot and other repository
 automation is proven rather than assumed.
 
+## Code scanning readback
+
+GitHub generated a `dynamic/github-code-scanning/codeql` workflow run for PR
+#56. Its live jobs initialized and performed CodeQL analysis for both `python`
+and `actions`. This is direct runtime evidence that GitHub CodeQL default setup
+is enabled for this repository even though there is intentionally no checked-in
+CodeQL workflow file.
+
+The machine policy still classifies CodeQL as `manual-readback` for future
+#38 drift auditing because the connected low-privilege surface does not expose
+the administrative default-setup setting itself. A recent dynamic run is
+useful acceptance evidence, but absence of a recent run is not a reliable
+proof that the setting was disabled.
+
 ## Workflow-level token posture
 
 Repository workflows reviewed during #37 explicitly request narrow token
@@ -92,7 +106,6 @@ before #37 can be accepted:
 | Secret scanning | Enabled where GitHub supports it for this repository/plan |
 | Secret scanning push protection | Enabled where GitHub supports it for this repository/plan |
 | Private Vulnerability Reporting | Enabled |
-| Code scanning / CodeQL | Default setup enabled when it usefully supports the repository, or record an explicit omission rationale |
 
 `SECURITY.md` currently tells reporters to use GitHub Private Vulnerability
 Reporting only when it is enabled and directs OxideBatch framework reports to
