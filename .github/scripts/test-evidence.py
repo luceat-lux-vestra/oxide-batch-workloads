@@ -74,6 +74,7 @@ class EvidenceContractTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
         subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=self.root, check=True)
         subprocess.run(["git", "config", "user.email", "evidence@example.test"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-qm", "base"], cwd=self.root, check=True)
         subprocess.run(["git", "add", "."], cwd=self.root, check=True)
         subprocess.run(["git", "commit", "-qm", "producer snapshot"], cwd=self.root, check=True)
         self.producer_revision = subprocess.check_output(
@@ -89,11 +90,12 @@ class EvidenceContractTests(unittest.TestCase):
             "validation/generate-evidence.sh",
         ]
         tree = validator.workload_tree(self.root, self.producer_revision, "alpha")
-        digest = validator.closure_digest(validator.select_closure(tree, includes))
+        entries = validator.select_closure(tree, includes)
+        digest = validator.closure_digest(entries)
         artifact_raw = self.artifact_path.read_bytes()
 
         self.manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "workload": "alpha",
             "producer": {
                 "base_revision": self.producer_revision,
@@ -104,6 +106,7 @@ class EvidenceContractTests(unittest.TestCase):
                 "algorithm": "sha256-git-tree-entries-v1",
                 "includes": includes,
                 "excluded_generated_paths": ["validation/a-run.json"],
+                "entries": self.render_entries(entries),
                 "digest_sha256": digest,
             },
             "validation_subject": {
@@ -169,6 +172,13 @@ class EvidenceContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
+    @staticmethod
+    def render_entries(entries: list[tuple[str, str, str]]) -> list[dict[str, str]]:
+        return [
+            {"path": path, "mode": mode, "git_blob_oid": oid}
+            for path, mode, oid in entries
+        ]
+
     def write_verifier(
         self,
         violations: list[str],
@@ -206,10 +216,42 @@ class EvidenceContractTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-qm", message], cwd=self.root, check=True)
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
 
-    def recompute_closure(self, revision: str) -> str:
+    def closure_entries(self, revision: str) -> list[tuple[str, str, str]]:
         closure = self.manifest["semantic_closure"]
         tree = validator.workload_tree(self.root, revision, "alpha")
-        return validator.closure_digest(validator.select_closure(tree, closure["includes"]))
+        return validator.select_closure(tree, closure["includes"])
+
+    def update_closure(self, revision: str) -> None:
+        entries = self.closure_entries(revision)
+        self.manifest["semantic_closure"]["entries"] = self.render_entries(entries)
+        self.manifest["semantic_closure"]["digest_sha256"] = validator.closure_digest(entries)
+
+    def squash_current_tree_and_prune_producer(self) -> str:
+        self.write_manifest()
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        tree = subprocess.check_output(["git", "write-tree"], cwd=self.root, text=True).strip()
+        base = subprocess.check_output(
+            ["git", "rev-parse", f"{self.producer_revision}^"], cwd=self.root, text=True
+        ).strip()
+        completed = subprocess.run(
+            ["git", "commit-tree", tree, "-p", base],
+            cwd=self.root,
+            text=True,
+            input="squash-style main\n",
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+        squash_revision = completed.stdout.strip()
+        subprocess.run(["git", "reset", "--hard", "-q", squash_revision], cwd=self.root, check=True)
+        (self.root / ".git" / "ORIG_HEAD").unlink(missing_ok=True)
+        subprocess.run(
+            ["git", "reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "gc", "--prune=now", "-q"], cwd=self.root, check=True)
+        self.assertFalse(validator.commit_available(self.root, self.producer_revision))
+        return squash_revision
 
     def test_accepts_machine_checkable_manifest(self) -> None:
         validator.validate_manifest(self.root, self.workload, self.manifest_path)
@@ -226,7 +268,7 @@ class EvidenceContractTests(unittest.TestCase):
         (self.workload_dir / "src" / "main.rs").write_text("fn main() { println!(\"changed\"); }\n", encoding="utf-8")
         changed_revision = self.commit_path("alpha/src/main.rs", "mutate semantic source")
         self.manifest["producer"]["base_revision"] = changed_revision
-        self.assert_rejected("semantic closure mismatch")
+        self.assert_rejected("producer.base_revision semantic closure does not match")
 
     def test_rejects_stale_published_subject(self) -> None:
         self.manifest["validation_subject"]["crates"][0]["version"] = "0.5.0"
@@ -276,19 +318,14 @@ class EvidenceContractTests(unittest.TestCase):
 
     def test_generated_evidence_is_outside_deterministic_semantic_closure(self) -> None:
         closure = self.manifest["semantic_closure"]
-        tree = validator.workload_tree(self.root, self.producer_revision, "alpha")
-        entries = validator.select_closure(tree, closure["includes"])
+        entries = self.closure_entries(self.producer_revision)
         before = validator.closure_digest(entries)
         selected_paths = {path for path, _mode, _oid in entries}
         self.assertNotIn("validation/a-run.json", selected_paths)
         self.artifact_path.write_text('{"passed": false, "changed": true}\n', encoding="utf-8")
-        after = validator.closure_digest(
-            validator.select_closure(
-                validator.workload_tree(self.root, self.producer_revision, "alpha"),
-                closure["includes"],
-            )
-        )
+        after = validator.closure_digest(self.closure_entries(self.producer_revision))
         self.assertEqual(before, after)
+        self.assertEqual(before, closure["digest_sha256"])
 
     def test_producer_passed_true_cannot_override_canonical_violation(self) -> None:
         self.write_verifier(["forced canonical violation"])
@@ -325,11 +362,46 @@ class EvidenceContractTests(unittest.TestCase):
         (self.workload_dir / "src" / "main.rs").write_text("fn main() { println!(\"rewritten\"); }\n", encoding="utf-8")
         rewritten_revision = self.commit_path("alpha/src/main.rs", "coordinated local rewrite")
         self.manifest["producer"]["base_revision"] = rewritten_revision
-        self.manifest["semantic_closure"]["digest_sha256"] = self.recompute_closure(rewritten_revision)
+        self.update_closure(rewritten_revision)
         self.write_manifest()
-        # This is intentionally accepted: v1 proves internal consistency, not
-        # authenticity against an editor able to rewrite source and metadata.
         validator.validate_manifest(self.root, self.workload, self.manifest_path)
+
+    def test_squash_unavailable_producer_accepts_preserved_semantic_content(self) -> None:
+        self.squash_current_tree_and_prune_producer()
+        validator.validate_manifest(self.root, self.workload, self.manifest_path)
+
+    def test_squash_unavailable_producer_rejects_altered_semantic_content(self) -> None:
+        (self.workload_dir / "src" / "main.rs").write_text(
+            'fn main() { println!("changed after evidence"); }\n', encoding="utf-8"
+        )
+        self.squash_current_tree_and_prune_producer()
+        with self.assertRaisesRegex(validator.EvidenceError, "not represented by any commit reachable from HEAD"):
+            validator.validate_manifest(self.root, self.workload, self.manifest_path)
+
+    def test_hand_edited_entries_and_digest_cannot_self_authenticate(self) -> None:
+        closure = self.manifest["semantic_closure"]
+        cargo_toml = next(item for item in closure["entries"] if item["path"] == "Cargo.toml")
+        cargo_lock = next(item for item in closure["entries"] if item["path"] == "Cargo.lock")
+        cargo_lock["git_blob_oid"] = cargo_toml["git_blob_oid"]
+        rewritten = [
+            (item["path"], item["mode"], item["git_blob_oid"])
+            for item in closure["entries"]
+        ]
+        closure["digest_sha256"] = validator.closure_digest(rewritten)
+        self.assert_rejected("not represented by any commit reachable from HEAD")
+
+
+class RepositoryEvidenceMigrationTests(unittest.TestCase):
+    def test_committed_csv_and_postgres_manifests_validate_under_v2(self) -> None:
+        validated = validator.validate_repository(REPO_ROOT)
+        self.assertIn("csv-postgres", validated)
+        self.assertIn("postgres-postgres", validated)
+        for workload in ("csv-postgres", "postgres-postgres"):
+            manifest = json.loads(
+                (REPO_ROOT / workload / "validation" / "evidence-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertTrue(manifest["semantic_closure"]["entries"])
 
 
 class CsvPostgresEvidenceMutationTests(unittest.TestCase):
