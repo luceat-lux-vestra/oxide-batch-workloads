@@ -123,9 +123,9 @@ async fn two_import_names_sharing_one_source_identity_do_not_collide_in_the_dest
     });
 
     let import_a = support::unique_name("identity_a");
-    support::run(&import_a, 25);
+    support::run_cursor(&import_a, 25);
     let import_b = support::unique_name("identity_b");
-    support::run(&import_b, 25);
+    support::run_cursor(&import_b, 25);
     assert_ne!(import_a, import_b);
 
     let pool = support::pool().await;

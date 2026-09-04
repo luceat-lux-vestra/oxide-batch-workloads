@@ -1,28 +1,30 @@
-//! Clean cursor-mode execution, end to end: seed -> run (through the real
-//! production `JobLauncher`/`ChunkJob` path) -> independently verify.
-//! Programmatic, DB-query-based evidence only -- row counts, correct
-//! transformed values (via the independent verifier), and job/step
-//! completion status. Never asserts on log strings.
+//! Clean paging-mode execution, end to end: seed -> run (`--reader paging`,
+//! through the real production `JobLauncher`/`ChunkJob` path and the
+//! released `postgres_paging_reader`) -> independently verify. The paging
+//! counterpart of `tests/clean_run.rs`'s cursor proof. Programmatic,
+//! DB-query-based evidence only -- row counts, correct transformed values
+//! (via the independent verifier), and job/step completion status. Never
+//! asserts on log strings.
 
 mod support;
 
 use support::SeedOptions;
 
 #[tokio::test]
-async fn clean_run_transforms_every_row_exactly_once_with_correct_values() {
+async fn clean_paging_run_transforms_every_row_exactly_once_with_correct_values() {
     support::migrate();
-    // `run`/`verify` cover the entire app_source table (see
+    // run/verify cover the entire app_source table (see
     // tests/support/mod.rs::reset's doc comment); reset first so this
     // test's exact row-count assertions are not disturbed by residual data
     // from other tests sharing this database.
     support::reset();
     let dataset = support::seed(SeedOptions {
         rows: 500,
-        seed: 42,
+        seed: 43,
     });
-    let import_name = support::unique_name("clean_run");
+    let import_name = support::unique_name("paging_clean_run");
 
-    let run_output = support::run_cursor(&import_name, 50);
+    let run_output = support::run_paging(&import_name, 50);
     let stdout = String::from_utf8_lossy(&run_output.stdout);
     let _ = stdout; // production run intentionally logs to stderr only
 
@@ -43,7 +45,7 @@ async fn clean_run_transforms_every_row_exactly_once_with_correct_values() {
     let verify_output = support::verify(&import_name);
     assert!(
         verify_output.status.success(),
-        "verify must succeed against an untouched clean run: stdout={}\nstderr={}",
+        "verify must succeed against an untouched clean paging run: stdout={}\nstderr={}",
         String::from_utf8_lossy(&verify_output.stdout),
         String::from_utf8_lossy(&verify_output.stderr),
     );
@@ -60,18 +62,17 @@ async fn clean_run_transforms_every_row_exactly_once_with_correct_values() {
         .is_empty());
 }
 
-/// Inspects global `pg_stat_activity` state, so it is only a meaningful
-/// signal with `--test-threads=1` (this workload's documented default,
-/// matching csv-postgres): under real concurrency, another test's own
-/// in-flight run can legitimately be idle-in-transaction for a moment
-/// between two statements of the same open chunk transaction, which this
-/// check cannot distinguish from an actual leak.
+/// Paging counterpart of `clean_run.rs`'s connection-sanity check: the
+/// paging reader never holds a transaction (each page is an independent
+/// statement over its own pool -- see the released `PostgresPagingReader`'s
+/// own contract), so this run must leave no leaked idle-in-transaction
+/// session either, exactly like cursor mode.
 #[tokio::test]
-async fn clean_run_leaves_no_open_transaction_or_extra_connections() {
+async fn clean_paging_run_leaves_no_open_transaction_or_extra_connections() {
     support::migrate();
-    support::seed(SeedOptions { rows: 100, seed: 7 });
-    let import_name = support::unique_name("conn_sanity");
-    support::run_cursor(&import_name, 25);
+    support::seed(SeedOptions { rows: 100, seed: 9 });
+    let import_name = support::unique_name("paging_conn_sanity");
+    support::run_paging(&import_name, 25);
 
     let pool = support::pool().await;
     let idle_in_transaction: i64 = sqlx::query_scalar(

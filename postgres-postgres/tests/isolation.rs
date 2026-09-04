@@ -19,7 +19,7 @@ async fn reset_truncates_only_workload_owned_tables_never_oxide_batch_metadata()
     support::migrate();
     support::seed(SeedOptions { rows: 20, seed: 5 });
     let import_name = support::unique_name("reset_boundary");
-    support::run(&import_name, 10);
+    support::run_cursor(&import_name, 10);
 
     let pool = support::pool().await;
     let instances_before = support::job_instance_count(&pool, &import_name).await;
@@ -60,7 +60,7 @@ async fn concurrent_test_scenarios_never_collide_through_stale_identity() {
         seed: 101,
     });
     let import_1 = support::unique_name("isolation_scenario");
-    support::run(&import_1, 15);
+    support::run_cursor(&import_1, 15);
     // `verify` recomputes the *current* source digest live (see
     // src/source_digest.rs), so it must run immediately after its own
     // scenario's `run` and before any other scenario mutates app_source --
@@ -73,7 +73,7 @@ async fn concurrent_test_scenarios_never_collide_through_stale_identity() {
         seed: 202,
     });
     let import_2 = support::unique_name("isolation_scenario");
-    support::run(&import_2, 15);
+    support::run_cursor(&import_2, 15);
     assert!(support::verify(&import_2).status.success());
 
     assert_ne!(

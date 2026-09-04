@@ -7,10 +7,10 @@ CREATE SCHEMA IF NOT EXISTS app_source;
 CREATE SCHEMA IF NOT EXISTS app_business;
 
 -- Deterministic source table. `customer_id` is the strict unique ordering
--- key both the cursor and (PR 2) paging readers key off of. Types are
--- limited to what `oxide_batch::item_components::PostgresRow` can decode
--- (text/i64/i32/bool/f64) so `postgres_cursor_reader`'s `map_row` can read
--- every column directly, with no base_query cast workaround required.
+-- key both the cursor and paging readers key off of. Types are limited to
+-- what `oxide_batch::item_components::PostgresRow` can decode (text/i64/i32/
+-- bool/f64) so both readers' `map_row` can read every column directly, with
+-- no base_query cast workaround required.
 CREATE TABLE IF NOT EXISTS app_source.source_customer (
     customer_id   BIGINT NOT NULL PRIMARY KEY,
     full_name     TEXT NOT NULL,
