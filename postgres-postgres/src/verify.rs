@@ -174,13 +174,22 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
         .connect(database_url)
         .await?;
 
-    let source_digest = crate::source_digest::compute(&pool).await?;
+    // Held for this whole function's source-touching span: the digest
+    // below, and the source_rows stream built from the same guarded
+    // connection right after it, must describe the same content, or a
+    // concurrent writer landing between the two could make `verify` derive
+    // its "expected" values from content that disagrees with the very
+    // digest it used to pick a destination scope. See
+    // `src/source_digest.rs`'s module documentation and
+    // `tests/source_stability.rs`.
+    let mut source_guard = crate::source_digest::lock_source_for_stable_read(&pool).await?;
+    let source_digest = crate::source_digest::compute(&mut *source_guard).await?;
 
     let mut source_rows = sqlx::query_as::<_, SourceTuple>(
         "SELECT customer_id, full_name, is_active, balance_cents \
          FROM app_source.source_customer ORDER BY customer_id",
     )
-    .fetch(&pool);
+    .fetch(&mut *source_guard);
     let mut destination_rows = sqlx::query_as::<_, DestinationTuple>(
         "SELECT customer_id, display_name, loyalty_score, is_premium, row_fingerprint \
          FROM app_business.customer_projection \
@@ -259,6 +268,11 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
             }
         }
     }
+    drop(source_rows);
+    drop(destination_rows);
+    // The source-stability window closes here: everything above that
+    // needed the digest and the source read to agree is now done.
+    source_guard.commit().await?;
     pool.close().await;
 
     let row_counts_match = source_count == destination_count;

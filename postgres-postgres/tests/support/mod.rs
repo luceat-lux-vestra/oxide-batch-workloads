@@ -3,10 +3,27 @@
 //! function call) against a real PostgreSQL database, and asserts on
 //! database state -- never on log strings.
 //!
-//! Test isolation: every test gets a unique `import_name` (job identity)
-//! and a unique `customer_id` range (`--id-offset`), both derived from a
-//! nanosecond nonce, so tests sharing one PostgreSQL database never collide
-//! even under parallel `cargo test` execution.
+//! # What is, and is not, safe to run concurrently
+//!
+//! Every test gets a unique `import_name` (job identity) and a unique
+//! `customer_id` range (`--id-offset`), both derived from a nanosecond
+//! nonce, so tests that only ever touch their own scoped rows (their own
+//! `import_name`, their own `id_offset` range) cannot collide with each
+//! other's *identity*, regardless of execution order.
+//!
+//! That is not the same claim as "safe under parallel execution." `run`
+//! and `verify` both cover the *entire* `app_source.source_customer` table
+//! by design (see [`reset`]'s own doc comment below), and `seed` never
+//! truncates -- so any test that asserts an exact row count, an exact
+//! digest-scoped destination count, or that calls [`reset`] is making a
+//! claim about *global* database state, not just its own nonce-scoped
+//! slice of it. Those tests require serialized execution: this workload's
+//! `ci/validate` runs `cargo test -- --test-threads=1`, and relies on
+//! `cargo test`'s own default of running separate test binaries (files)
+//! one at a time, not concurrently -- it does not itself add any
+//! additional cross-binary locking. Do not run this suite with a test
+//! runner that parallelizes across binaries (e.g. `cargo nextest`'s
+//! default) without first auditing which tests depend on that ordering.
 //!
 //! Each `tests/*.rs` file compiles this module separately as its own copy,
 //! and no single test file uses every helper here.
@@ -18,10 +35,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
+/// Matches `../../docker-compose.yml` and `../../ci/validate`'s own
+/// `DATABASE_URL` exactly -- not a personal local development URL, so a
+/// contributor without `POSTGRES_POSTGRES_TEST_DATABASE_URL` set still
+/// gets a default that actually matches the checked-in service this
+/// workload starts.
+const DEFAULT_TEST_DATABASE_URL: &str =
+    "postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload";
+
 pub fn database_url() -> String {
-    std::env::var("POSTGRES_POSTGRES_TEST_DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://algorist@localhost:5432/oxide_batch_workload_postgres_postgres".to_owned()
-    })
+    std::env::var("POSTGRES_POSTGRES_TEST_DATABASE_URL")
+        .unwrap_or_else(|_| DEFAULT_TEST_DATABASE_URL.to_owned())
 }
 
 pub async fn pool() -> PgPool {
@@ -162,6 +186,28 @@ pub fn run_with_fetch_size(import_name: &str, chunk_size: u32, fetch_size: usize
             .arg("--fetch-size")
             .arg(fetch_size.to_string()),
     )
+}
+
+/// Like [`run_with_fetch_size`], but starts the child process and returns
+/// immediately without waiting for it -- for tests that need to observe or
+/// interact with database state *while* a run is still in flight (e.g.
+/// `tests/source_stability.rs`, which attacks the window between
+/// `job::run`'s source-stability guard being taken and released).
+pub fn spawn_run_with_fetch_size(
+    import_name: &str,
+    chunk_size: u32,
+    fetch_size: usize,
+) -> std::process::Child {
+    bin()
+        .arg("run")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--chunk-size")
+        .arg(chunk_size.to_string())
+        .arg("--fetch-size")
+        .arg(fetch_size.to_string())
+        .spawn()
+        .expect("spawn postgres-postgres run in the background")
 }
 
 pub fn verify(import_name: &str) -> std::process::Output {

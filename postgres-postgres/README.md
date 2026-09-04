@@ -116,6 +116,27 @@ column into one SHA-256 digest. That digest becomes an *identifying*
 `JobParameter` (`ParameterRole::Identifying`) alongside the user-facing
 `import_name`.
 
+### Closing the digest/read TOCTOU window
+
+Computing a digest and later reading the source again (on a separate
+connection, potentially after other work) is a time-of-check-to-time-of-use
+hazard on its own: a digest computed against one snapshot says nothing
+about what a later, independent read will actually observe if the source
+was mutated in between. `job::run` and `verify` both close this for real,
+at the database level, via
+`src/source_digest.rs::lock_source_for_stable_read`: a dedicated
+transaction holding `LOCK TABLE app_source.source_customer IN SHARE MODE`
+from *before* the digest is computed until *after* the source has actually
+been read (the cursor reader's own read for `run`; the independent
+comparison read for `verify`). `SHARE MODE` blocks every other session's
+write to that table for as long as the guard is held, while never blocking
+the plain reads both the reader and the verifier need to keep working --
+this is a real PostgreSQL-enforced guarantee, not a cooperative convention.
+`tests/source_stability.rs` attacks this window directly: it confirms
+(via `pg_locks`) the guard is actually held while a run is in flight, then
+proves a concurrent write against `app_source.source_customer` is genuinely
+blocked (and that it succeeds immediately once the run releases the guard).
+
 Consequences, all covered by `tests/source_identity.rs`:
 
 - the same source content under the same `import_name` resolves to the
@@ -253,6 +274,9 @@ Proven, with real PostgreSQL 18, in this PR:
 - independent verification, including three corruption negative controls;
 - collision-free destination scoping across distinct import names/source
   identities;
+- a database-enforced source-stability guard that closes the digest/read
+  TOCTOU window, proven under a real adversarial concurrent-write attempt
+  (`tests/source_stability.rs`), not merely assumed from the code;
 - workload-owned `reset` never touches `oxide_batch` metadata.
 
 ## Explicit limitations (not this PR)

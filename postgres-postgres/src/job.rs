@@ -138,6 +138,19 @@ fn map_source_row(row: &PostgresRow<'_>) -> Result<SourceRow, ReaderError> {
 /// distinct `JobInstanceKey` and therefore can never silently resume a
 /// stale checkpoint against different content (see
 /// `tests/source_identity.rs`).
+///
+/// The digest and the actual source read the cursor reader performs later
+/// in this same call must describe the *same* content, or `source_digest`
+/// would identify content this run never actually processed. A digest
+/// computed on one connection/snapshot and a reader that opens its own,
+/// separate connection afterward is a real time-of-check-to-time-of-use
+/// gap otherwise: `source_digest::lock_source_for_stable_read` closes it
+/// by holding a database-enforced `LOCK TABLE ... IN SHARE MODE` on
+/// `app_source.source_customer` from before the digest is computed until
+/// after `launch_chunk` returns, so no other session's write to that table
+/// can land in between (see `src/source_digest.rs`'s module documentation,
+/// and `tests/source_stability.rs` for a test that actually attacks this
+/// window rather than assuming it is closed).
 pub async fn run(
     database_url: &str,
     import_name: &str,
@@ -149,11 +162,12 @@ pub async fn run(
     let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
     let launcher = JobLauncher::new(&repository, &SystemClock, &ids);
 
-    let source_pool = sqlx::postgres::PgPoolOptions::new()
+    let guard_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
         .connect(database_url)
         .await?;
-    let source_digest = crate::source_digest::compute(&source_pool).await?;
-    source_pool.close().await;
+    let mut source_guard = crate::source_digest::lock_source_for_stable_read(&guard_pool).await?;
+    let source_digest = crate::source_digest::compute(&mut *source_guard).await?;
     tracing::info!(
         import_name,
         source_digest,
@@ -221,6 +235,15 @@ pub async fn run(
     let report = launcher
         .launch_chunk(&mut chunk_job, &parameters, &stop_token)
         .await?;
+
+    // The source-stability window closes here: the cursor reader has
+    // finished reading (launch_chunk has returned), so the digest computed
+    // above is now provably a description of what this run actually
+    // processed. Only after this does any other session's write to
+    // app_source.source_customer unblock.
+    source_guard.commit().await?;
+    guard_pool.close().await;
+
     let execution = report.launch().job_execution();
     tracing::info!(
         job_execution_id = %execution.id(),
