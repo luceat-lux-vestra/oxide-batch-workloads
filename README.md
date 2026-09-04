@@ -31,7 +31,7 @@ missing framework-neutral contract.
 | Path | Release validated | Purpose |
 |---|---|---|
 | [`csv-postgres/`](csv-postgres/) | `oxide-batch` `0.6.0` | Streaming CSV → PostgreSQL restartable batch import: transaction/checkpoint/restart semantics, crash recovery, application-level idempotency, resource bounds. |
-| [`postgres-postgres/`](postgres-postgres/) | `oxide-batch` `0.6.0` | PostgreSQL → PostgreSQL cursor-mode restartable transform (campaign #63, PR 1): server-side cursor reader, deterministic source identity, released enlisted batch writer, independent verification. Paging mode and crash/recovery evidence are later PRs in the same campaign. |
+| [`postgres-postgres/`](postgres-postgres/) | `oxide-batch` `0.6.0` | PostgreSQL → PostgreSQL cursor + keyset/paging restartable transform (campaign #63): deterministic source identity, released enlisted batch writer, independent streaming verification, and rollback + real hard-crash/new-process recovery for both reader modes. Retained larger-dataset resource evidence is the final campaign slice. |
 
 Each workload is a standalone Cargo project with its own `Cargo.lock`
 pinned to a published `oxide-batch = "=X.Y.Z"` (registry source, verifiable
