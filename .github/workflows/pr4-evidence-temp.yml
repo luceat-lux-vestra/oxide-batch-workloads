@@ -1,0 +1,60 @@
+name: PR4 evidence temporary runner
+
+on:
+  push:
+    branches:
+      - campaign-63-pr4-retained-evidence
+    paths:
+      - .github/workflows/pr4-evidence-temp.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: oxide_batch_workload
+          POSTGRES_PASSWORD: oxide_batch_workload
+          POSTGRES_DB: postgres_postgres_workload
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U oxide_batch_workload -d postgres_postgres_workload"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out exact producer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 32939c4bc1b9c7b7b7814f39d3ed6531739771a3
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Generate and print evidence
+        env:
+          DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+        run: |
+          set -euo pipefail
+          cd postgres-postgres
+          ./validation/generate-evidence.sh
+          cd ..
+          echo '===PR4_CURSOR_JSON_BEGIN==='
+          cat postgres-postgres/validation/cursor-run.json
+          echo '===PR4_CURSOR_JSON_END==='
+          echo '===PR4_PAGING_JSON_BEGIN==='
+          cat postgres-postgres/validation/paging-run.json
+          echo '===PR4_PAGING_JSON_END==='
+          echo "PR4_DATABASE_VERSION=$(psql \"$DATABASE_URL\" -t -A -c 'SHOW server_version;')"
+          echo "PR4_RUSTC_VERSION=$(rustc --version)"
+          echo "PR4_CARGO_VERSION=$(cargo --version)"
+          echo "PR4_OS_KERNEL=$(uname -srm)"
+          sha256sum postgres-postgres/validation/cursor-run.json postgres-postgres/validation/paging-run.json postgres-postgres/validation/verify-retained-evidence.py
+          wc -c postgres-postgres/validation/cursor-run.json postgres-postgres/validation/paging-run.json
