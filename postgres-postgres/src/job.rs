@@ -234,17 +234,20 @@ fn map_source_row(row: &PostgresRow<'_>) -> Result<SourceRow, ReaderError> {
     })
 }
 
-/// The job's identifying parameters: `import_name`, `source_digest`
-/// (unchanged from PR 1 -- see `src/source_digest.rs`), and now
-/// `reader_mode`. `reader_mode` is identifying, not incidental: cursor and
-/// paging are two different released components with two different
-/// `ItemStream` state shapes, so the same `import_name` and the exact same
-/// source content under different reader modes must resolve to different
-/// `JobInstanceKey`s -- resuming (or worse, silently reinterpreting) one
-/// mode's persisted keyset/cursor state through the other reader is not a
-/// resume, it is data corruption. This intentionally means a PR 1 cursor
-/// `JobInstance` (which predates this parameter entirely) is not resumed by
-/// the PR 2 identity scheme; see `tests/reader_mode_identity.rs` and the
+/// The job's identifying parameters: `import_name`, `source_digest` (a
+/// mode-independent source content identity, unchanged from PR 1 -- see
+/// `src/source_digest.rs`), and now `reader_mode` as its own separate
+/// identifying parameter. `reader_mode` is identifying, not incidental:
+/// cursor and paging both persist the same `KeysetPosition` payload type
+/// through their own `ItemStream`, but under different schema/codec
+/// identity, namespace, and component revision, so the same `import_name`
+/// and the exact same source content under different reader modes must
+/// resolve to different `JobInstanceKey`s -- resuming (or worse, silently
+/// cross-interpreting) one mode's persisted state contract through the
+/// other reader is not a resume, it is data corruption. This intentionally
+/// means a PR 1 cursor `JobInstance` (which predates this parameter
+/// entirely) is not resumed by the PR 2 identity scheme; see
+/// `tests/reader_mode_identity.rs` and the
 /// crate README's compatibility note. No framework metadata is mutated to
 /// migrate historical instances -- that is out of scope for this
 /// campaign-local compatibility transition.

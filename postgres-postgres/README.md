@@ -28,8 +28,10 @@ consumer can:
 - write the result through the released `postgres_batch_writer`, enlisted
   in the same business transaction OxideBatch's own checkpoint/component
   state commits through (`ChunkDeliveryMode::AtomicSameResource`);
-- give every run a deterministic, mutation-sensitive source identity that
-  also captures which reader mode produced it;
+- give every run a deterministic, mutation-sensitive source content
+  identity (`source_digest`, independent of which reader mode produced
+  it), with `reader_mode` itself participating in job identity as its own
+  separate identifying parameter;
 - prove cursor and paging produce equivalent business results over
   identical source content; and
 - be checked by a verifier that never trusts the production code path it
@@ -240,25 +242,33 @@ PR's.**
 
 ## Reader mode and job identity
 
-`reader_mode` (`"cursor"` or `"paging"`) is a third *identifying*
+`source_digest` (`src/source_digest.rs`) remains exactly what it was in
+PR 1: a mode-independent identity over the source table's own content, with
+no knowledge of which reader will, or did, read it. `reader_mode`
+(`"cursor"` or `"paging"`) is a separate, third *identifying*
 `JobParameter`, alongside `import_name` and `source_digest`
-(`src/job.rs::parameters`). Job identity is therefore effectively
-`import_name + source_digest + reader_mode`: the same import name against
-the exact same source content, run once under each reader mode, resolves to
-two distinct `JobInstance`s -- proven directly against
-`oxide_batch.ob_job_instance` (framework-owned durable metadata) in
-`tests/reader_mode_identity.rs`, including that each instance's own
-`identifying_parameters` records its own `reader_mode` value with role
-`identifying`.
+(`src/job.rs::parameters`) -- it participates in *job* identity, not in
+source identity. Job identity is therefore effectively `import_name +
+source_digest + reader_mode`: the same import name against the exact same
+source content, run once under each reader mode, resolves to two distinct
+`JobInstance`s -- proven directly against `oxide_batch.ob_job_instance`
+(framework-owned durable metadata) in `tests/reader_mode_identity.rs`,
+including that each instance's own `identifying_parameters` records its own
+`reader_mode` value with role `identifying`.
 
-This is not incidental: cursor and paging are two different released
-components with two different `ItemStream` state shapes (a cursor position
-vs. a keyset page position), registered under two different stream
-namespaces (`oxide-batch-workload.postgres-postgres.cursor-reader` vs.
-`...paging-reader`) and two different reader/stream component revisions.
-Resuming one mode's persisted stream state through the other reader would
-not be a resume -- it would be a silent reinterpretation of one component's
-bytes by an unrelated component. This workload never attempts that.
+This is not incidental: cursor and paging both persist the same
+`KeysetPosition` payload type through their own `ItemStream`, but under
+different schema/codec identity (`CursorKeysetSchema`/
+`oxide-batch.postgres-cursor-reader-position-codec` vs.
+`PagingKeysetSchema`/`oxide-batch.postgres-paging-reader-position-codec`),
+different stream namespaces
+(`oxide-batch-workload.postgres-postgres.cursor-reader` vs.
+`...paging-reader`), and different reader/stream component revisions. A
+shared payload shape is not license to cross-interpret one mode's state
+contract as the other's: resuming one mode's persisted stream state through
+the other reader would not be a resume -- it would be a silent
+reinterpretation of one component's bytes by an unrelated component. This
+workload never attempts that.
 
 Because cursor and paging declare structurally different `ChunkJob`
 manifests (different component revisions) under the same `job_name`,
