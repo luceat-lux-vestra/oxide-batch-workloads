@@ -21,6 +21,55 @@ Every significant campaign records, as applicable: workload SHA; exact OxideBatc
 
 Evidence must distinguish framework guarantees, application idempotency, and external-system guarantees.
 
+## Governance axes and release evidence horizons
+
+The program uses two independent GitHub ownership axes. They answer different questions and must not be collapsed into one hierarchy.
+
+### Capability ownership: Epic -> Track -> Campaign
+
+- #8 is the long-lived program Epic.
+- Tracks #10-#22 own durable capability/evidence dimensions.
+- A concrete campaign has exactly one primary parent Track and may cross-link other Tracks whose evidence it contributes to.
+- Epic and Track issues remain milestone-null unless a later explicit governance decision changes this model.
+- Track ownership is authoritative for *what capability surface* a campaign validates.
+
+### Release ownership: native evidence-horizon milestones
+
+A native GitHub milestone groups concrete campaigns that validate a bounded published OxideBatch release family or evidence horizon. Milestone assignment answers *which published release horizon owns the campaign's completion evidence*; it does not replace Track ownership.
+
+Current horizon:
+
+- `OxideBatch 0.6 External Validation` (native milestone #1) owns concrete campaigns validating published OxideBatch 0.6.x artifacts.
+- At the time this policy was adopted, completed campaign #51 and active campaign #63 are the complete concrete 0.6.x campaign set and are intentionally assigned to milestone #1.
+- Long-lived Epic #8 and Tracks #10-#22 are intentionally not assigned to milestone #1.
+
+### Campaign activation invariant
+
+Before the first implementation PR for a campaign that counts toward a release evidence horizon:
+
+1. the campaign is concrete and ready under the #8 decomposition rules;
+2. its primary Track ownership and any material cross-links are explicit;
+3. the applicable native evidence-horizon milestone exists and is open;
+4. the campaign is assigned to exactly one applicable evidence-horizon milestone; and
+5. the exact published OxideBatch dependency/version scope agrees with that milestone's release horizon.
+
+A milestone's existence or a campaign's milestone assignment does **not** authorize speculative work by itself.
+
+### Evidence-horizon closure invariant
+
+Close a native evidence-horizon milestone only when:
+
+1. every horizon-owned campaign is completed, or has been explicitly moved/reclassified with a recorded rationale;
+2. retained evidence and release-facing claims agree with the final completed campaign set;
+3. no speculative/future Track work was pulled into the milestone merely to make the horizon appear complete; and
+4. the closed native milestone state is confirmed by a fresh GitHub readback.
+
+### Release-family transition rule
+
+- Create a new native evidence horizon only when concrete external validation of a new published release family begins.
+- Do not migrate completed historical campaigns merely to populate a newer horizon.
+- A campaign that deliberately validates an upgrade across release families must state which evidence horizon owns its completion evidence and cross-link the other release context where needed.
+
 ## Track A — Item I/O and resources
 
 ### P0
