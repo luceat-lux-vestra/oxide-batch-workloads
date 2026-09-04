@@ -10,10 +10,11 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MANIFEST_NAME = "evidence-manifest.json"
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+REGULAR_GIT_MODES = {"100644", "100755"}
 TRUST_CLASSES = {
     "recorded-metadata",
     "schema-checked",
@@ -81,27 +82,30 @@ def git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return completed
 
 
-def ensure_commit(root: Path, revision: str) -> None:
-    if git(root, "cat-file", "-e", f"{revision}^{{commit}}", check=False).returncode != 0:
-        fail(
-            f"producer.base_revision {revision} is unavailable; CI must fetch enough history "
-            "to recompute the semantic closure"
-        )
+def commit_available(root: Path, revision: str) -> bool:
+    return git(root, "cat-file", "-e", f"{revision}^{{commit}}", check=False).returncode == 0
 
 
 def git_show(root: Path, revision: str, repo_path: str, required: bool = True) -> bytes | None:
     completed = git(root, "show", f"{revision}:{repo_path}", check=False)
     if completed.returncode != 0:
         if required:
-            fail(f"producer revision {revision} is missing required path {repo_path}")
+            fail(f"repository revision {revision} is missing required path {repo_path}")
         return None
     return completed.stdout
+
+
+def git_blob_bytes(root: Path, oid: str) -> bytes:
+    kind = git(root, "cat-file", "-t", oid, check=False)
+    if kind.returncode != 0 or kind.stdout.strip() != b"blob":
+        fail(f"semantic closure blob {oid} is unavailable from repository history")
+    return git(root, "cat-file", "blob", oid).stdout
 
 
 def git_blob_oid(root: Path, revision: str, repo_path: str) -> str:
     line = git(root, "ls-tree", revision, "--", repo_path).stdout.decode().strip()
     if not line:
-        fail(f"producer revision {revision} is missing required blob {repo_path}")
+        fail(f"repository revision {revision} is missing required blob {repo_path}")
     lines = line.splitlines()
     if len(lines) != 1:
         fail(f"expected one git tree entry for {repo_path}, found {len(lines)}")
@@ -112,8 +116,20 @@ def git_blob_oid(root: Path, revision: str, repo_path: str) -> str:
     return oid
 
 
-def workload_tree(root: Path, revision: str, workload_path: str) -> dict[str, tuple[str, str]]:
-    raw = git(root, "ls-tree", "-r", "-z", revision, "--", workload_path).stdout
+def workload_tree(
+    root: Path,
+    revision: str,
+    workload_path: str,
+    *,
+    required: bool = True,
+) -> dict[str, tuple[str, str]]:
+    completed = git(root, "ls-tree", "-r", "-z", revision, "--", workload_path, check=False)
+    if completed.returncode != 0:
+        if required:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            fail(f"cannot read workload tree {workload_path} at {revision}: {detail}")
+        return {}
+    raw = completed.stdout
     prefix = workload_path.rstrip("/") + "/"
     result: dict[str, tuple[str, str]] = {}
     for entry in raw.split(b"\0"):
@@ -133,12 +149,14 @@ def workload_tree(root: Path, revision: str, workload_path: str) -> dict[str, tu
         if not repo_path.startswith(prefix):
             fail(f"git tree escaped workload prefix: {repo_path}")
         result[repo_path[len(prefix):]] = (mode, oid)
-    if not result:
-        fail(f"producer revision {revision} contains no files for workload {workload_path}")
+    if not result and required:
+        fail(f"repository revision {revision} contains no files for workload {workload_path}")
     return result
 
 
-def select_closure(tree: dict[str, tuple[str, str]], includes: list[str]) -> list[tuple[str, str, str]]:
+def try_select_closure(
+    tree: dict[str, tuple[str, str]], includes: list[str]
+) -> list[tuple[str, str, str]] | None:
     selected: dict[str, tuple[str, str]] = {}
     for selector in includes:
         matched = {
@@ -147,9 +165,26 @@ def select_closure(tree: dict[str, tuple[str, str]], includes: list[str]) -> lis
             if path == selector or path.startswith(selector.rstrip("/") + "/")
         }
         if not matched:
-            fail(f"semantic_closure include selector matches no producer file: {selector}")
+            return None
         selected.update(matched)
     return [(path, mode, oid) for path, (mode, oid) in sorted(selected.items())]
+
+
+def select_closure(
+    tree: dict[str, tuple[str, str]], includes: list[str]
+) -> list[tuple[str, str, str]]:
+    entries = try_select_closure(tree, includes)
+    if entries is None:
+        missing = next(
+            selector
+            for selector in includes
+            if not any(
+                path == selector or path.startswith(selector.rstrip("/") + "/")
+                for path in tree
+            )
+        )
+        fail(f"semantic_closure include selector matches no producer file: {missing}")
+    return entries
 
 
 def closure_digest(entries: list[tuple[str, str, str]]) -> str:
@@ -160,10 +195,9 @@ def closure_digest(entries: list[tuple[str, str, str]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def validate_producer(value: object, root: Path) -> str:
+def validate_producer(value: object, root: Path) -> tuple[str, bool]:
     producer = require_keys(value, {"base_revision", "revision_role", "run"}, "producer")
     revision = require_hex(producer["base_revision"], HEX40, "producer.base_revision")
-    ensure_commit(root, revision)
     if producer["revision_role"] not in {"producer-checkout", "legacy-source-snapshot"}:
         fail("producer.revision_role must be producer-checkout or legacy-source-snapshot")
     run = require_keys(producer["run"], {"kind", "identity", "binding"}, "producer.run")
@@ -174,10 +208,10 @@ def validate_producer(value: object, root: Path) -> str:
         fail("producer.run.binding is not a supported trust class")
     if run["binding"] == "trusted-producer-bound":
         fail(
-            "evidence manifest v1 has no external attestation verifier; do not claim "
+            "evidence manifest v2 has no external attestation verifier; do not claim "
             "trusted-producer-bound without an implemented trust anchor"
         )
-    return revision
+    return revision, commit_available(root, revision)
 
 
 def validate_records(workload_dir: Path, value: object) -> tuple[set[str], int, int]:
@@ -241,16 +275,73 @@ def validate_records(workload_dir: Path, value: object) -> tuple[set[str], int, 
     return paths, len(value), total_bytes
 
 
+def parse_closure_entries(value: object, includes: list[str]) -> list[tuple[str, str, str]]:
+    if not isinstance(value, list) or not value:
+        fail("semantic_closure.entries must be a non-empty array")
+    entries: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        field = f"semantic_closure.entries[{index}]"
+        item = require_keys(item, {"path", "mode", "git_blob_oid"}, field)
+        path = safe_path(item["path"], f"{field}.path")
+        if path in seen:
+            fail(f"semantic_closure.entries contains duplicate path: {path}")
+        seen.add(path)
+        mode = require_string(item["mode"], f"{field}.mode")
+        if mode not in REGULAR_GIT_MODES:
+            fail(f"{field}.mode must be a regular Git blob mode (100644 or 100755)")
+        oid = require_hex(item["git_blob_oid"], HEX40, f"{field}.git_blob_oid")
+        if not any(
+            path == selector or path.startswith(selector.rstrip("/") + "/")
+            for selector in includes
+        ):
+            fail(f"{field}.path is outside semantic_closure.includes: {path}")
+        entries.append((path, mode, oid))
+    if [path for path, _mode, _oid in entries] != sorted(seen):
+        fail("semantic_closure.entries must be sorted by path")
+    for selector in includes:
+        if not any(
+            path == selector or path.startswith(selector.rstrip("/") + "/")
+            for path, _mode, _oid in entries
+        ):
+            fail(f"semantic_closure include selector has no recorded entry: {selector}")
+    return entries
+
+
+def find_reachable_closure_representation(
+    root: Path,
+    workload_path: str,
+    includes: list[str],
+    expected_entries: list[tuple[str, str, str]],
+) -> str:
+    revisions = git(root, "rev-list", "--reverse", "HEAD").stdout.decode("ascii", errors="strict").splitlines()
+    if not revisions:
+        fail("repository HEAD has no reachable commit history")
+    for revision in revisions:
+        tree = workload_tree(root, revision, workload_path, required=False)
+        if not tree:
+            continue
+        entries = try_select_closure(tree, includes)
+        if entries == expected_entries:
+            return revision
+    fail(
+        "semantic closure is not represented by any commit reachable from HEAD; "
+        "squash/rebase integration must preserve the exact path/mode/blob identities "
+        "recorded before retained evidence was committed"
+    )
+
+
 def validate_semantic_closure(
     root: Path,
     workload_path: str,
-    revision: str,
+    producer_revision: str,
+    producer_available: bool,
     value: object,
     artifact_paths: set[str],
-) -> None:
+) -> tuple[dict[str, tuple[str, str]], str]:
     closure = require_keys(
         value,
-        {"algorithm", "includes", "excluded_generated_paths", "digest_sha256"},
+        {"algorithm", "includes", "excluded_generated_paths", "entries", "digest_sha256"},
         "semantic_closure",
     )
     if closure["algorithm"] != "sha256-git-tree-entries-v1":
@@ -271,23 +362,57 @@ def validate_semantic_closure(
     if excluded != artifact_paths:
         fail("semantic_closure.excluded_generated_paths must exactly match retained generated artifacts")
 
-    entries = select_closure(workload_tree(root, revision, workload_path), includes)
+    entries = parse_closure_entries(closure["entries"], includes)
     selected = {path for path, _mode, _oid in entries}
     leaked = sorted(selected & excluded)
     if leaked:
         fail("generated evidence must be excluded from semantic closure: " + ", ".join(leaked))
-    if MANIFEST_NAME in selected or f"validation/{MANIFEST_NAME}" in selected:
+    if f"validation/{MANIFEST_NAME}" in selected:
         fail("evidence manifest must never be included in its own semantic closure")
+
     expected = require_hex(closure["digest_sha256"], HEX64, "semantic_closure.digest_sha256")
     actual = closure_digest(entries)
     if actual != expected:
         fail(f"semantic closure mismatch: recorded {expected}, recomputed {actual}")
 
+    representation_revision = find_reachable_closure_representation(
+        root, workload_path, includes, entries
+    )
 
-def historical_provenance(root: Path, workload_path: str, revision: str) -> tuple[list[dict[str, str]], str]:
-    manifest_bytes = git_show(root, revision, f"{workload_path}/Cargo.toml")
-    lock_bytes = git_show(root, revision, f"{workload_path}/Cargo.lock")
-    assert manifest_bytes is not None and lock_bytes is not None
+    if producer_available:
+        producer_entries = select_closure(
+            workload_tree(root, producer_revision, workload_path), includes
+        )
+        if producer_entries != entries:
+            fail(
+                "producer.base_revision semantic closure does not match the recorded "
+                "path/mode/blob identities"
+            )
+
+    entry_map = {path: (mode, oid) for path, mode, oid in entries}
+    return entry_map, representation_revision
+
+
+def closure_blob_oid(
+    entries: dict[str, tuple[str, str]], path: str, field: str
+) -> str:
+    identity = entries.get(path)
+    if identity is None:
+        fail(f"{field} must be included in semantic_closure.entries: {path}")
+    _mode, oid = identity
+    return oid
+
+
+def historical_provenance(
+    root: Path,
+    workload_path: str,
+    entries: dict[str, tuple[str, str]],
+    context_revision: str,
+) -> tuple[list[dict[str, str]], str]:
+    manifest_oid = closure_blob_oid(entries, "Cargo.toml", "validation_subject")
+    lock_oid = closure_blob_oid(entries, "Cargo.lock", "validation_subject")
+    manifest_bytes = git_blob_bytes(root, manifest_oid)
+    lock_bytes = git_blob_bytes(root, lock_oid)
     with tempfile.TemporaryDirectory() as td:
         temp_root = Path(td)
         temp_workload = temp_root / workload_path
@@ -296,7 +421,7 @@ def historical_provenance(root: Path, workload_path: str, revision: str) -> tupl
         (temp_workload / "Cargo.lock").write_bytes(lock_bytes)
         for prefix, target in (("", temp_root), (f"{workload_path}/", temp_workload)):
             for relative in (".cargo/config.toml", ".cargo/config"):
-                raw = git_show(root, revision, prefix + relative, required=False)
+                raw = git_show(root, context_revision, prefix + relative, required=False)
                 if raw is not None:
                     destination = target / relative
                     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -307,7 +432,7 @@ def historical_provenance(root: Path, workload_path: str, revision: str) -> tupl
             subjects = PROVENANCE.validate_manifest(temp_workload / "Cargo.toml")
             PROVENANCE.validate_lockfile(temp_workload / "Cargo.lock", subjects)
         except PROVENANCE.ProvenanceError as exc:
-            fail(f"producer revision violates #29 published-provenance contract: {exc}")
+            fail(f"producer semantic snapshot violates #29 published-provenance contract: {exc}")
 
     try:
         lock_document = tomllib.loads(lock_bytes.decode())
@@ -333,18 +458,26 @@ def historical_provenance(root: Path, workload_path: str, revision: str) -> tupl
             "source": str(package.get("source")),
             "checksum": str(package.get("checksum")),
         })
-    return metadata, git_blob_oid(root, revision, f"{workload_path}/Cargo.lock")
+    return metadata, lock_oid
 
 
-def validate_subject(root: Path, workload_path: str, revision: str, value: object) -> None:
+def validate_subject(
+    root: Path,
+    workload_path: str,
+    entries: dict[str, tuple[str, str]],
+    context_revision: str,
+    value: object,
+) -> None:
     subject = require_keys(value, {"lockfile", "crates"}, "validation_subject")
     lockfile = require_keys(subject["lockfile"], {"path", "git_blob_oid"}, "validation_subject.lockfile")
     if safe_path(lockfile["path"], "validation_subject.lockfile.path") != "Cargo.lock":
         fail("validation_subject.lockfile.path must be Cargo.lock")
     recorded_oid = require_hex(lockfile["git_blob_oid"], HEX40, "validation_subject.lockfile.git_blob_oid")
-    expected_crates, actual_oid = historical_provenance(root, workload_path, revision)
+    expected_crates, actual_oid = historical_provenance(
+        root, workload_path, entries, context_revision
+    )
     if recorded_oid != actual_oid:
-        fail(f"validation subject lockfile identity mismatch: recorded {recorded_oid}, producer has {actual_oid}")
+        fail(f"validation subject lockfile identity mismatch: recorded {recorded_oid}, closure has {actual_oid}")
     if not isinstance(subject["crates"], list) or not subject["crates"]:
         fail("validation_subject.crates must be a non-empty array")
     normalized = []
@@ -359,7 +492,7 @@ def validate_subject(root: Path, workload_path: str, revision: str, value: objec
         })
     normalized.sort(key=lambda item: item["name"])
     if normalized != expected_crates:
-        fail("validation_subject.crates do not match exact first-party subjects at producer revision")
+        fail("validation_subject.crates do not match exact first-party subjects in semantic closure")
 
 
 def validate_environment(value: object) -> None:
@@ -431,9 +564,7 @@ def validate_external_artifacts(value: object) -> None:
 
 def validate_verifier(
     workload_dir: Path,
-    root: Path,
-    workload_path: str,
-    revision: str,
+    entries: dict[str, tuple[str, str]],
     value: object,
     manifest_path: Path,
 ) -> None:
@@ -452,7 +583,7 @@ def validate_verifier(
     producer = require_keys(verifier["producer"], {"path", "git_blob_oid"}, "verifier.producer")
     producer_path = safe_path(producer["path"], "verifier.producer.path")
     recorded_oid = require_hex(producer["git_blob_oid"], HEX40, "verifier.producer.git_blob_oid")
-    actual_oid = git_blob_oid(root, revision, f"{workload_path}/{producer_path}")
+    actual_oid = closure_blob_oid(entries, producer_path, "verifier.producer")
     if recorded_oid != actual_oid:
         fail("producer verifier identity mismatch")
 
@@ -499,14 +630,24 @@ def validate_manifest(root: Path, workload: dict, manifest_path: Path) -> None:
     if manifest["workload"] != workload["name"]:
         fail(f"evidence manifest workload must be {workload['name']!r}")
     workload_dir = root / workload["path"]
-    revision = validate_producer(manifest["producer"], root)
+    producer_revision, producer_available = validate_producer(manifest["producer"], root)
     paths, count, total_bytes = validate_records(workload_dir, manifest["records"])
-    validate_semantic_closure(root, workload["path"], revision, manifest["semantic_closure"], paths)
-    validate_subject(root, workload["path"], revision, manifest["validation_subject"])
+    entries, representation_revision = validate_semantic_closure(
+        root,
+        workload["path"],
+        producer_revision,
+        producer_available,
+        manifest["semantic_closure"],
+        paths,
+    )
+    context_revision = producer_revision if producer_available else representation_revision
+    validate_subject(
+        root, workload["path"], entries, context_revision, manifest["validation_subject"]
+    )
     validate_environment(manifest["environment"])
     validate_retention(workload_dir, manifest["retention"], paths, count, total_bytes)
     validate_external_artifacts(manifest["external_artifacts"])
-    validate_verifier(workload_dir, root, workload["path"], revision, manifest["verifier"], manifest_path)
+    validate_verifier(workload_dir, entries, manifest["verifier"], manifest_path)
 
 
 def validate_repository(root: Path) -> list[str]:
