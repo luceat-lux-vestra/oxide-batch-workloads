@@ -2,16 +2,14 @@
 """Canonical retained-evidence verifier for postgres-postgres (campaign #63
 PR 4, proof obligation P9).
 
-This never trusts a producer-authored verdict field (`job_execution_status`
-being the literal string it expects is checked, but that is a *fact* being
-recomputed against, not a boolean opinion; `row_counts_match`,
-`digests_match`, `mismatches_truncated`, and `process_exit_code` are always
-independently recomputed below from the retained counts/digests they are
-supposed to summarize, never read as authoritative on their own). Every
-relationship a violation can be raised against is recomputed from the
-retained JSON records' own primitive fields (row counts, chunk counts,
-digests, dataset parameters) plus the evidence manifest's own declared
-records.
+This never trusts a producer-authored relationship boolean: `row_counts_match`
+and `digests_match` are recomputed below from retained primitive values and
+then cross-checked against the producer fields. `mismatches_truncated` and
+`process_exit_code` are retained observations that are checked as required
+facts, never accepted as an overall verdict. Every relationship a violation
+can be raised against is recomputed from the retained JSON records' own
+primitive fields (row counts, chunk counts, digests, dataset parameters) plus
+the evidence manifest's own declared records.
 
 Output contract (`.github/EVIDENCE_CONTRACT.md`'s "Verifier and canonical
 verdict" section): a single JSON object printed to stdout,
@@ -22,6 +20,7 @@ whenever `violations` is non-empty.
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -35,10 +34,17 @@ SCHEMA_VERSION = 1
 # script claims about itself.
 MIN_MATERIAL_ROWS = 50_000
 
-# PostgreSQL's wire-protocol bind-parameter limit per statement (a signed
-# 16-bit count). Independent of this workload; a real, external constraint
-# the writer-boundedness claim below is checked against.
+# PostgreSQL's wire-protocol bind-parameter limit per statement. The count is
+# an unsigned 16-bit value. Independent of this workload; a real, external
+# constraint the writer-boundedness claim below is checked against.
 POSTGRES_MAX_BIND_PARAMS = 65_535
+
+# These are the public oxide-batch 0.6.0 defaults and this workload's fixed
+# writer shape. `PostgresBatchMode::multi_row_values()` configures the former;
+# `src/writer.rs` supplies the latter.
+DEFAULT_MAX_PARAMETERS_PER_STATEMENT = 2_000
+WRITER_COLUMNS_PER_ROW = 7
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 def load_json(path: Path) -> dict:
@@ -58,6 +64,14 @@ def field(record: dict, *parts: str):
             return None
         value = value[part]
     return value
+
+
+def is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def is_sha256_hex(value: object) -> bool:
+    return isinstance(value, str) and SHA256_HEX.fullmatch(value) is not None
 
 
 def verify(manifest_path: Path) -> list[str]:
@@ -193,6 +207,16 @@ def verify(manifest_path: Path) -> list[str]:
     elif paging.get("page_size") != page_size:
         violations.append("paging_bounded_resource_run artifact page_size does not match manifest")
 
+    for name, artifact, params in (
+        ("cursor_bounded_resource_run", cursor, cursor_params),
+        ("paging_bounded_resource_run", paging, paging_params),
+    ):
+        import_name = params.get("import_name") if isinstance(params, dict) else None
+        if not isinstance(import_name, str) or not import_name:
+            violations.append(f"{name} manifest import_name must be a non-empty string")
+        elif artifact.get("import_name") != import_name:
+            violations.append(f"{name} artifact import_name does not match manifest parameters")
+
     # --- Recomputed run/verify relationships, per scenario ---
     for name, artifact in (("cursor_bounded_resource_run", cursor), ("paging_bounded_resource_run", paging)):
         run = artifact.get("run")
@@ -239,15 +263,45 @@ def verify(manifest_path: Path) -> list[str]:
 
         if verify_section.get("mismatches_truncated") is not False:
             violations.append(f"{name} verify.mismatches_truncated must be false for a clean retained-evidence run")
+
+        expected_digest = verify_section.get("expected_digest_sha256")
+        actual_digest = verify_section.get("actual_digest_sha256")
+        expected_digest_valid = is_sha256_hex(expected_digest)
+        actual_digest_valid = is_sha256_hex(actual_digest)
+        if not expected_digest_valid:
+            violations.append(
+                f"{name} verify.expected_digest_sha256 must be a lowercase 64-hex SHA-256 string"
+            )
+        if not actual_digest_valid:
+            violations.append(
+                f"{name} verify.actual_digest_sha256 must be a lowercase 64-hex SHA-256 string"
+            )
+        # This is the canonical relationship. The retained producer boolean
+        # is checked against it, but can never supply it.
+        recomputed_digests_match = (
+            expected_digest_valid
+            and actual_digest_valid
+            and expected_digest == actual_digest
+        )
+        if verify_section.get("digests_match") != recomputed_digests_match:
+            violations.append(
+                f"{name} verify.digests_match does not match recomputed expected/actual digest equality"
+            )
+        if not recomputed_digests_match:
+            violations.append(
+                f"{name} verify.expected_digest_sha256 and actual_digest_sha256 must be equal "
+                "for a clean retained-evidence run"
+            )
         if verify_section.get("digests_match") is not True:
             violations.append(f"{name} verify.digests_match must be true for a clean retained-evidence run")
-        # Overall pass/fail is recomputed, not trusted: a clean run's
-        # verify process must have exited 0, which is only correct exactly
-        # when every one of the fail-closed conditions above actually holds.
+
+        # Overall pass/fail is recomputed, not trusted: a clean run's verify
+        # process must have exited 0, which is only correct exactly when every
+        # one of the fail-closed conditions above actually holds.
         recomputed_pass = (
             recomputed_row_counts_match
             and total_mismatches == 0
-            and verify_section.get("digests_match") is True
+            and recomputed_digests_match
         )
         if verify_section.get("process_exit_code") != 0:
             violations.append(f"{name} verify.process_exit_code must be 0")
@@ -265,21 +319,79 @@ def verify(manifest_path: Path) -> list[str]:
             if writer_config.get("mode") != "PostgresBatchMode::MultiRowValues":
                 violations.append(f"{name} writer_config.mode must be PostgresBatchMode::MultiRowValues")
             columns_per_row = writer_config.get("columns_per_row")
+            max_parameters = writer_config.get("max_parameters_per_statement")
+            rows_per_statement = writer_config.get("rows_per_statement")
             max_bound_params = writer_config.get("max_bound_params_per_statement")
+            max_sub_batches = writer_config.get("max_sub_batches_per_chunk")
+
+            if not is_positive_int(columns_per_row):
+                violations.append(f"{name} writer_config.columns_per_row must be a positive integer")
+            elif columns_per_row != WRITER_COLUMNS_PER_ROW:
+                violations.append(
+                    f"{name} writer_config.columns_per_row must equal the pinned writer shape "
+                    f"({WRITER_COLUMNS_PER_ROW})"
+                )
+
+            if not is_positive_int(max_parameters):
+                violations.append(
+                    f"{name} writer_config.max_parameters_per_statement must be a positive integer"
+                )
+            elif max_parameters != DEFAULT_MAX_PARAMETERS_PER_STATEMENT:
+                violations.append(
+                    f"{name} writer_config.max_parameters_per_statement must equal the pinned "
+                    f"oxide-batch 0.6.0 default ({DEFAULT_MAX_PARAMETERS_PER_STATEMENT})"
+                )
+            if is_positive_int(max_parameters) and max_parameters > POSTGRES_MAX_BIND_PARAMS:
+                violations.append(
+                    f"{name} writer_config.max_parameters_per_statement ({max_parameters}) must not exceed "
+                    f"PostgreSQL's unsigned 16-bit bind-parameter limit ({POSTGRES_MAX_BIND_PARAMS})"
+                )
+
+            if not is_positive_int(rows_per_statement):
+                violations.append(f"{name} writer_config.rows_per_statement must be a positive integer")
+            elif is_positive_int(columns_per_row) and is_positive_int(max_parameters):
+                expected_rows_per_statement = max(max_parameters // columns_per_row, 1)
+                if rows_per_statement != expected_rows_per_statement:
+                    violations.append(
+                        f"{name} writer_config.rows_per_statement must equal "
+                        "max(1, max_parameters_per_statement // columns_per_row)"
+                    )
+
+            if not is_positive_int(max_bound_params):
+                violations.append(
+                    f"{name} writer_config.max_bound_params_per_statement must be a positive integer"
+                )
+            elif is_positive_int(columns_per_row) and is_positive_int(rows_per_statement):
+                expected_bound_params = rows_per_statement * columns_per_row
+                if max_bound_params != expected_bound_params:
+                    violations.append(
+                        f"{name} writer_config.max_bound_params_per_statement must equal "
+                        "rows_per_statement * columns_per_row (the maximum full sub-batch bind count)"
+                    )
+                if max_bound_params > POSTGRES_MAX_BIND_PARAMS:
+                    violations.append(
+                        f"{name} writer_config.max_bound_params_per_statement ({max_bound_params}) must not exceed "
+                        f"PostgreSQL's unsigned 16-bit bind-parameter limit ({POSTGRES_MAX_BIND_PARAMS})"
+                    )
+
+            if not is_positive_int(max_sub_batches):
+                violations.append(f"{name} writer_config.max_sub_batches_per_chunk must be a positive integer")
+            elif chunk_size and is_positive_int(rows_per_statement):
+                expected_sub_batches = math.ceil(chunk_size / rows_per_statement)
+                if max_sub_batches != expected_sub_batches:
+                    violations.append(
+                        f"{name} writer_config.max_sub_batches_per_chunk must equal "
+                        "ceil(chunk_size / rows_per_statement)"
+                    )
+
             if (
-                chunk_size
-                and isinstance(columns_per_row, int)
-                and not isinstance(columns_per_row, bool)
-                and max_bound_params != chunk_size * columns_per_row
+                is_positive_int(max_parameters)
+                and is_positive_int(columns_per_row)
+                and max_parameters < columns_per_row
             ):
                 violations.append(
-                    f"{name} writer_config.max_bound_params_per_statement must equal "
-                    "chunk_size * columns_per_row (the actual structural bound, not an assertion)"
-                )
-            if isinstance(max_bound_params, int) and max_bound_params >= POSTGRES_MAX_BIND_PARAMS:
-                violations.append(
-                    f"{name} writer_config.max_bound_params_per_statement ({max_bound_params}) must stay "
-                    f"under PostgreSQL's {POSTGRES_MAX_BIND_PARAMS} bind-parameter limit"
+                    f"{name} writer_config.max_parameters_per_statement must be at least "
+                    "columns_per_row for the pinned writer configuration"
                 )
 
         # --- Peak RSS observations: presence/shape only. This verifier

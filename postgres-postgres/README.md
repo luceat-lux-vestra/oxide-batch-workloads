@@ -516,8 +516,10 @@ the repository-wide contract in
 - `validation/verify-retained-evidence.py` -- the canonical retained-evidence
   verifier (`{"schema_version": 1, "violations": []}` contract; never trusts
   a producer-authored `row_counts_match`/`digests_match`/
-  `mismatches_truncated`/`process_exit_code` field -- it recomputes every
-  relationship from the retained records' own primitive counts and digests).
+  `mismatches_truncated`/`process_exit_code` field as an overall verdict -- it
+  recomputes the relationships it can derive from the retained records' own
+  primitive counts and the retained
+  `expected_digest_sha256`/`actual_digest_sha256` values).
 - `validation/test_verify_retained_evidence.py` -- negative (and one
   positive) controls proving the canonical verifier actually catches a
   forged relationship rather than trusting it.
@@ -533,7 +535,7 @@ evidence below uses a dataset **100x** larger:
 | seed | 20260904 |
 | id_offset | 0 |
 | chunk_size | 1,000 (200 chunks) |
-| cursor fetch_size | 500 (400 `FETCH` round trips) |
+| cursor fetch_size | 500 (400 data-bearing `FETCH` batches plus the terminal empty `FETCH` that discovers EOF) |
 | paging page_size | 750 (267 pages) |
 | writer | `postgres_batch_writer`, `PostgresBatchMode::MultiRowValues`, 7 columns/row |
 | PostgreSQL | 18.2 |
@@ -562,15 +564,17 @@ its own peak RSS for `run` and `verify`.
 ### Writer boundedness (P5)
 
 `postgres_batch_writer` (`src/writer.rs`) continues to be used directly and
-unmodified, in `PostgresBatchMode::MultiRowValues`. Each retained record's
-`writer_config` documents the actual bound this configuration produces: one
-`INSERT` statement's bound parameter count is exactly `chunk_size *
-columns_per_row` (`1000 * 7 = 7000` at this run's configuration) --
-independent of total dataset size, a function of `chunk_size` alone. The
-canonical verifier recomputes this arithmetic from the pinned API's own
-shape and additionally checks it stays under PostgreSQL's real wire-protocol
-bind-parameter limit (65,535 per statement) -- a structural bound derived
-from the published 0.6.0 contract, not an unverified claim.
+unmodified, in `PostgresBatchMode::MultiRowValues`. The pinned 0.6.0 default
+configures `max_parameters_per_statement=2000`. With this writer's 7 columns
+per row, the released writer derives
+`rows_per_statement=floor(2000 / 7)=285`, so a full sub-batch contains at most
+`285 * 7 = 1,995` bound values. A 1,000-row `write()` chunk is therefore split
+into at most `ceil(1000 / 285)=4` `INSERT` statements. The retained
+`writer_config` records all four values, and the canonical verifier recomputes
+the relationships rather than treating them as assertions; `7,000` is not a
+per-statement bound. PostgreSQL's extended-query `Bind` message carries the
+parameter count as an unsigned 16-bit value, so the hard maximum is 65,535 and
+the verifier rejects values above that maximum.
 
 ### Source-digest boundedness (P6)
 

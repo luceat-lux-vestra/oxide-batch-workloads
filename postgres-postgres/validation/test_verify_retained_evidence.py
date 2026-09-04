@@ -48,7 +48,10 @@ def base_artifact(reader_mode: str, size_key: str, size_value: int) -> dict:
         "writer_config": {
             "mode": "PostgresBatchMode::MultiRowValues",
             "columns_per_row": 7,
-            "max_bound_params_per_statement": 7000,
+            "max_parameters_per_statement": 2000,
+            "rows_per_statement": 285,
+            "max_bound_params_per_statement": 1995,
+            "max_sub_batches_per_chunk": 4,
             "note": "irrelevant to these tests",
         },
         "run": {
@@ -64,6 +67,8 @@ def base_artifact(reader_mode: str, size_key: str, size_value: int) -> dict:
             "source_rows": 200_000,
             "destination_rows": 200_000,
             "row_counts_match": True,
+            "expected_digest_sha256": SOURCE_DIGEST,
+            "actual_digest_sha256": SOURCE_DIGEST,
             "digests_match": True,
             "total_mismatches": 0,
             "mismatches_truncated": False,
@@ -145,8 +150,10 @@ class VerifyRetainedEvidenceTests(unittest.TestCase):
         self.assert_violation_containing("mismatches_truncated")
 
     def test_forged_digests_match_is_caught(self) -> None:
-        self.paging_artifact["verify"]["digests_match"] = False
-        self.assert_violation_containing("digests_match")
+        self.paging_artifact["verify"]["actual_digest_sha256"] = "b" * 64
+        self.paging_artifact["verify"]["digests_match"] = True  # the lie
+        self.paging_artifact["verify"]["process_exit_code"] = 0  # the lie
+        self.assert_violation_containing("recomputed expected/actual digest equality")
 
     def test_dataset_row_count_below_the_material_floor_is_caught(self) -> None:
         for artifact, record in ((self.cursor_artifact, self.cursor_record), (self.paging_artifact, self.paging_record)):
@@ -169,6 +176,25 @@ class VerifyRetainedEvidenceTests(unittest.TestCase):
     def test_writer_bound_param_arithmetic_mismatch_is_caught(self) -> None:
         self.paging_artifact["writer_config"]["max_bound_params_per_statement"] = 9999
         self.assert_violation_containing("max_bound_params_per_statement")
+
+    def test_malformed_writer_fields_are_caught(self) -> None:
+        writer = self.cursor_artifact["writer_config"]
+        writer["max_parameters_per_statement"] = "2000"
+        writer["rows_per_statement"] = True
+        writer["max_bound_params_per_statement"] = None
+        writer["max_sub_batches_per_chunk"] = "4"
+        violations = verifier.verify(self.write_manifest())
+        for field in (
+            "max_parameters_per_statement",
+            "rows_per_statement",
+            "max_bound_params_per_statement",
+            "max_sub_batches_per_chunk",
+        ):
+            self.assertTrue(any(f"writer_config.{field}" in violation for violation in violations), violations)
+
+    def test_wrong_writer_columns_per_row_is_caught(self) -> None:
+        self.cursor_artifact["writer_config"]["columns_per_row"] = 8
+        self.assert_violation_containing("columns_per_row must equal the pinned writer shape")
 
     def test_writer_bound_exceeding_postgres_limit_is_caught(self) -> None:
         self.cursor_artifact["chunk_size"] = 20_000

@@ -90,7 +90,14 @@ RUSTC_VERSION=$(rustc --version)
 CARGO_VERSION=$(cargo --version)
 OS_KERNEL=$(uname -srm)
 WRITER_COLUMNS_PER_ROW=7
-MAX_BOUND_PARAMS_PER_STATEMENT=$((CHUNK_SIZE * WRITER_COLUMNS_PER_ROW))
+# These are the pinned oxide-batch 0.6.0 PostgresBatchMode::MultiRowValues
+# defaults and the exact shape supplied by src/writer.rs. The released writer
+# splits one write() chunk into parameter-bounded sub-batches; chunk_size is
+# not itself the size of one INSERT statement.
+WRITER_MAX_PARAMETERS_PER_STATEMENT=2000
+WRITER_ROWS_PER_STATEMENT=$((WRITER_MAX_PARAMETERS_PER_STATEMENT / WRITER_COLUMNS_PER_ROW))
+WRITER_MAX_BOUND_PARAMS_PER_STATEMENT=$((WRITER_ROWS_PER_STATEMENT * WRITER_COLUMNS_PER_ROW))
+WRITER_MAX_SUB_BATCHES_PER_CHUNK=$(((CHUNK_SIZE + WRITER_ROWS_PER_STATEMENT - 1) / WRITER_ROWS_PER_STATEMENT))
 
 # $1 reader_mode ("cursor"|"paging")
 # $2 import_name
@@ -154,7 +161,10 @@ run_scenario() {
   REC_SIZE_VALUE="$size_value" \
   REC_IMPORT_NAME="$import_name" \
   REC_COLUMNS_PER_ROW="$WRITER_COLUMNS_PER_ROW" \
-  REC_MAX_BOUND_PARAMS="$MAX_BOUND_PARAMS_PER_STATEMENT" \
+  REC_MAX_PARAMETERS="$WRITER_MAX_PARAMETERS_PER_STATEMENT" \
+  REC_ROWS_PER_STATEMENT="$WRITER_ROWS_PER_STATEMENT" \
+  REC_MAX_BOUND_PARAMS="$WRITER_MAX_BOUND_PARAMS_PER_STATEMENT" \
+  REC_MAX_SUB_BATCHES="$WRITER_MAX_SUB_BATCHES_PER_CHUNK" \
   REC_JOB_STATUS="$job_status" \
   REC_COMMIT_COUNT="$commit_count" \
   REC_COMMITTED_READ="$committed_read" \
@@ -192,12 +202,15 @@ record = {
     "writer_config": {
         "mode": "PostgresBatchMode::MultiRowValues",
         "columns_per_row": int(env["REC_COLUMNS_PER_ROW"]),
+        "max_parameters_per_statement": int(env["REC_MAX_PARAMETERS"]),
+        "rows_per_statement": int(env["REC_ROWS_PER_STATEMENT"]),
         "max_bound_params_per_statement": int(env["REC_MAX_BOUND_PARAMS"]),
+        "max_sub_batches_per_chunk": int(env["REC_MAX_SUB_BATCHES"]),
         "note": (
-            "one INSERT statement's bound parameter count is exactly "
-            "chunk_size * columns_per_row, independent of total dataset "
-            "rows -- this workload's writer boundedness claim is that this "
-            "product is O(chunk_size), a configuration knob, not O(rows)"
+            "oxide-batch 0.6.0's multi_row_values() configures a maximum "
+            "of max_parameters_per_statement bound values per INSERT; the "
+            "writer derives rows_per_statement by integer division and "
+            "sub-batches each write() chunk accordingly"
         ),
     },
     "run": {
@@ -213,6 +226,8 @@ record = {
         "source_rows": verify_report["source_rows"],
         "destination_rows": verify_report["destination_rows"],
         "row_counts_match": verify_report["row_counts_match"],
+        "expected_digest_sha256": verify_report["expected_digest_sha256"],
+        "actual_digest_sha256": verify_report["actual_digest_sha256"],
         "digests_match": verify_report["digests_match"],
         "total_mismatches": verify_report["total_mismatches"],
         "mismatches_truncated": verify_report["mismatches_truncated"],
