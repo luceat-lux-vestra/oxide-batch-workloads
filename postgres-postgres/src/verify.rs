@@ -14,6 +14,17 @@
 //! `customer_id` -- source and destination are both read `ORDER BY
 //! customer_id`, so a row present on only one side is detected the moment
 //! the merge's cursors diverge, without materializing either side.
+//!
+//! `total_mismatches` is a plain counter, incremented once per mismatch
+//! found during the merge, and is always the true total regardless of
+//! dataset size. The `mismatches` diagnostic-examples vector is a separate,
+//! bounded structure (see [`MAX_RETAINED_MISMATCHES`]): row reads and the
+//! merge itself stay streaming and O(1)-per-row in memory even when many
+//! rows are corrupt, because only up to the bound is ever retained/printed.
+//! `mismatches_truncated` reports whether `total_mismatches` exceeded that
+//! bound. Fail-closed accounting (`row_counts_match`, `digests_match`, and
+//! the nonzero-mismatch failure below) is always driven by
+//! `total_mismatches`, never by `mismatches.len()`.
 
 use futures_util::TryStreamExt;
 use serde::Serialize;
@@ -26,6 +37,16 @@ const FINGERPRINT_LEN: usize = 16;
 /// separate literal, not a shared `use`, so this oracle does not silently
 /// track a future change to the production constant.
 const PREMIUM_THRESHOLD_CENTS: i64 = 50_000;
+
+/// Upper bound on how many individual [`Mismatch`] examples `verify` retains
+/// in memory and in its printed report, regardless of dataset size or how
+/// many rows are actually corrupt. `total_mismatches` (a plain counter, not a
+/// growing collection) always reflects the true total -- this bound only
+/// caps the *diagnostic examples* kept alongside it, so a pathological
+/// dataset with e.g. 10 million corrupt rows cannot force `mismatches`
+/// itself to grow unboundedly while `verify` streams both sides. See this
+/// module's doc comment and `tests/verifier_bounded_mismatches.rs`.
+const MAX_RETAINED_MISMATCHES: usize = 100;
 
 #[derive(Debug, PartialEq)]
 struct ExpectedRow {
@@ -128,7 +149,29 @@ struct VerifyReport {
     expected_digest_sha256: String,
     actual_digest_sha256: String,
     digests_match: bool,
+    /// The true total mismatch count, accumulated as a plain counter across
+    /// the whole streamed merge -- never derived from `mismatches.len()`,
+    /// which is bounded (see [`MAX_RETAINED_MISMATCHES`]) and therefore not
+    /// a reliable count once truncation has happened.
+    total_mismatches: usize,
+    /// Up to [`MAX_RETAINED_MISMATCHES`] examples, in the order encountered
+    /// during the merge. When `total_mismatches` exceeds this bound,
+    /// `mismatches_truncated` is `true` and the omitted count is
+    /// `total_mismatches - mismatches.len()`.
     mismatches: Vec<Mismatch>,
+    mismatches_truncated: bool,
+}
+
+/// Records one mismatch: always increments `total`, but only appends to
+/// `mismatches` while it is still under [`MAX_RETAINED_MISMATCHES`]. This is
+/// the single place that enforces the bound, so every one of the four merge
+/// branches below that can observe a mismatch goes through it rather than
+/// pushing to `mismatches` directly.
+fn record_mismatch(mismatches: &mut Vec<Mismatch>, total: &mut usize, mismatch: Mismatch) {
+    *total += 1;
+    if mismatches.len() < MAX_RETAINED_MISMATCHES {
+        mismatches.push(mismatch);
+    }
 }
 
 fn compare(expected: &ExpectedRow, actual: &ActualRow) -> Option<String> {
@@ -203,6 +246,7 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
     let mut expected_hasher = Sha256::new();
     let mut actual_hasher = Sha256::new();
     let mut mismatches = Vec::new();
+    let mut total_mismatches = 0usize;
     let mut source_count = 0usize;
     let mut destination_count = 0usize;
 
@@ -214,20 +258,28 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
             (None, None) => break,
             (Some(expected), None) => {
                 source_count += 1;
-                mismatches.push(Mismatch {
-                    customer_id: expected.customer_id,
-                    reason: "missing destination row".to_owned(),
-                });
+                record_mismatch(
+                    &mut mismatches,
+                    &mut total_mismatches,
+                    Mismatch {
+                        customer_id: expected.customer_id,
+                        reason: "missing destination row".to_owned(),
+                    },
+                );
                 hash_expected(&mut expected_hasher, &expected);
                 next_expected = source_rows.try_next().await?.map(to_expected);
                 next_actual = None;
             }
             (None, Some(actual)) => {
                 destination_count += 1;
-                mismatches.push(Mismatch {
-                    customer_id: actual.customer_id,
-                    reason: "unexpected destination row (no matching source row)".to_owned(),
-                });
+                record_mismatch(
+                    &mut mismatches,
+                    &mut total_mismatches,
+                    Mismatch {
+                        customer_id: actual.customer_id,
+                        reason: "unexpected destination row (no matching source row)".to_owned(),
+                    },
+                );
                 hash_actual(&mut actual_hasher, &actual);
                 next_actual = destination_rows.try_next().await?.map(to_actual);
                 next_expected = None;
@@ -237,10 +289,14 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
                     source_count += 1;
                     destination_count += 1;
                     if let Some(reason) = compare(&expected, &actual) {
-                        mismatches.push(Mismatch {
-                            customer_id: expected.customer_id,
-                            reason,
-                        });
+                        record_mismatch(
+                            &mut mismatches,
+                            &mut total_mismatches,
+                            Mismatch {
+                                customer_id: expected.customer_id,
+                                reason,
+                            },
+                        );
                     }
                     hash_expected(&mut expected_hasher, &expected);
                     hash_actual(&mut actual_hasher, &actual);
@@ -248,19 +304,28 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
                     next_actual = destination_rows.try_next().await?.map(to_actual);
                 } else if expected.customer_id < actual.customer_id {
                     source_count += 1;
-                    mismatches.push(Mismatch {
-                        customer_id: expected.customer_id,
-                        reason: "missing destination row".to_owned(),
-                    });
+                    record_mismatch(
+                        &mut mismatches,
+                        &mut total_mismatches,
+                        Mismatch {
+                            customer_id: expected.customer_id,
+                            reason: "missing destination row".to_owned(),
+                        },
+                    );
                     hash_expected(&mut expected_hasher, &expected);
                     next_expected = source_rows.try_next().await?.map(to_expected);
                     next_actual = Some(actual);
                 } else {
                     destination_count += 1;
-                    mismatches.push(Mismatch {
-                        customer_id: actual.customer_id,
-                        reason: "unexpected destination row (no matching source row)".to_owned(),
-                    });
+                    record_mismatch(
+                        &mut mismatches,
+                        &mut total_mismatches,
+                        Mismatch {
+                            customer_id: actual.customer_id,
+                            reason: "unexpected destination row (no matching source row)"
+                                .to_owned(),
+                        },
+                    );
                     hash_actual(&mut actual_hasher, &actual);
                     next_actual = destination_rows.try_next().await?.map(to_actual);
                     next_expected = Some(expected);
@@ -279,6 +344,7 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
     let expected_digest_sha256 = hex_digest(&expected_hasher.finalize());
     let actual_digest_sha256 = hex_digest(&actual_hasher.finalize());
     let digests_match = expected_digest_sha256 == actual_digest_sha256;
+    let mismatches_truncated = total_mismatches > mismatches.len();
 
     let report = VerifyReport {
         import_name: import_name.to_owned(),
@@ -289,14 +355,26 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
         expected_digest_sha256,
         actual_digest_sha256,
         digests_match,
+        total_mismatches,
         mismatches,
+        mismatches_truncated,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
 
-    if !report.mismatches.is_empty() {
+    if report.total_mismatches > 0 {
+        let omitted = report.total_mismatches - report.mismatches.len();
+        if omitted > 0 {
+            anyhow::bail!(
+                "verify failed: {} row mismatch(es) between source-derived expectation and destination \
+                 content ({} additional mismatch(es) omitted from the retained examples above, see \
+                 total_mismatches)",
+                report.total_mismatches,
+                omitted
+            );
+        }
         anyhow::bail!(
             "verify failed: {} row mismatch(es) between source-derived expectation and destination content",
-            report.mismatches.len()
+            report.total_mismatches
         );
     }
     if !row_counts_match {
