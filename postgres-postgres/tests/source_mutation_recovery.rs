@@ -1,8 +1,8 @@
 //! Campaign #63 PR 3: source-mutation / stale-checkpoint isolation across a
-//! real process crash. A crashed, non-terminal execution is keyed under
-//! source content A's digest; once the source is mutated to content B
-//! (after the run/lock window has already closed -- see
-//! `src/source_digest.rs`), B's digest must differ from A's, `recover`
+//! real process crash, for both reader modes. A crashed, non-terminal
+//! execution is keyed under source content A's digest; once the source is
+//! mutated to content B (after the run/lock window has already closed --
+//! see `src/source_digest.rs`), B's digest must differ from A's, `recover`
 //! against the same `(import_name, reader_mode)` must fail to find A's
 //! instance under B's *live* digest rather than silently resuming it, and a
 //! fresh `run` against the mutated source must launch as a genuinely new,
@@ -27,38 +27,45 @@ const PREVIOUS_COMMITTED_ROWS: i64 = 200;
 const MARKER_TIMEOUT: Duration = Duration::from_secs(30);
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[tokio::test]
-async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_restart() {
+async fn source_mutation_case(reader_mode: &str, size_flag: (&str, usize), seed: u64) {
     support::migrate();
     support::reset();
-    let dataset = support::seed(SeedOptions {
-        rows: ROWS,
-        seed: 45,
-    });
+    let dataset = support::seed(SeedOptions { rows: ROWS, seed });
     let pool = support::pool().await;
 
     let digest_a = postgres_postgres::source_digest::compute(&pool)
         .await
         .expect("compute source digest A");
 
-    let import_name = support::unique_name("source_mutation");
-    let marker = support::temp_marker("source-mutation");
+    let import_name = support::unique_name(&format!("source_mutation_{reader_mode}"));
+    let marker = support::temp_marker(&format!("source-mutation-{reader_mode}"));
 
     // Crash mid-run, leaving a non-terminal execution keyed under digest A.
     let mut child = support::spawn_run_with_failpoint(
-        "cursor",
+        reader_mode,
         &import_name,
         CHUNK_SIZE,
-        ("--fetch-size", 50),
+        size_flag,
         TARGET_CHUNK,
         "during-write",
         &marker,
     );
     let spawned_pid = child.id();
     let paused_pid = support::wait_for_marker(&marker, MARKER_TIMEOUT);
-    assert_eq!(paused_pid, spawned_pid);
+    assert_eq!(
+        paused_pid, spawned_pid,
+        "the process observed pausing via the marker file must be this exact spawned child"
+    );
     let exit_status = support::kill_and_wait(&mut child);
-    assert!(!exit_status.success());
+    assert!(
+        !exit_status.success(),
+        "a killed child must not exit successfully"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(exit_status.signal(), Some(9), "must be a real SIGKILL");
+    }
 
     let committed_a = support::wait_for_row_count(
         &pool,
@@ -68,15 +75,27 @@ async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_rest
         SETTLE_TIMEOUT,
     )
     .await;
-    assert_eq!(committed_a, PREVIOUS_COMMITTED_ROWS);
+    assert_eq!(
+        committed_a, PREVIOUS_COMMITTED_ROWS,
+        "instance A's durable business rows must match the chunks committed before the crash"
+    );
 
-    let (status_a, _, _) = support::latest_checkpoint(&pool, &import_name)
+    let (status_a, commit_count_a, position_a) = support::latest_checkpoint(&pool, &import_name)
         .await
         .expect("crashed execution recorded");
-    assert!(matches!(
-        status_a.as_str(),
-        "STARTED" | "STARTING" | "UNKNOWN"
-    ));
+    assert!(
+        matches!(status_a.as_str(), "STARTED" | "STARTING" | "UNKNOWN"),
+        "a process that died mid-flight cannot itself have persisted a terminal status, got \
+         {status_a}"
+    );
+    assert_eq!(
+        commit_count_a, 2,
+        "instance A's durable checkpoint commit count"
+    );
+    assert_eq!(
+        position_a, PREVIOUS_COMMITTED_ROWS,
+        "instance A's durable checkpoint position matches its durable business row count"
+    );
 
     let instances_before_mutation = support::job_instance_count(&pool, &import_name).await;
     assert_eq!(instances_before_mutation, 1);
@@ -109,7 +128,7 @@ async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_rest
     // instance under the *current* (mutated) identity; it must never fall
     // back to "the only crashed instance for this import_name" by ignoring
     // source content.
-    let recover_output = support::recover(&import_name, "cursor");
+    let recover_output = support::recover(&import_name, reader_mode);
     assert!(
         !recover_output.status.success(),
         "recover must refuse to resolve an instance once the source has changed underneath it: \
@@ -122,10 +141,14 @@ async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_rest
     // a *different* JobInstanceKey than the crashed (still in-progress)
     // instance, so the framework's own duplicate-in-progress-execution
     // guard for THAT key does not apply -- but the crashed instance A is
-    // still unresolved, so the run above launches as instance B rather than
+    // still unresolved, so the run below launches as instance B rather than
     // resuming A. Confirmed below via job_instance_count and via A's own
     // destination scope being left completely untouched.
-    let fresh_run = support::run_cursor_with_fetch_size(&import_name, CHUNK_SIZE, 50);
+    let fresh_run = match reader_mode {
+        "cursor" => support::run_cursor_with_fetch_size(&import_name, CHUNK_SIZE, size_flag.1),
+        "paging" => support::run_paging_with_page_size(&import_name, CHUNK_SIZE, size_flag.1),
+        other => panic!("unknown reader mode {other}"),
+    };
     assert!(
         fresh_run.status.success(),
         "a run against the same import_name but genuinely different source content must launch \
@@ -150,7 +173,9 @@ async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_rest
     let verify_b = support::verify(&import_name);
     assert!(
         verify_b.status.success(),
-        "instance B's business state must verify cleanly"
+        "instance B's business state must verify cleanly: stdout={}\nstderr={}",
+        String::from_utf8_lossy(&verify_b.stdout),
+        String::from_utf8_lossy(&verify_b.stderr),
     );
 
     // Instance A's own (pre-crash) destination scope is completely
@@ -163,4 +188,14 @@ async fn mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_rest
         "instance A's own destination scope must remain exactly what was durably committed \
          before the crash -- untouched by the unrelated instance B"
     );
+}
+
+#[tokio::test]
+async fn cursor_mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_restart() {
+    source_mutation_case("cursor", ("--fetch-size", 50), 45).await;
+}
+
+#[tokio::test]
+async fn paging_mutated_source_after_a_crash_is_not_silently_resumed_by_recover_or_restart() {
+    source_mutation_case("paging", ("--page-size", 60), 48).await;
 }

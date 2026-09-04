@@ -401,12 +401,16 @@ function call standing in for a crash:
    `destination_content_digest` comparison) -- not merely the same row
    count.
 4. **Source-mutation / stale-checkpoint isolation across a crash**
-   (`tests/source_mutation_recovery.rs`): once a crashed, non-terminal
-   execution's source content is mutated (after the run/lock window has
-   closed -- see [Source identity](#source-identity)), the resulting new
-   `source_digest` resolves `recover` and a fresh `run` to a **different**
-   `JobInstance`, never a silent resume of the stale, differently-keyed
-   checkpoint. The crashed instance's own destination scope is left exactly
+   (`tests/source_mutation_recovery.rs`, one parameterized case run under
+   each reader mode): once a crashed, non-terminal execution's source
+   content is mutated (after the run/lock window has closed -- see
+   [Source identity](#source-identity)), the resulting new `source_digest`
+   resolves `recover` (under the crashed instance's own reader mode) and a
+   fresh `run` to a **different** `JobInstance`, never a silent resume of
+   the stale, differently-keyed checkpoint. The crashed instance's own
+   durable checkpoint/business state is independently confirmed first (same
+   commit-count/position assertions as scenario 2), and its destination
+   scope is left exactly
    as it was, untouched by the new instance.
 5. **Recovery selection is explicit and fails closed**
    (`tests/recover_negative.rs`): `recover` rejects an import name/reader
