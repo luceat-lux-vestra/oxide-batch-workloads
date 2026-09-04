@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "workload": "postgres-postgres",
   "producer": {
     "base_revision": "da1273e6e425aae32651ade2b966f52db3af0535",
@@ -23,6 +23,23 @@
     "excluded_generated_paths": [
       "validation/cursor-run.json",
       "validation/paging-run.json"
+    ],
+    "entries": [
+      {"path": "Cargo.lock", "mode": "100644", "git_blob_oid": "01437f671f4e97c0501e4a0d9997840e38e128b4"},
+      {"path": "Cargo.toml", "mode": "100644", "git_blob_oid": "9389575e2508f3e84ecd7c4bed093dfcf48d6a39"},
+      {"path": "docker-compose.yml", "mode": "100644", "git_blob_oid": "b7704be301810cb35c4543e0d9a01b96fb168a4e"},
+      {"path": "migrations/001_init.sql", "mode": "100644", "git_blob_oid": "aca417c806339fb6c926a95fb06beb30872d9242"},
+      {"path": "src/failpoint.rs", "mode": "100644", "git_blob_oid": "5ce837362c2fe7736fef7cb05b55ee5b224ff61b"},
+      {"path": "src/generator.rs", "mode": "100644", "git_blob_oid": "8308b3051cdc7f15cf9def815a026ec1fb91aa8a"},
+      {"path": "src/hex.rs", "mode": "100644", "git_blob_oid": "b25993dc1ee6e30bcdb7eaf185ae9c833b2d59e7"},
+      {"path": "src/job.rs", "mode": "100644", "git_blob_oid": "f04d9fe9ff07b1a33746a1cf9cca8b8ea7761a6a"},
+      {"path": "src/lib.rs", "mode": "100644", "git_blob_oid": "227ac83a04acffed75f9ccfe37920dadd58f0233"},
+      {"path": "src/main.rs", "mode": "100644", "git_blob_oid": "26e58a8057d4593753f8669199413f36dece721f"},
+      {"path": "src/processor.rs", "mode": "100644", "git_blob_oid": "f0547463258a8135822c157e4bc633b342b5973d"},
+      {"path": "src/source_digest.rs", "mode": "100644", "git_blob_oid": "8d6590d214de60676d9473b58de67c08e30ec5ac"},
+      {"path": "src/verify.rs", "mode": "100644", "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"},
+      {"path": "src/writer.rs", "mode": "100644", "git_blob_oid": "8131f6a4dd2713f70fdb2957dea1f1f5c7d9c5e2"},
+      {"path": "validation/generate-evidence.sh", "mode": "100755", "git_blob_oid": "43647d6268ad1e5e7877dee5e556ee4a331dc272"}
     ],
     "digest_sha256": "6e23cd4087acd5599176c534062a005aa0106c11863ee0afafe0cb761cf3edb9"
   },
