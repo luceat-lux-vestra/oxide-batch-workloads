@@ -538,7 +538,7 @@ evidence below uses a dataset **100x** larger:
 | cursor fetch_size | 500 (400 data-bearing `FETCH` batches plus the terminal empty `FETCH` that discovers EOF) |
 | paging page_size | 750 (267 pages) |
 | writer | `postgres_batch_writer`, `PostgresBatchMode::MultiRowValues`, 7 columns/row |
-| PostgreSQL | 18.2 |
+| PostgreSQL | 18.6 |
 | build profile | release |
 
 Both reader modes ran against the exact same seeded source content (proven
@@ -607,10 +607,10 @@ Measured independently for four separate processes (two per reader mode:
 
 | Process | Peak RSS |
 |---|---|
-| cursor `run` | 8,220 KiB |
-| cursor `verify` | 4,676 KiB |
-| paging `run` | 8,176 KiB |
-| paging `verify` | 4,668 KiB |
+| cursor `run` | 17,652 KiB |
+| cursor `verify` | 11,492 KiB |
+| paging `run` | 17,528 KiB |
+| paging `verify` | 11,728 KiB |
 
 Both reader modes converge to closely comparable peak RSS despite handling
 identical (200,000-row) input, and `verify`'s own peak RSS is markedly
@@ -662,9 +662,10 @@ python3 validation/test_verify_retained_evidence.py  # canonical verifier's own 
   trust in the process described here (`producer.run.binding` is honestly
   declared `recorded-metadata`, not the stronger `trusted-producer-bound`,
   which manifest v1 does not implement).
-- **No container runtime was available in the environment that produced
-  this evidence.** `docker-compose.yml`'s service was not started;
-  PostgreSQL 18.2 was reached directly over TCP instead (see
+- **The checked-in container service was not started for this evidence.** The
+  producer ran in a transient `rust:1.98-bookworm` Linux container
+  (`linux/amd64` under emulation) and reached a separately provisioned
+  PostgreSQL 18.6 server over TCP instead (see
   `validation/evidence-manifest.json`'s `environment.limitations` for the
   exact wording). The database content and behavior exercised is identical
   either way -- this workload's `migrate`/`reset`/`run`/`verify` commands
@@ -710,7 +711,7 @@ an explicit justification -- no row is left unresolved.
 | Criterion | Status | Implementation | Test | Evidence record | Docs |
 |---|---|---|---|---|---|
 | Exact published `oxide-batch = "=0.6.0"` | PROVEN | `Cargo.toml` | `.github/scripts/validate-oxidebatch-provenance.py` (repo-wide) | `evidence-manifest.json`'s `validation_subject` | [Purpose](#purpose) |
-| PostgreSQL 18 workload | PROVEN | `docker-compose.yml`, `src/job.rs` | `ci/validate ci` integration tests | both retained records (`server_version 18.2`) | [Schemas](#schemas) |
+| PostgreSQL 18 workload | PROVEN | `docker-compose.yml`, `src/job.rs` | `ci/validate ci` integration tests | both retained records (`server_version 18.6`) | [Schemas](#schemas) |
 | Cursor reader (bounded, streamed) | PROVEN | `src/job.rs::run` (`postgres_cursor_reader`) | `tests/reader_bounds.rs`, `tests/reader_config.rs` | `cursor-run.json` | [`--reader cursor`](#--reader-cursor) |
 | Paging reader (bounded, keyset, no `OFFSET`) | PROVEN | `src/job.rs::run` (`postgres_paging_reader`) | `tests/paging_boundary.rs`, `tests/paging_clean_run.rs` | `paging-run.json` | [`--reader paging`](#--reader-paging) |
 | Cursor/paging business-result parity | PROVEN | shared `launch_and_finish`, `processor.rs` | `tests/reader_parity.rs` | both retained records share one `source_digest_sha256` | [Reader mode and job identity](#reader-mode-and-job-identity) |

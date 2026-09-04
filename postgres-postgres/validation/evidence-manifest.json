@@ -2,7 +2,7 @@
   "schema_version": 1,
   "workload": "postgres-postgres",
   "producer": {
-    "base_revision": "188a808d466abd02d891ecac49cc78c309feeadf",
+    "base_revision": "da1273e6e425aae32651ade2b966f52db3af0535",
     "revision_role": "producer-checkout",
     "run": {
       "kind": "manual-local",
@@ -24,7 +24,7 @@
       "validation/cursor-run.json",
       "validation/paging-run.json"
     ],
-    "digest_sha256": "453c70f765d25337519a751adf1be269456147df7ed21f5a623ebb6d21952f2d"
+    "digest_sha256": "6e23cd4087acd5599176c534062a005aa0106c11863ee0afafe0cb761cf3edb9"
   },
   "validation_subject": {
     "lockfile": {
@@ -45,8 +45,8 @@
       "scenario": "cursor_bounded_resource_run",
       "artifact": {
         "path": "validation/cursor-run.json",
-        "sha256": "bd10fb8e8826c8a7c8ac2f7d81df31e5109c21f34a145109ff08a8bef751f6f5",
-        "size_bytes": 1947
+        "sha256": "7937316186b60dbbe67b9c255a1b25fef5a9a9466ca90893e8c06e578d7fa69b",
+        "size_bytes": 2235
       },
       "input": {
         "identity": {
@@ -71,8 +71,8 @@
       "scenario": "paging_bounded_resource_run",
       "artifact": {
         "path": "validation/paging-run.json",
-        "sha256": "5176b107d49f537a0718a560b06df06a46d9f295d60e98074139f7b68daf4985",
-        "size_bytes": 1945
+        "sha256": "3dcda58992e7d8292c23d229d249e2439b15d7bfd7293490df6d759e95e1e626",
+        "size_bytes": 2234
       },
       "input": {
         "identity": {
@@ -97,7 +97,7 @@
   "verifier": {
     "canonical": {
       "path": "validation/verify-retained-evidence.py",
-      "sha256": "defa1906d0a722b7545b049f8167d19f0e3febd9dbb9d4201f33207a0de3850e",
+      "sha256": "810131c062905a20d806b3038278881d508477e0b47c1ee7d3408c1c600afcd0",
       "result_model": "violations-v1"
     },
     "producer": {
@@ -115,7 +115,7 @@
       },
       {
         "name": "database-server-version",
-        "value": "18.2",
+        "value": "18.6",
         "trust": "recorded-metadata",
         "source": "SHOW server_version; observed against the live database used for this producer run"
       },
@@ -127,19 +127,19 @@
       },
       {
         "name": "os-kernel",
-        "value": "Linux 6.17.0-PRoot-Distro aarch64",
+        "value": "Linux 6.8.0-117-generic x86_64",
         "trust": "recorded-metadata",
         "source": "uname -srm on the producer host, recorded by generate-evidence.sh's own printed output"
       },
       {
         "name": "rustc-version",
-        "value": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "value": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
         "trust": "recorded-metadata",
         "source": "rustc --version on the producer host"
       },
       {
         "name": "cargo-version",
-        "value": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "value": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
         "trust": "recorded-metadata",
         "source": "cargo --version on the producer host"
       },
@@ -151,13 +151,13 @@
       },
       {
         "name": "container-runtime",
-        "value": "none -- PostgreSQL reached directly over TCP, not via docker-compose",
+        "value": "Docker rust:1.98-bookworm (linux/amd64 under emulation); PostgreSQL reached directly over TCP, not via docker-compose",
         "trust": "recorded-metadata",
-        "source": "the producer host had no docker/container runtime available; a separately provisioned PostgreSQL 18.2 server reachable at 127.0.0.1:5432 was used directly instead of starting docker-compose.yml's service"
+        "source": "the producer ran in a transient Linux Docker container and reached the separately provisioned PostgreSQL 18.6 server at host.docker.internal:5432 instead of starting docker-compose.yml's service"
       }
     ],
     "limitations": [
-      "The producer host had no docker/container runtime available (no `docker` binary and no working arm64 apt mirror to install PostgreSQL locally), so docker-compose.yml's service was never actually started for this run. A separately provisioned PostgreSQL 18.2 server reachable at 127.0.0.1:5432 was used directly instead, inside a database this workload does not have exclusive ownership of (schemas were created directly rather than via a dedicated database this workload's own migrate/reset commands assume they exclusively own).",
+      "docker-compose.yml's service was not started for this run. The producer ran in a transient rust:1.98-bookworm Linux container (linux/amd64 under emulation) and reached a separately provisioned PostgreSQL 18.6 Homebrew server over host.docker.internal:5432; the dedicated postgres_postgres_workload database was created for this evidence run.",
       "No CPU core-count, memory-limit, or disk-throughput observation was retained for the producer host beyond the peak RSS figures themselves; no cross-host or cross-platform comparability claim is made about those figures.",
       "Peak RSS was measured by polling /proc/<pid>/status's VmHWM every 20ms for each process's whole lifetime (see validation/generate-evidence.sh's measure_peak_rss_kib); a peak reached and released entirely between two consecutive polls could in principle be missed. No such gap is known to have occurred for any of the four measured processes, but this is a polling measurement, not an exhaustive kernel trace.",
       "The producer run had no durable CI workflow/run identifier or external attestation -- see producer.run.binding above (recorded-metadata, not trusted-producer-bound)."
