@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "workload": "postgres-postgres",
+  "producer": {
+    "base_revision": "188a808d466abd02d891ecac49cc78c309feeadf",
+    "revision_role": "producer-checkout",
+    "run": {
+      "kind": "manual-local",
+      "identity": null,
+      "binding": "recorded-metadata"
+    }
+  },
+  "semantic_closure": {
+    "algorithm": "sha256-git-tree-entries-v1",
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "docker-compose.yml",
+      "migrations",
+      "src",
+      "validation/generate-evidence.sh"
+    ],
+    "excluded_generated_paths": [
+      "validation/cursor-run.json",
+      "validation/paging-run.json"
+    ],
+    "digest_sha256": "453c70f765d25337519a751adf1be269456147df7ed21f5a623ebb6d21952f2d"
+  },
+  "validation_subject": {
+    "lockfile": {
+      "path": "Cargo.lock",
+      "git_blob_oid": "01437f671f4e97c0501e4a0d9997840e38e128b4"
+    },
+    "crates": [
+      {
+        "name": "oxide-batch",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
+      }
+    ]
+  },
+  "records": [
+    {
+      "scenario": "cursor_bounded_resource_run",
+      "artifact": {
+        "path": "validation/cursor-run.json",
+        "sha256": "bd10fb8e8826c8a7c8ac2f7d81df31e5109c21f34a145109ff08a8bef751f6f5",
+        "size_bytes": 1947
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-postgres-rows",
+          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 200000,
+          "seed": 20260904,
+          "id_offset": 0
+        }
+      },
+      "parameters": {
+        "chunk_size": 1000,
+        "fetch_size": 500,
+        "import_name": "evidence_cursor_run"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "paging_bounded_resource_run",
+      "artifact": {
+        "path": "validation/paging-run.json",
+        "sha256": "5176b107d49f537a0718a560b06df06a46d9f295d60e98074139f7b68daf4985",
+        "size_bytes": 1945
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-postgres-rows",
+          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 200000,
+          "seed": 20260904,
+          "id_offset": 0
+        }
+      },
+      "parameters": {
+        "chunk_size": 1000,
+        "page_size": 750,
+        "import_name": "evidence_paging_run"
+      },
+      "failure_point": null
+    }
+  ],
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-retained-evidence.py",
+      "sha256": "defa1906d0a722b7545b049f8167d19f0e3febd9dbb9d4201f33207a0de3850e",
+      "result_model": "violations-v1"
+    },
+    "producer": {
+      "path": "src/verify.rs",
+      "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"
+    }
+  },
+  "environment": {
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "value": "1.95",
+        "trust": "recorded-metadata",
+        "source": "producer Cargo.toml in semantic closure"
+      },
+      {
+        "name": "database-server-version",
+        "value": "18.2",
+        "trust": "recorded-metadata",
+        "source": "SHOW server_version; observed against the live database used for this producer run"
+      },
+      {
+        "name": "database-image-declared",
+        "value": "postgres:18",
+        "trust": "recorded-metadata",
+        "source": "producer docker-compose.yml in semantic closure"
+      },
+      {
+        "name": "os-kernel",
+        "value": "Linux 6.17.0-PRoot-Distro aarch64",
+        "trust": "recorded-metadata",
+        "source": "uname -srm on the producer host, recorded by generate-evidence.sh's own printed output"
+      },
+      {
+        "name": "rustc-version",
+        "value": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "trust": "recorded-metadata",
+        "source": "rustc --version on the producer host"
+      },
+      {
+        "name": "cargo-version",
+        "value": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "trust": "recorded-metadata",
+        "source": "cargo --version on the producer host"
+      },
+      {
+        "name": "build-profile",
+        "value": "release",
+        "trust": "recorded-metadata",
+        "source": "generate-evidence.sh's own `cargo build --locked --release` invocation"
+      },
+      {
+        "name": "container-runtime",
+        "value": "none -- PostgreSQL reached directly over TCP, not via docker-compose",
+        "trust": "recorded-metadata",
+        "source": "the producer host had no docker/container runtime available; a separately provisioned PostgreSQL 18.2 server reachable at 127.0.0.1:5432 was used directly instead of starting docker-compose.yml's service"
+      }
+    ],
+    "limitations": [
+      "The producer host had no docker/container runtime available (no `docker` binary and no working arm64 apt mirror to install PostgreSQL locally), so docker-compose.yml's service was never actually started for this run. A separately provisioned PostgreSQL 18.2 server reachable at 127.0.0.1:5432 was used directly instead, inside a database this workload does not have exclusive ownership of (schemas were created directly rather than via a dedicated database this workload's own migrate/reset commands assume they exclusively own).",
+      "No CPU core-count, memory-limit, or disk-throughput observation was retained for the producer host beyond the peak RSS figures themselves; no cross-host or cross-platform comparability claim is made about those figures.",
+      "Peak RSS was measured by polling /proc/<pid>/status's VmHWM every 20ms for each process's whole lifetime (see validation/generate-evidence.sh's measure_peak_rss_kib); a peak reached and released entirely between two consecutive polls could in principle be missed. No such gap is known to have occurred for any of the four measured processes, but this is a polling measurement, not an exhaustive kernel trace.",
+      "The producer run had no durable CI workflow/run identifier or external attestation -- see producer.run.binding above (recorded-metadata, not trusted-producer-bound)."
+    ]
+  },
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 2,
+      "max_total_bytes": 8192,
+      "supersession": "One current cursor/paging bounded-resource-run pair; replacement requires an atomic manifest update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "external_artifacts": []
+}
