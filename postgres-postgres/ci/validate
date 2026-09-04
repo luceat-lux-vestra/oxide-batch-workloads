@@ -38,6 +38,9 @@ run_ci_stage() {
     exit 1
   fi
 
+  echo "retained-evidence verifier adversarial tests"
+  python3 validation/test_verify_retained_evidence.py
+
   trap stop_postgres EXIT
   start_postgres
 
