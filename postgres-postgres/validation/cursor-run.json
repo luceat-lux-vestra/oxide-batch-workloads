@@ -1,0 +1,50 @@
+{
+  "chunk_size": 1000,
+  "dataset": {
+    "id_offset": 0,
+    "rows": 200000,
+    "seed": 20260904,
+    "source_digest_sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
+  },
+  "fetch_size": 500,
+  "import_name": "evidence_cursor_run",
+  "reader_mode": "cursor",
+  "resource_measurement": {
+    "metric": "VmHWM (kernel-reported peak resident set size across the process's whole lifetime)",
+    "note": "run's own peak RSS includes this run's source_digest computation (job::run computes it before launching the reader, in the same process); verify's own peak RSS likewise includes verify's own independent source_digest recomputation. Neither figure isolates source-digest computation into a separate measured process -- see postgres-postgres/README.md's resource-observation section.",
+    "platform": "Linux 6.8.0-117-generic x86_64",
+    "tool": "generate-evidence.sh's own measure_peak_rss_kib: polls /proc/<pid>/status VmHWM every 20ms until the process exits",
+    "units": "KiB"
+  },
+  "run": {
+    "chunks_committed": 200,
+    "committed_read": 200000,
+    "committed_written": 200000,
+    "job_execution_status": "COMPLETED",
+    "peak_rss_kib": 17652,
+    "runtime_seconds": 11.777
+  },
+  "scenario": "cursor_bounded_resource_run",
+  "verify": {
+    "actual_digest_sha256": "de250fdb6cf9dc2bf919d554c66a076d857a318ffa494c89c0f6c4528f641d89",
+    "destination_rows": 200000,
+    "digests_match": true,
+    "expected_digest_sha256": "de250fdb6cf9dc2bf919d554c66a076d857a318ffa494c89c0f6c4528f641d89",
+    "mismatches_truncated": false,
+    "peak_rss_kib": 11492,
+    "process_exit_code": 0,
+    "row_counts_match": true,
+    "runtime_seconds": 1.032,
+    "source_rows": 200000,
+    "total_mismatches": 0
+  },
+  "writer_config": {
+    "columns_per_row": 7,
+    "max_bound_params_per_statement": 1995,
+    "max_parameters_per_statement": 2000,
+    "max_sub_batches_per_chunk": 4,
+    "mode": "PostgresBatchMode::MultiRowValues",
+    "note": "oxide-batch 0.6.0's multi_row_values() configures a maximum of max_parameters_per_statement bound values per INSERT; the writer derives rows_per_statement by integer division and sub-batches each write() chunk accordingly",
+    "rows_per_statement": 285
+  }
+}
