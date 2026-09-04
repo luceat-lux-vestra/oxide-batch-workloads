@@ -5,6 +5,11 @@
       "name": "csv-postgres",
       "path": "csv-postgres",
       "msrv": { "declared": true }
+    },
+    {
+      "name": "postgres-postgres",
+      "path": "postgres-postgres",
+      "msrv": { "declared": true }
     }
   ],
   "fixtures": [
