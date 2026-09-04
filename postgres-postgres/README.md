@@ -7,12 +7,16 @@ PostgreSQL restartable batch transform, driven end to end through the real
 production `oxide_batch::JobLauncher` / `ChunkJob` launch path, in either of
 two reader modes.
 
-This is PR 3 of campaign
-[luceat-lux-vestra/oxide-batch-workloads#63](../../issues/63): rollback,
-hard-crash, and genuine new-process recovery evidence added on top of PR 1's
-clean cursor-mode vertical slice and PR 2's paging-mode parity. See
-[Explicit limitations](#explicit-limitations-not-this-pr) below for what
-PR 4 still adds (benchmarking, retained evidence, campaign closure).
+This is PR 4 (the final slice) of campaign
+[luceat-lux-vestra/oxide-batch-workloads#63](../../issues/63): retained,
+committed evidence from a materially larger-than-CI dataset, real
+per-process peak-RSS observation for both reader modes, a narrow fix
+bounding the independent verifier's own retained diagnostics, a durable
+static guard against a whole-dataset regression, and campaign closure
+documentation -- on top of PR 1's clean cursor-mode vertical slice, PR 2's
+paging-mode parity, and PR 3's rollback/hard-crash/recovery evidence. See
+[Larger-dataset retained resource observations (PR 4)](#larger-dataset-retained-resource-observations-pr-4)
+and the [campaign acceptance matrix](#campaign-acceptance-matrix) below.
 
 ## Purpose
 
@@ -365,6 +369,21 @@ modes are actually caught: a corrupted destination value, a missing
 destination row, and an unexpected/extra destination row -- not merely a
 row-count check.
 
+### Bounded mismatch diagnostics (PR 4)
+
+Both row streams and the merge itself were already bounded-memory (never
+`fetch_all`), but before PR 4 the `mismatches: Vec<Mismatch>` collection
+itself was not: a dataset with many corrupt rows could grow it without
+bound. `verify` now tracks `total_mismatches` as a plain counter -- always
+the true total, and the field every fail-closed decision is actually driven
+by -- and retains only up to 100 diagnostic examples in `mismatches`,
+reporting `mismatches_truncated: true` once the true total exceeds that
+bound. `tests/verifier_bounded_mismatches.rs` corrupts more rows than the
+bound and proves the total is exact, the retained examples are strictly
+fewer, truncation is reported, and `verify` still fails closed. No
+row-count, per-field, or digest verification was weakened -- only the
+*diagnostic-examples* collection is bounded, not the underlying accounting.
+
 ## Crash / rollback / recovery evidence (PR 3)
 
 Proven, with real PostgreSQL 18 and the published `oxide-batch = "=0.6.0"`
@@ -478,7 +497,243 @@ termination, using only released public OxideBatch surface. It is not a
 general exactly-once, high-availability, or production-readiness claim, and
 it does not attempt every conceivable crash point (e.g. mid-read, or a crash
 during the reader's own `ItemStream` checkpoint write outside a chunk
-transaction) -- see [Explicit limitations](#explicit-limitations-not-this-pr).
+transaction) -- see [Explicit limitations](#explicit-limitations-campaign-63-closed).
+
+## Larger-dataset retained resource observations (PR 4)
+
+`validation/` holds this workload's canonical retained evidence, following
+the repository-wide contract in
+[`.github/EVIDENCE_CONTRACT.md`](../.github/EVIDENCE_CONTRACT.md):
+
+- `validation/evidence-manifest.json` -- the manifest binding producer
+  revision, semantic closure, exact published `oxide-batch=0.6.0` subject,
+  retained records, canonical verifier identity, environment observations,
+  and deterministic retention bounds.
+- `validation/generate-evidence.sh` -- the deterministic producer script
+  (part of the manifest's semantic closure).
+- `validation/cursor-run.json`, `validation/paging-run.json` -- the
+  retained, committed evidence records.
+- `validation/verify-retained-evidence.py` -- the canonical retained-evidence
+  verifier (`{"schema_version": 1, "violations": []}` contract; never trusts
+  a producer-authored `row_counts_match`/`digests_match`/
+  `mismatches_truncated`/`process_exit_code` field -- it recomputes every
+  relationship from the retained records' own primitive counts and digests).
+- `validation/test_verify_retained_evidence.py` -- negative (and one
+  positive) controls proving the canonical verifier actually catches a
+  forged relationship rather than trusting it.
+
+### Dataset and configuration
+
+`ci/validate ci`'s golden-path smoke dataset is 2,000 rows. The retained
+evidence below uses a dataset **100x** larger:
+
+| Parameter | Value |
+|---|---|
+| rows | 200,000 |
+| seed | 20260904 |
+| id_offset | 0 |
+| chunk_size | 1,000 (200 chunks) |
+| cursor fetch_size | 500 (400 `FETCH` round trips) |
+| paging page_size | 750 (267 pages) |
+| writer | `postgres_batch_writer`, `PostgresBatchMode::MultiRowValues`, 7 columns/row |
+| PostgreSQL | 18.2 |
+| build profile | release |
+
+Both reader modes ran against the exact same seeded source content (proven
+by the two retained records sharing one recomputed `source_digest_sha256`,
+cross-checked by the canonical verifier, not merely asserted).
+
+### Cursor bounded-resource observation (P3)
+
+`validation/cursor-run.json`: full workload success (`job_execution_status:
+COMPLETED`, 200/200 chunks committed, 200,000/200,000 rows read and
+written), independent `verify` success (row counts match, digests match,
+zero mismatches), `fetch_size=500`, `chunk_size=1000`, dataset rows=200,000,
+and peak RSS for both the `run` and `verify` processes (see
+[Peak RSS methodology](#peak-rss-methodology-pr-4) below for the exact
+figures and how they were measured).
+
+### Paging bounded-resource observation (P4)
+
+`validation/paging-run.json`: the same full-success/independent-verify
+shape, with `page_size=750`, `chunk_size=1000`, dataset rows=200,000, and
+its own peak RSS for `run` and `verify`.
+
+### Writer boundedness (P5)
+
+`postgres_batch_writer` (`src/writer.rs`) continues to be used directly and
+unmodified, in `PostgresBatchMode::MultiRowValues`. Each retained record's
+`writer_config` documents the actual bound this configuration produces: one
+`INSERT` statement's bound parameter count is exactly `chunk_size *
+columns_per_row` (`1000 * 7 = 7000` at this run's configuration) --
+independent of total dataset size, a function of `chunk_size` alone. The
+canonical verifier recomputes this arithmetic from the pinned API's own
+shape and additionally checks it stays under PostgreSQL's real wire-protocol
+bind-parameter limit (65,535 per statement) -- a structural bound derived
+from the published 0.6.0 contract, not an unverified claim.
+
+### Source-digest boundedness (P6)
+
+`src/source_digest.rs`'s production path remains `sqlx`'s streaming
+`fetch`; it has never used `fetch_all` (see [Source identity](#source-identity)
+above, unchanged since PR 1) and this is now covered by a durable static
+guard (`tests/no_whole_dataset_apis.rs`, see below) rather than only by
+documentation.
+
+### Static no-whole-dataset guard (P8)
+
+`tests/no_whole_dataset_apis.rs` reads `src/source_digest.rs` and
+`src/verify.rs`'s own source text at test time and fails if either ever
+reintroduces `.fetch_all(` on its production read path. It is scoped
+narrowly to those two files -- test/support code (e.g.
+`tests/support/mod.rs::full_projection_rows`) may legitimately use
+`fetch_all` and is unaffected. This runs as an ordinary `cargo test`, so
+`ci/validate ci` enforces it on every run without any repository-wide,
+workload-name-specific CI branching.
+
+### Peak RSS methodology (PR 4)
+
+Measured with a real, external, process-level tool: Linux's own
+`/proc/<pid>/status` `VmHWM` field (the kernel's monotonically increasing
+peak-resident-set-size counter), polled every 20ms for each process's whole
+lifetime by `validation/generate-evidence.sh`'s `measure_peak_rss_kib`
+function -- not a self-reported figure from inside the workload binary.
+Measured independently for four separate processes (two per reader mode:
+`run` and `verify`):
+
+| Process | Peak RSS |
+|---|---|
+| cursor `run` | 8,220 KiB |
+| cursor `verify` | 4,676 KiB |
+| paging `run` | 8,176 KiB |
+| paging `verify` | 4,668 KiB |
+
+Both reader modes converge to closely comparable peak RSS despite handling
+identical (200,000-row) input, and `verify`'s own peak RSS is markedly
+*lower* than `run`'s in both modes, not higher -- consistent with `verify`
+never materializing the destination write path at all. `run`'s own
+`source_digest` computation happens inside the same measured process (it
+runs before the reader launches, in `job::run`); `verify`'s own independent
+`source_digest` recomputation likewise happens inside `verify`'s own
+measured process. Neither figure isolates source-digest computation into a
+separately measured process -- see the exact wording retained in each
+record's own `resource_measurement.note` field.
+
+**What this does and does not establish:** these are single observational
+measurements on one host, at one dataset size and one configuration. They
+are *consistent with* the structural boundedness already established by the
+reader/writer/verifier implementations reviewed above (bounded `fetch_size`/
+`page_size`/`chunk_size` configuration, streaming reads, a bounded mismatch
+collection) -- they do not, on their own, *mathematically prove* asymptotic
+memory boundedness as dataset size grows without limit, and no such proof is
+claimed. There is no hosted-CI RSS or throughput regression threshold gating
+merges on these numbers, and no cross-host/cross-platform comparability
+claim is made about them (see
+[Evidence trust limitations](#evidence-trust-limitations-pr-4) below).
+
+### Evidence reproduction (PR 4)
+
+```
+DATABASE_URL=postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload \
+  ./validation/generate-evidence.sh
+```
+
+Rebuilds a release binary, seeds the deterministic 200,000-row dataset,
+runs both reader modes, and rewrites `validation/cursor-run.json`/
+`validation/paging-run.json`. To check the retained evidence already
+committed (or evidence you just regenerated) against the manifest:
+
+```
+python3 validation/verify-retained-evidence.py --manifest validation/evidence-manifest.json
+python3 .github/scripts/validate-evidence.py   # from the repository root: full manifest + provenance + closure check
+python3 validation/test_verify_retained_evidence.py  # canonical verifier's own negative controls
+```
+
+### Evidence trust limitations (PR 4)
+
+- **Producer/base revision** (`producer.base_revision` in the manifest) is
+  recorded metadata proving the referenced commit exists and its semantic
+  closure recomputes to the declared digest; it does not prove this exact
+  manual run actually executed from that checkout beyond the reviewer's own
+  trust in the process described here (`producer.run.binding` is honestly
+  declared `recorded-metadata`, not the stronger `trusted-producer-bound`,
+  which manifest v1 does not implement).
+- **No container runtime was available in the environment that produced
+  this evidence.** `docker-compose.yml`'s service was not started;
+  PostgreSQL 18.2 was reached directly over TCP instead (see
+  `validation/evidence-manifest.json`'s `environment.limitations` for the
+  exact wording). The database content and behavior exercised is identical
+  either way -- this workload's `migrate`/`reset`/`run`/`verify` commands
+  have no dependency on how PostgreSQL was launched -- but this is a real
+  environmental deviation from the checked-in `docker-compose.yml`, recorded
+  rather than hidden.
+- **Peak RSS is a polling measurement, not an exhaustive kernel trace**: a
+  peak reached and released entirely between two consecutive 20ms polls
+  could in principle be missed. No such gap is known to have occurred here.
+- **One dataset size, one host, one run per mode.** No statistical
+  distribution, no repeated-trial variance, no soak/longevity test.
+- See also [What this does, and does not, prove](#what-this-does-and-does-not-prove)
+  above (PR 3's crash/recovery scope) and
+  [Known OxideBatch v0.6.0 limitations](#known-oxidebatch-v060-limitations)
+  below.
+
+## Known OxideBatch v0.6.0 limitations
+
+- [luceat-lux-vestra/oxide-batch#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218) --
+  `BusinessValue` has no `TIMESTAMPTZ`/temporal variant. This workload's
+  schema has no temporal column anywhere and was deliberately designed
+  around this limitation (see [Schemas](#schemas) above) rather than working
+  around it, so it can exercise the released `postgres_batch_writer`
+  directly and unmodified.
+- [luceat-lux-vestra/oxide-batch#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220) --
+  `BusinessTransactionError`/`WriterError` are value-redacted to a stable
+  failure category at the public consumer boundary, with `SQLSTATE`,
+  constraint name, and driver/source detail unrecoverable. This workload's
+  own `src/failpoint.rs` and rollback/crash evidence (PR 3) only ever needed
+  the coarse failure category (a target chunk rolling back, a hard-killed
+  process), so this gap did not block any proof obligation here -- but a
+  consumer that needed to distinguish, say, a unique-constraint violation
+  from a connection failure at this boundary would hit the same gap
+  `csv-postgres` filed this issue against.
+
+## Campaign acceptance matrix
+
+Maps every Issue [#63](../../issues/63) acceptance criterion to concrete
+evidence. Every row is either **PROVEN** (with its implementation path,
+test, retained-evidence record, and documentation section) or **N/A** with
+an explicit justification -- no row is left unresolved.
+
+| Criterion | Status | Implementation | Test | Evidence record | Docs |
+|---|---|---|---|---|---|
+| Exact published `oxide-batch = "=0.6.0"` | PROVEN | `Cargo.toml` | `.github/scripts/validate-oxidebatch-provenance.py` (repo-wide) | `evidence-manifest.json`'s `validation_subject` | [Purpose](#purpose) |
+| PostgreSQL 18 workload | PROVEN | `docker-compose.yml`, `src/job.rs` | `ci/validate ci` integration tests | both retained records (`server_version 18.2`) | [Schemas](#schemas) |
+| Cursor reader (bounded, streamed) | PROVEN | `src/job.rs::run` (`postgres_cursor_reader`) | `tests/reader_bounds.rs`, `tests/reader_config.rs` | `cursor-run.json` | [`--reader cursor`](#--reader-cursor) |
+| Paging reader (bounded, keyset, no `OFFSET`) | PROVEN | `src/job.rs::run` (`postgres_paging_reader`) | `tests/paging_boundary.rs`, `tests/paging_clean_run.rs` | `paging-run.json` | [`--reader paging`](#--reader-paging) |
+| Cursor/paging business-result parity | PROVEN | shared `launch_and_finish`, `processor.rs` | `tests/reader_parity.rs` | both retained records share one `source_digest_sha256` | [Reader mode and job identity](#reader-mode-and-job-identity) |
+| Reader mode as distinct job identity | PROVEN | `src/job.rs::parameters` (`reader_mode` identifying) | `tests/reader_mode_identity.rs` | -- (framework metadata, not evidence-retained) | [Reader mode and job identity](#reader-mode-and-job-identity) |
+| Enlisted first-party writer, same-resource atomic | PROVEN | `src/writer.rs`, `ChunkDeliveryMode::AtomicSameResource` | `tests/clean_run.rs`, `tests/paging_clean_run.rs` | both retained records' `writer_config` | [Same-resource destination transaction boundary](#same-resource-destination-transaction-boundary) |
+| Writer boundedness | PROVEN | `src/writer.rs` (`MultiRowValues`) | canonical verifier's bind-parameter-limit check | both retained records' `writer_config` | [Writer boundedness](#writer-boundedness-p5) |
+| Source-digest boundedness (streaming, no `fetch_all`) | PROVEN | `src/source_digest.rs::compute` | `tests/no_whole_dataset_apis.rs` | -- (structural/static, no dataset-shaped artifact) | [Source-digest boundedness](#source-digest-boundedness-p6) |
+| Independent verifier (never trusts production path) | PROVEN | `src/verify.rs` (hand-written `expected_projection` oracle) | `tests/verifier_negative_control.rs` | both retained records' `verify` section | [Verifier design](#verifier-design) |
+| Verifier boundedness (bounded mismatch diagnostics) | PROVEN | `src/verify.rs` (`MAX_RETAINED_MISMATCHES`) | `tests/verifier_bounded_mismatches.rs` | -- (structural fix, exercised by the test) | [Bounded mismatch diagnostics](#bounded-mismatch-diagnostics-pr-4) |
+| Source stability lock (TOCTOU-closing) | PROVEN | `src/source_digest.rs::lock_source_for_stable_read` | `tests/source_stability.rs` | -- (adversarial concurrency test, not dataset-shaped) | [Source identity](#source-identity) |
+| Typed pre-commit rollback | PROVEN | `src/failpoint.rs`, `FailingWriter` | `tests/rollback.rs` | -- (PR 3 evidence, not retained JSON) | [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3) |
+| Real `SIGKILL` before commit | PROVEN | `src/failpoint.rs` (`--pause-for-kill`) | `tests/crash_before_commit.rs` | -- (PR 3 evidence, not retained JSON) | [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3) |
+| Real `SIGKILL` immediately after commit | PROVEN | `src/failpoint.rs` | `tests/crash_after_commit.rs` | -- (PR 3 evidence, not retained JSON) | [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3) |
+| Fresh-process recovery (genuinely new OS process) | PROVEN | `src/job.rs::recover` | `tests/crash_before_commit.rs`, `tests/crash_after_commit.rs` | -- (PR 3 evidence, not retained JSON) | [`recover`](#recover) |
+| Cursor/paging recovery equivalence | PROVEN | shared `recover`/`launch_and_finish` | `tests/source_mutation_recovery.rs` (parameterized both modes) | -- (PR 3 evidence, not retained JSON) | [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3) |
+| Source-mutation identity isolation | PROVEN | `src/job.rs::recover` (live digest recompute) | `tests/source_mutation_recovery.rs` | -- (PR 3 evidence, not retained JSON) | [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3) |
+| Canonical retained-evidence contract (manifest v1) | PROVEN | `validation/evidence-manifest.json` | `.github/scripts/test-evidence.py` (repo-wide) | the manifest itself | [Larger-dataset retained resource observations](#larger-dataset-retained-resource-observations-pr-4) |
+| Materially larger dataset (not 3-5k rows) | PROVEN | `validation/generate-evidence.sh` (200,000 rows) | canonical verifier's `MIN_MATERIAL_ROWS` check | both retained records | [Dataset and configuration](#dataset-and-configuration) |
+| Cursor bounded-resource observation | PROVEN | -- | -- | `cursor-run.json` | [Cursor bounded-resource observation](#cursor-bounded-resource-observation-p3) |
+| Paging bounded-resource observation | PROVEN | -- | -- | `paging-run.json` | [Paging bounded-resource observation](#paging-bounded-resource-observation-p4) |
+| Canonical retained-evidence verifier (recomputes, never trusts) | PROVEN | `validation/verify-retained-evidence.py` | `validation/test_verify_retained_evidence.py` | -- (the verifier itself) | [Larger-dataset retained resource observations](#larger-dataset-retained-resource-observations-pr-4) |
+| Repository-level evidence integration (no central-CI branching) | PROVEN | `workloads.json` registration (pre-existing) | `.github/scripts/validate-evidence.py` auto-discovers `validation/` | the manifest itself | [Repository-level integration](#evidence-reproduction-pr-4) |
+| Benchmark/throughput comparison | N/A | -- | -- | -- | Explicit non-goal of campaign #63 (see `ROADMAP.md`'s separate benchmark item and this PR's work order) |
+| Every conceivable crash point (mid-read, mid-page-fetch, `ItemStream` checkpoint write) | N/A | -- | -- | -- | See [What this does, and does not, prove](#what-this-does-and-does-not-prove) -- explicitly out of scope, not silently skipped |
+| Scheduler/orchestrator/control-plane interoperability | N/A | -- | -- | -- | Explicit non-goal of campaign #63 (see `ROADMAP.md`) |
+| `TIMESTAMPTZ`/temporal `BusinessValue` support | N/A | -- | -- | -- | Upstream limitation [#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218); this workload's schema has no temporal column by design |
+| DB error root-cause provenance at the consumer boundary | N/A | -- | -- | -- | Upstream limitation [#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220); not needed by any proof obligation this workload attempted |
 
 ## Commands
 
@@ -520,12 +775,31 @@ integration tests, and a golden-path smoke sequence). `ci/validate msrv`
 matches the declared `rust-version` in `Cargo.toml` with a locked,
 database-free build.
 
-## Current evidence scope (PR 3)
+## Current evidence scope (PR 4, campaign closed)
 
-Proven, with real PostgreSQL 18, in this PR (see
+Proven in this PR (see
+[Larger-dataset retained resource observations](#larger-dataset-retained-resource-observations-pr-4)
+above for the full detail; on top of everything PR 1-3 already proved, all
+of which still holds and still passes):
+
+- committed, canonical retained evidence (manifest v1) for a 200,000-row
+  dataset -- 100x the ordinary CI smoke dataset -- covering both reader
+  modes, with real per-process peak-RSS observation (four processes: cursor
+  `run`/`verify`, paging `run`/`verify`);
+- a canonical retained-evidence verifier that recomputes every pass/fail
+  relationship from retained primitive counts/digests rather than trusting
+  a producer-authored verdict field, with its own negative-test suite;
+- `src/verify.rs`'s retained mismatch-diagnostics collection is now bounded
+  (`MAX_RETAINED_MISMATCHES`), with the true total always tracked
+  separately and truncation explicitly reported;
+- a durable static guard (`tests/no_whole_dataset_apis.rs`) against a
+  `fetch_all` regression on the two declared streaming production paths;
+- campaign acceptance matrix mapping every Issue #63 criterion to concrete
+  evidence, with no unresolved item.
+
+Proven in PR 3 (still holds and still passes; see
 [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3)
-above for the full detail; on top of everything PR 1 and PR 2 already
-proved, all of which still holds and still passes):
+above for the full detail):
 
 - pre-commit typed rollback, hard-crash-before-commit, and
   hard-crash-after-commit, each for both reader modes, with the whole
@@ -575,30 +849,39 @@ including three corruption negative controls; collision-free destination
 scoping across distinct import names/source identities; workload-owned
 `reset` never touching `oxide_batch` metadata.
 
-## Explicit limitations (not this PR)
+## Explicit limitations (campaign #63 closed)
 
-- **No benchmark, throughput, or resource-usage evidence.** Not attempted
-  before the correctness/recovery campaign closes (see `ROADMAP.md`). That
-  is PR 4.
-- **No larger retained-resource/long-running evidence, and no retained
-  evidence manifest or campaign closure.** That is PR 4.
-- **Not every conceivable crash point.** This PR's failure boundaries are
+Campaign #63 is closed as of this PR -- see the
+[campaign acceptance matrix](#campaign-acceptance-matrix) above for exactly
+what that does and does not mean. What remains explicitly out of scope,
+permanently (not deferred to a future PR in this campaign):
+
+- **No benchmark, throughput, or Spring Batch comparison.** Explicit non-goal
+  of this campaign; see `ROADMAP.md`'s separate, later benchmark item.
+- **Not every conceivable crash point.** PR 3's failure boundaries are
   deterministic, chunk/commit-boundary-targeted: post-write/pre-commit
   (typed and hard-killed) and immediately-post-commit. It does not attempt
   e.g. a crash mid-read, mid-page-fetch, or during a reader's own
   `ItemStream` checkpoint write outside a chunk transaction.
-- **No Spring Batch comparison, no cross-workload shared framework, no
-  central-CI workload-specific branching, no shared/repository-wide failure-
-  injection framework.** Out of scope for this campaign entirely (see the
-  parent issue's non-goals); `src/failpoint.rs` is an independent,
-  workload-local copy of `csv-postgres/src/failpoint.rs`'s established
-  shape, not a shared dependency.
-- **No production readiness or exactly-once claim.** This PR demonstrates
-  same-resource atomic chunk durability, checkpoint/business-row consistency
-  across a real process crash, and deterministic operator-driven restart
-  behavior for the specific boundaries above -- do not read anything here as
-  a broader durability, high-availability, or concurrency guarantee.
-- **Upstream [luceat-lux-vestra/oxide-batch#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218)
-  (no `TIMESTAMPTZ` `BusinessValue` variant) remains open and visible.**
-  This workload's schema still has no `TIMESTAMPTZ` column anywhere and is
-  not worked around here -- see [Schemas](#schemas) above.
+- **No cross-workload shared framework, no central-CI workload-specific
+  branching, no shared/repository-wide failure-injection framework.** Out of
+  scope for this campaign entirely (see the parent issue's non-goals);
+  `src/failpoint.rs` is an independent, workload-local copy of
+  `csv-postgres/src/failpoint.rs`'s established shape, not a shared
+  dependency. The retained-evidence contract in
+  [Larger-dataset retained resource observations](#larger-dataset-retained-resource-observations-pr-4)
+  is likewise integrated through the pre-existing, workload-name-agnostic
+  central validator -- no postgres-postgres-specific branching was added
+  anywhere in `.github/`.
+- **No production readiness or exactly-once claim.** This campaign
+  demonstrates same-resource atomic chunk durability, checkpoint/
+  business-row consistency across a real process crash, deterministic
+  operator-driven restart behavior for the specific boundaries in PR 3, and
+  observational (not asymptotically proven) resource-boundedness in PR 4 --
+  do not read anything here as a broader durability, high-availability,
+  concurrency, or performance guarantee.
+- **Upstream OxideBatch v0.6.0 limitations remain open and visible** -- see
+  [Known OxideBatch v0.6.0 limitations](#known-oxidebatch-v060-limitations)
+  above ([#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218),
+  [#220](https://github.com/luceat-lux-vestra/oxide-batch/issues/220)).
+  Neither blocked any proof obligation this campaign attempted.
