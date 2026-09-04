@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.95"
 publish = false
 license = "Apache-2.0"
-description = "OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreSQL cursor-mode restartable batch transform"
+description = "OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreSQL restartable batch transform (cursor and paging reader modes)"
 
 [lib]
 name = "postgres_postgres"

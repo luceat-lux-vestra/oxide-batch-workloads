@@ -164,18 +164,11 @@ pub fn seed_at(options: SeedOptions, id_offset: u64) -> Dataset {
     }
 }
 
-pub fn run(import_name: &str, chunk_size: u32) -> Output {
-    run_ok(
-        bin()
-            .arg("run")
-            .arg("--import-name")
-            .arg(import_name)
-            .arg("--chunk-size")
-            .arg(chunk_size.to_string()),
-    )
-}
-
-pub fn run_with_fetch_size(import_name: &str, chunk_size: u32, fetch_size: usize) -> Output {
+/// Cursor mode, driven explicitly (`--reader cursor`) -- see the module
+/// documentation for why every helper here names its reader mode rather
+/// than relying on an implicit default (there is none; `--reader` is a
+/// required CLI flag).
+pub fn run_cursor(import_name: &str, chunk_size: u32) -> Output {
     run_ok(
         bin()
             .arg("run")
@@ -183,17 +176,32 @@ pub fn run_with_fetch_size(import_name: &str, chunk_size: u32, fetch_size: usize
             .arg(import_name)
             .arg("--chunk-size")
             .arg(chunk_size.to_string())
+            .arg("--reader")
+            .arg("cursor"),
+    )
+}
+
+pub fn run_cursor_with_fetch_size(import_name: &str, chunk_size: u32, fetch_size: usize) -> Output {
+    run_ok(
+        bin()
+            .arg("run")
+            .arg("--import-name")
+            .arg(import_name)
+            .arg("--chunk-size")
+            .arg(chunk_size.to_string())
+            .arg("--reader")
+            .arg("cursor")
             .arg("--fetch-size")
             .arg(fetch_size.to_string()),
     )
 }
 
-/// Like [`run_with_fetch_size`], but starts the child process and returns
-/// immediately without waiting for it -- for tests that need to observe or
-/// interact with database state *while* a run is still in flight (e.g.
-/// `tests/source_stability.rs`, which attacks the window between
-/// `job::run`'s source-stability guard being taken and released).
-pub fn spawn_run_with_fetch_size(
+/// Like [`run_cursor_with_fetch_size`], but starts the child process and
+/// returns immediately without waiting for it -- for tests that need to
+/// observe or interact with database state *while* a run is still in
+/// flight (e.g. `tests/source_stability.rs`, which attacks the window
+/// between `job::run`'s source-stability guard being taken and released).
+pub fn spawn_run_cursor_with_fetch_size(
     import_name: &str,
     chunk_size: u32,
     fetch_size: usize,
@@ -204,8 +212,62 @@ pub fn spawn_run_with_fetch_size(
         .arg(import_name)
         .arg("--chunk-size")
         .arg(chunk_size.to_string())
+        .arg("--reader")
+        .arg("cursor")
         .arg("--fetch-size")
         .arg(fetch_size.to_string())
+        .spawn()
+        .expect("spawn postgres-postgres run in the background")
+}
+
+/// Paging mode, driven explicitly (`--reader paging`).
+pub fn run_paging(import_name: &str, chunk_size: u32) -> Output {
+    run_ok(
+        bin()
+            .arg("run")
+            .arg("--import-name")
+            .arg(import_name)
+            .arg("--chunk-size")
+            .arg(chunk_size.to_string())
+            .arg("--reader")
+            .arg("paging"),
+    )
+}
+
+pub fn run_paging_with_page_size(import_name: &str, chunk_size: u32, page_size: usize) -> Output {
+    run_ok(
+        bin()
+            .arg("run")
+            .arg("--import-name")
+            .arg(import_name)
+            .arg("--chunk-size")
+            .arg(chunk_size.to_string())
+            .arg("--reader")
+            .arg("paging")
+            .arg("--page-size")
+            .arg(page_size.to_string()),
+    )
+}
+
+/// Like [`run_paging_with_page_size`], but starts the child process and
+/// returns immediately without waiting for it -- the paging counterpart of
+/// [`spawn_run_cursor_with_fetch_size`], for the paging source-stability
+/// adversarial test.
+pub fn spawn_run_paging_with_page_size(
+    import_name: &str,
+    chunk_size: u32,
+    page_size: usize,
+) -> std::process::Child {
+    bin()
+        .arg("run")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--chunk-size")
+        .arg(chunk_size.to_string())
+        .arg("--reader")
+        .arg("paging")
+        .arg("--page-size")
+        .arg(page_size.to_string())
         .spawn()
         .expect("spawn postgres-postgres run in the background")
 }
@@ -230,6 +292,30 @@ pub async fn source_row_count_in_range(pool: &PgPool, id_offset: u64, rows: u64)
     .fetch_one(pool)
     .await
     .expect("count source rows")
+}
+
+/// `(customer_id, display_name, loyalty_score, is_premium, row_fingerprint)`
+/// -- the complete business projection, not just a count. Ordered by
+/// `customer_id` so two calls (e.g. one per reader mode, in
+/// `tests/reader_parity.rs`) can be compared element-wise.
+pub type ProjectionRow = (i64, String, i64, bool, Vec<u8>);
+
+pub async fn full_projection_rows(
+    pool: &PgPool,
+    import_name: &str,
+    source_digest: &str,
+) -> Vec<ProjectionRow> {
+    sqlx::query_as::<_, ProjectionRow>(
+        "SELECT customer_id, display_name, loyalty_score, is_premium, row_fingerprint \
+         FROM app_business.customer_projection \
+         WHERE import_name = $1 AND source_digest = $2 \
+         ORDER BY customer_id",
+    )
+    .bind(import_name)
+    .bind(source_digest)
+    .fetch_all(pool)
+    .await
+    .expect("query full projection rows")
 }
 
 pub async fn destination_row_count(pool: &PgPool, import_name: &str, source_digest: &str) -> i64 {
@@ -264,4 +350,25 @@ pub async fn job_instance_count(pool: &PgPool, job_name: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("count job instances")
+}
+
+/// Every `JobInstance`'s own persisted `identifying_parameters` (framework
+/// metadata, `oxide_batch.ob_job_instance`) for `job_name`, ordered by
+/// creation. Test-only introspection: production code
+/// (`src/job.rs`/`src/verify.rs`) never reads this table -- see
+/// `tests/reader_mode_identity.rs`, which uses this to black-box-confirm
+/// `reader_mode` is actually persisted as an identifying parameter, not
+/// merely passed to `JobParameters` and silently dropped by the framework.
+pub async fn job_instance_identifying_parameters(
+    pool: &PgPool,
+    job_name: &str,
+) -> Vec<serde_json::Value> {
+    sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT identifying_parameters FROM oxide_batch.ob_job_instance \
+         WHERE job_name = $1 ORDER BY id",
+    )
+    .bind(job_name)
+    .fetch_all(pool)
+    .await
+    .expect("query job instance identifying_parameters")
 }

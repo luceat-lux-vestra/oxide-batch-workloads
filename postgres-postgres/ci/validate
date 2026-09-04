@@ -44,11 +44,15 @@ run_ci_stage() {
   cargo run --locked -q -- migrate
   cargo test --locked -- --test-threads=1
 
-  echo "golden-path smoke: reset -> seed -> run -> verify"
+  echo "golden-path smoke: reset -> seed -> run (cursor) -> verify"
   cargo run --locked -q -- reset
   cargo run --locked -q -- seed --rows 2000 --seed 42
-  cargo run --locked -q -- run --import-name ci_smoke --chunk-size 200 --fetch-size 128
-  cargo run --locked -q -- verify --import-name ci_smoke
+  cargo run --locked -q -- run --import-name ci_smoke_cursor --chunk-size 200 --reader cursor --fetch-size 128
+  cargo run --locked -q -- verify --import-name ci_smoke_cursor
+
+  echo "golden-path smoke: run (paging) -> verify"
+  cargo run --locked -q -- run --import-name ci_smoke_paging --chunk-size 200 --reader paging --page-size 128
+  cargo run --locked -q -- verify --import-name ci_smoke_paging
 }
 
 run_msrv_stage() {

@@ -54,7 +54,7 @@ async fn cursor_mode_reads_every_row_exactly_once() {
         seed: 17,
     });
     let import_name = support::unique_name("reader_exactly_once");
-    support::run(&import_name, 40);
+    support::run_cursor(&import_name, 40);
 
     let pool = support::pool().await;
     let source_digest = postgres_postgres::source_digest::compute(&pool)
@@ -96,7 +96,7 @@ async fn a_dataset_larger_than_the_configured_fetch_size_lands_completely() {
         seed: 23,
     });
     let import_name = support::unique_name("reader_bounded_fetch");
-    support::run_with_fetch_size(&import_name, 50, fetch_size);
+    support::run_cursor_with_fetch_size(&import_name, 50, fetch_size);
 
     let output = support::verify(&import_name);
     assert!(

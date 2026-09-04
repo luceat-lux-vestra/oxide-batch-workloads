@@ -12,7 +12,7 @@ async fn clean_dataset(label: &str, rows: u64) -> (support::Dataset, String, sql
     support::migrate();
     let dataset = support::seed(SeedOptions { rows, seed: 99 });
     let import_name = support::unique_name(label);
-    support::run(&import_name, 50);
+    support::run_cursor(&import_name, 50);
 
     // A clean, unmutated run must verify successfully first, so a failure
     // below is attributable to the corruption, not to some other

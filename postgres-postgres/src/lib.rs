@@ -1,6 +1,7 @@
 //! `postgres-postgres`: OxideBatch 0.6.0 real-workload validation for a
-//! PostgreSQL -> PostgreSQL cursor-mode restartable transform. See the
-//! crate README for architecture, schemas, and scope.
+//! PostgreSQL -> PostgreSQL restartable transform, in either cursor mode or
+//! paging mode (`--reader cursor|paging`). See the crate README for
+//! architecture, schemas, and scope.
 //!
 //! Split into a library plus a thin binary (`src/main.rs`) so integration
 //! tests (e.g. `tests/source_identity.rs`) can call `source_digest::compute`

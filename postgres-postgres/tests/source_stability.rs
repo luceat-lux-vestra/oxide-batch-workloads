@@ -89,7 +89,7 @@ async fn a_concurrent_write_is_blocked_while_a_run_holds_the_source_stability_gu
         seed: 71,
     });
     let import_name = support::unique_name("source_stability");
-    let mut child = support::spawn_run_with_fetch_size(&import_name, 100, 20);
+    let mut child = support::spawn_run_cursor_with_fetch_size(&import_name, 100, 20);
 
     wait_for_source_share_lock(&pool, Duration::from_secs(15)).await;
 
@@ -140,6 +140,82 @@ async fn a_concurrent_write_is_blocked_while_a_run_holds_the_source_stability_gu
     sqlx::query(
         "INSERT INTO app_source.source_customer (customer_id, full_name, is_active, balance_cents) \
          VALUES ($1, 'source-stability-probe-after', true, 0)",
+    )
+    .bind(probe_customer_id)
+    .execute(&pool)
+    .await
+    .expect("the same write must succeed once the run has released the source-stability guard");
+}
+
+/// Paging counterpart of the cursor proof above. The released
+/// `postgres_paging_reader` opens its own dedicated pool lazily on first
+/// page, entirely separate from the guard's own connection -- exactly the
+/// same connection-separation shape that makes the source-stability guard
+/// necessary for cursor mode (see `src/source_digest.rs`'s module
+/// documentation and `src/job.rs::launch_and_finish`'s doc comment on why
+/// the guard is threaded through generically for both modes). This test
+/// does not weaken or replace the cursor proof above; it is additional,
+/// independent adversarial evidence for the second reader mode.
+#[tokio::test]
+async fn a_concurrent_write_is_blocked_while_a_paging_run_holds_the_source_stability_guard() {
+    support::migrate();
+    support::reset();
+    let pool = support::pool().await;
+
+    // Large enough, at a small enough page/chunk size, to keep `run`
+    // actually in flight (holding the guard) for long enough that this
+    // test can reliably observe the lock and attempt its own conflicting
+    // write inside that window -- not a fixed sleep racing against an
+    // unknown-duration background process.
+    let dataset = support::seed(support::SeedOptions {
+        rows: 20_000,
+        seed: 72,
+    });
+    let import_name = support::unique_name("paging_source_stability");
+    let mut child = support::spawn_run_paging_with_page_size(&import_name, 100, 20);
+
+    wait_for_source_share_lock(&pool, Duration::from_secs(15)).await;
+
+    let probe_customer_id = (dataset.id_offset + dataset.rows + 1) as i64;
+    let blocked = attempt_conflicting_insert(&pool, probe_customer_id).await;
+    let status = child.wait().expect("wait for the background run to finish");
+
+    assert!(
+        blocked.is_err(),
+        "a concurrent INSERT into app_source.source_customer succeeded while a paging run held \
+         the source-stability guard -- the TOCTOU window between computing source_digest and the \
+         paging reader's actual read is NOT closed"
+    );
+    let sqlstate = match blocked.unwrap_err() {
+        sqlx::Error::Database(db) => db.code().map(|code| code.into_owned()),
+        other => panic!("expected a database error from lock contention, got: {other:?}"),
+    };
+    assert_eq!(
+        sqlstate.as_deref(),
+        Some("55P03"),
+        "expected PostgreSQL's lock_not_available SQLSTATE (a lock_timeout expiry), got {sqlstate:?} \
+         -- a different error would not actually demonstrate the write was blocked by the guard"
+    );
+
+    assert!(
+        status.success(),
+        "the background paging run itself must still complete successfully despite the \
+         concurrent write attempt against it"
+    );
+
+    let verify_output = support::verify(&import_name);
+    assert!(
+        verify_output.status.success(),
+        "verify must still pass cleanly after the contention attempt: {}",
+        String::from_utf8_lossy(&verify_output.stderr)
+    );
+
+    // The guard is released now (the run has finished); the same write
+    // must succeed immediately with no lock_timeout needed, proving the
+    // guard does not leak a permanent lock -- identically to cursor mode.
+    sqlx::query(
+        "INSERT INTO app_source.source_customer (customer_id, full_name, is_active, balance_cents) \
+         VALUES ($1, 'source-stability-probe-after-paging', true, 0)",
     )
     .bind(probe_customer_id)
     .execute(&pool)
