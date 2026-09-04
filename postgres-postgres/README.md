@@ -7,12 +7,12 @@ PostgreSQL restartable batch transform, driven end to end through the real
 production `oxide_batch::JobLauncher` / `ChunkJob` launch path, in either of
 two reader modes.
 
-This is PR 2 of campaign
-[luceat-lux-vestra/oxide-batch-workloads#63](../../issues/63): paging-mode
-parity added on top of PR 1's clean cursor-mode vertical slice, with both
-reader modes' correctness, business-result parity, and source-stability
-guarantees proven. See [Explicit limitations](#explicit-limitations-not-this-pr)
-below for what later PRs still add.
+This is PR 3 of campaign
+[luceat-lux-vestra/oxide-batch-workloads#63](../../issues/63): rollback,
+hard-crash, and genuine new-process recovery evidence added on top of PR 1's
+clean cursor-mode vertical slice and PR 2's paging-mode parity. See
+[Explicit limitations](#explicit-limitations-not-this-pr) below for what
+PR 4 still adds (benchmarking, retained evidence, campaign closure).
 
 ## Purpose
 
@@ -33,9 +33,16 @@ consumer can:
   it), with `reader_mode` itself participating in job identity as its own
   separate identifying parameter;
 - prove cursor and paging produce equivalent business results over
-  identical source content; and
+  identical source content;
 - be checked by a verifier that never trusts the production code path it
-  is checking.
+  is checking; and
+- survive a pre-commit typed failure (whole-chunk rollback), a real
+  `SIGKILL` before a chunk commits, and a real `SIGKILL` immediately after
+  one commits -- recovering, in a genuinely new OS process, through the
+  public OxideBatch recovery/operator API only, to a final business state
+  representation-identical to a clean run, for both reader modes (see
+  [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3)
+  below).
 
 ## Architecture / data flow
 
@@ -180,7 +187,10 @@ Consequences, all covered by `tests/source_identity.rs`:
 
 PR 1 proves this mechanism on the clean path only (determinism, a changed
 seed producing a changed identity, collision-free destination scoping).
-Full restart-against-mutated-source evidence is PR 3's scope (see below).
+Restart-against-mutated-source evidence, across a real process crash, is
+this PR's own scope -- see
+[Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3)
+below.
 
 ## Reader modes
 
@@ -237,8 +247,9 @@ likewise rejected, by the released reader's own construction-time
 validation (`PostgresComponentConfigError::InvalidFetchSize`) -- this
 workload does not reimplement that check.
 
-**Restart/crash evidence for either reader mode is PR 3's scope, not this
-PR's.**
+**Restart/crash evidence for both reader modes is this PR's own scope** --
+see [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3)
+below.
 
 ## Reader mode and job identity
 
@@ -354,12 +365,128 @@ modes are actually caught: a corrupted destination value, a missing
 destination row, and an unexpected/extra destination row -- not merely a
 row-count check.
 
+## Crash / rollback / recovery evidence (PR 3)
+
+Proven, with real PostgreSQL 18 and the published `oxide-batch = "=0.6.0"`
+public API, for **both** reader modes, driving the real compiled
+`postgres-postgres` binary as a genuine child (and, for the two crash
+scenarios, a genuinely *new* child afterward) process -- never an in-process
+function call standing in for a crash:
+
+1. **Pre-commit typed rollback** (`tests/rollback.rs`): a typed error
+   returned after a target chunk's business `INSERT`s execute but before its
+   transaction commits rolls the *whole* chunk back. The previously
+   committed chunks stay durable; the target chunk contributes zero rows and
+   the durable checkpoint stays at the previous chunk's boundary. A plain
+   restart (no `recover` needed -- the launcher's own future completed and
+   persisted a terminal `FAILED` status) then completes the exact remainder.
+2. **Hard crash before commit** (`tests/crash_before_commit.rs`): a real
+   `SIGKILL` delivered to the child process after a target chunk's business
+   writes have executed inside its still-open enlisted transaction, but
+   before that transaction commits. PostgreSQL rolls back the abandoned
+   transaction on connection loss, so neither the chunk's business rows nor
+   its checkpoint become durable; the previous chunk's boundary is
+   unaffected. A plain restart is refused by the framework itself (an
+   execution still recorded in progress); `recover` (through the public
+   operator/recovery API) is required first, and continuation runs in a
+   brand-new process.
+3. **Hard crash immediately after commit** (`tests/crash_after_commit.rs`):
+   a real `SIGKILL` delivered immediately after a target chunk's atomic
+   commit call returns success. The committed chunk's business rows and
+   checkpoint are both durable together (never a split state where one
+   advanced without the other); after `recover` and a restart in a new
+   process, the final business state has no missing, extra, or duplicate
+   rows, and is byte-for-byte content-digest-identical to a clean run over
+   the same source content (`tests/crash_after_commit.rs`'s
+   `destination_content_digest` comparison) -- not merely the same row
+   count.
+4. **Source-mutation / stale-checkpoint isolation across a crash**
+   (`tests/source_mutation_recovery.rs`, one parameterized case run under
+   each reader mode): once a crashed, non-terminal execution's source
+   content is mutated (after the run/lock window has closed -- see
+   [Source identity](#source-identity)), the resulting new `source_digest`
+   resolves `recover` (under the crashed instance's own reader mode) and a
+   fresh `run` to a **different** `JobInstance`, never a silent resume of
+   the stale, differently-keyed checkpoint. The crashed instance's own
+   durable checkpoint/business state is independently confirmed first (same
+   commit-count/position assertions as scenario 2), and its destination
+   scope is left exactly
+   as it was, untouched by the new instance.
+5. **Recovery selection is explicit and fails closed**
+   (`tests/recover_negative.rs`): `recover` rejects an import name/reader
+   that was never run, an execution that already reached a terminal status,
+   and a reader mode that does not match the crashed instance's own
+   identifying parameter -- it never guesses which execution to recover.
+
+### Deterministic failure injection (`src/failpoint.rs`)
+
+A workload-local `FailingWriter`/`FailingTransactionManager` pair, built
+only on the same public traits a real consumer implements against
+(`ItemWriter`, `ChunkTransactionManager`, `ChunkTransaction` --
+`postgres-postgres` does not depend on `csv-postgres`, and does not use
+`oxide-batch-test`'s injection types, which are a dev-only dependency and
+cannot ship in a production binary; this mirrors `csv-postgres/src/failpoint.rs`'s
+established, independent shape in this same repository, not a shared
+dependency). `run --fail-at-chunk N --failure-mode during-write|after-business-commit`
+targets a 1-based chunk-transaction-attempt ordinal deterministically (never
+randomly), at exactly one of two semantic points: after the writer's real
+`INSERT` executes but before that chunk's transaction commits
+(`during-write`), or after the transaction's commit call has already
+returned success (`after-business-commit`). What happens when the failpoint
+fires is a second, independent choice:
+
+- by default, a typed graceful error (the chunk rolls back; the process
+  then exits non-zero on its own) -- the pre-commit rollback scenario;
+- with `--pause-for-kill <path>`, instead of erroring or self-terminating,
+  the process writes its own PID to `<path>` and then blocks forever. The
+  *test harness* -- a separate parent process -- polls for that marker file
+  (never a fixed sleep guess) and, once observed, delivers a real `SIGKILL`
+  to that exact child (`std::process::Child::kill`). This is a genuine,
+  externally delivered OS-level process termination, synchronized to the
+  precise semantic boundary under test.
+
+### `recover`
+
+```
+postgres-postgres recover --database-url <url> --import-name <name> --reader cursor|paging
+```
+
+Marks a `Starting`/`Started`/`Stopping`/`Unknown` execution left behind by a
+hard crash as recoverable, through the public OxideBatch recovery/operator
+API only (`JobRepository::recover_job_execution` with a
+`RecoveryRequest::mark_failed`) -- never by mutating `oxide_batch` metadata
+directly, in production code or in tests. Which execution is recovered is
+fully deterministic and never ambiguous: the exact same
+`(import_name, source_digest, reader_mode)` identity `run` itself would
+resolve right now, with `source_digest` recomputed live from
+`app_source.source_customer`'s *current* content under the same
+`lock_source_for_stable_read` guard `run`/`verify` use -- never a
+caller-supplied digest, and never a "most recent execution for this
+import_name" fallback across identities. A source mutated since the crash
+therefore makes `recover` fail closed rather than resume stale state (see
+scenario 4 above); an already-terminal execution, or a reader mode that
+does not match the crashed instance's own identity, likewise fail closed
+with a nonzero exit.
+
+### What this does, and does not, prove
+
+This PR demonstrates same-resource atomic chunk durability, checkpoint/
+business-row consistency across a real process crash, and deterministic
+operator-driven restart behavior, for the specific failure boundaries listed
+above -- observed through real database state and real OS-level process
+termination, using only released public OxideBatch surface. It is not a
+general exactly-once, high-availability, or production-readiness claim, and
+it does not attempt every conceivable crash point (e.g. mid-read, or a crash
+during the reader's own `ItemStream` checkpoint write outside a chunk
+transaction) -- see [Explicit limitations](#explicit-limitations-not-this-pr).
+
 ## Commands
 
 ```
 postgres-postgres migrate --database-url <url>
 postgres-postgres seed --database-url <url> --rows <n> --seed <n> [--id-offset <n>]
-postgres-postgres run --database-url <url> --import-name <name> --reader cursor|paging [--chunk-size <n>] [--fetch-size <n> | --page-size <n>]
+postgres-postgres run --database-url <url> --import-name <name> --reader cursor|paging [--chunk-size <n>] [--fetch-size <n> | --page-size <n>] [--fail-at-chunk <n> --failure-mode during-write|after-business-commit [--pause-for-kill <path>]]
+postgres-postgres recover --database-url <url> --import-name <name> --reader cursor|paging
 postgres-postgres verify --database-url <url> --import-name <name>
 postgres-postgres reset --database-url <url>
 ```
@@ -368,8 +495,12 @@ postgres-postgres reset --database-url <url>
 `--reader` is required -- there is no default reader mode. `--fetch-size`
 is cursor-only; `--page-size` is paging-only; supplying the
 mode-incompatible option fails the run rather than silently ignoring it
-(see [Reader modes](#reader-modes)). `reset` truncates only
-`app_source`/`app_business`; it never touches `oxide_batch`.
+(see [Reader modes](#reader-modes)). `run`'s `--fail-at-chunk`/
+`--failure-mode`/`--pause-for-kill` are deterministic fault-injection flags
+(see [Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3));
+omitted (or `--fail-at-chunk 0`), a run's behavior is unchanged from PR 1/
+PR 2. `reset` truncates only `app_source`/`app_business`; it never touches
+`oxide_batch`.
 
 ## Local development
 
@@ -389,10 +520,27 @@ integration tests, and a golden-path smoke sequence). `ci/validate msrv`
 matches the declared `rust-version` in `Cargo.toml` with a locked,
 database-free build.
 
-## Current evidence scope (PR 2)
+## Current evidence scope (PR 3)
 
-Proven, with real PostgreSQL 18, in this PR (on top of everything PR 1
-already proved for cursor mode, all of which still holds and still passes):
+Proven, with real PostgreSQL 18, in this PR (see
+[Crash / rollback / recovery evidence](#crash--rollback--recovery-evidence-pr-3)
+above for the full detail; on top of everything PR 1 and PR 2 already
+proved, all of which still holds and still passes):
+
+- pre-commit typed rollback, hard-crash-before-commit, and
+  hard-crash-after-commit, each for both reader modes, with the whole
+  crash/recover/restart cycle driven through real child processes;
+- genuine new-OS-process recovery continuation (never the crashed process's
+  own memory/state) through the public `recover` command;
+- source-mutation isolation across a crash: a mutated source resolves to a
+  distinct `JobInstance`, never a silent resume of a stale, differently-keyed
+  checkpoint;
+- recovered-vs-clean full business projection equivalence, including a
+  whole-projection content digest, not merely a row count;
+- `recover`'s own negative cases (no instance, already-terminal execution,
+  wrong reader mode) fail closed.
+
+Proven in PR 2 (still holds and still passes):
 
 - exact published `oxide-batch = "=0.6.0"` provenance (registry-resolved
   lockfile, unchanged and byte-for-byte identical to PR 1's, no path/git/
@@ -429,23 +577,27 @@ scoping across distinct import names/source identities; workload-owned
 
 ## Explicit limitations (not this PR)
 
-- **No crash/recovery evidence, for either reader mode.** No hard-kill, no
-  `recover` command, no pre-commit/post-commit crash boundary testing. That
-  is PR 3.
-- **No restart-against-mutated-source evidence, for either reader mode.**
-  Source identity's clean-path mechanism is proven here; resuming (or
-  correctly refusing to resume) a checkpoint after a source mutation is
-  PR 3.
-- **No larger retained-resource/long-running evidence.** That is PR 4.
-- **No benchmark/throughput claims.** Not attempted before the correctness/
-  recovery campaign closes (see `ROADMAP.md`).
+- **No benchmark, throughput, or resource-usage evidence.** Not attempted
+  before the correctness/recovery campaign closes (see `ROADMAP.md`). That
+  is PR 4.
+- **No larger retained-resource/long-running evidence, and no retained
+  evidence manifest or campaign closure.** That is PR 4.
+- **Not every conceivable crash point.** This PR's failure boundaries are
+  deterministic, chunk/commit-boundary-targeted: post-write/pre-commit
+  (typed and hard-killed) and immediately-post-commit. It does not attempt
+  e.g. a crash mid-read, mid-page-fetch, or during a reader's own
+  `ItemStream` checkpoint write outside a chunk transaction.
 - **No Spring Batch comparison, no cross-workload shared framework, no
-  central-CI workload-specific branching.** Out of scope for this campaign
-  entirely (see the parent issue's non-goals).
+  central-CI workload-specific branching, no shared/repository-wide failure-
+  injection framework.** Out of scope for this campaign entirely (see the
+  parent issue's non-goals); `src/failpoint.rs` is an independent,
+  workload-local copy of `csv-postgres/src/failpoint.rs`'s established
+  shape, not a shared dependency.
 - **No production readiness or exactly-once claim.** This PR demonstrates
-  clean-path correctness and cross-mode parity only; do not read anything
-  here as a durability or concurrency guarantee beyond what is explicitly
-  stated above.
+  same-resource atomic chunk durability, checkpoint/business-row consistency
+  across a real process crash, and deterministic operator-driven restart
+  behavior for the specific boundaries above -- do not read anything here as
+  a broader durability, high-availability, or concurrency guarantee.
 - **Upstream [luceat-lux-vestra/oxide-batch#218](https://github.com/luceat-lux-vestra/oxide-batch/issues/218)
   (no `TIMESTAMPTZ` `BusinessValue` variant) remains open and visible.**
   This workload's schema still has no `TIMESTAMPTZ` column anywhere and is

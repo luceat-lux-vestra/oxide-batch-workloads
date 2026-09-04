@@ -29,8 +29,9 @@
 //! and no single test file uses every helper here.
 #![allow(dead_code)]
 
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -270,6 +271,248 @@ pub fn spawn_run_paging_with_page_size(
         .arg(page_size.to_string())
         .spawn()
         .expect("spawn postgres-postgres run in the background")
+}
+
+// -------------------------------------------------------------------------
+// Campaign #63 PR 3: deterministic rollback / crash / recovery evidence.
+// -------------------------------------------------------------------------
+
+/// A marker file path unique to this test invocation, in the same temp
+/// directory `std::env::temp_dir()` other workloads in this repository use
+/// for test-scoped scratch files (see `csv-postgres/tests/support/mod.rs`'s
+/// `temp_csv`).
+pub fn temp_marker(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("postgres-postgres-test-{label}-{}.marker", nonce()))
+}
+
+/// Starts the real compiled binary in the background with fault injection
+/// armed, returning the still-running `Child` immediately -- for the
+/// hard-crash tests, which must observe the failpoint's marker file and
+/// kill this exact child while it is deliberately paused mid-chunk (see
+/// `src/failpoint.rs`'s module documentation). `size_flag` is
+/// `("--fetch-size", fetch_size)` for cursor or `("--page-size",
+/// page_size)` for paging -- both mode-specific reader configuration.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_run_with_failpoint(
+    reader_mode: &str,
+    import_name: &str,
+    chunk_size: u32,
+    size_flag: (&str, usize),
+    fail_at_chunk: u32,
+    failure_mode: &str,
+    pause_marker: &Path,
+) -> Child {
+    bin()
+        .arg("run")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--chunk-size")
+        .arg(chunk_size.to_string())
+        .arg("--reader")
+        .arg(reader_mode)
+        .arg(size_flag.0)
+        .arg(size_flag.1.to_string())
+        .arg("--fail-at-chunk")
+        .arg(fail_at_chunk.to_string())
+        .arg("--failure-mode")
+        .arg(failure_mode)
+        .arg("--pause-for-kill")
+        .arg(pause_marker)
+        .spawn()
+        .expect("spawn postgres-postgres run with failpoint armed")
+}
+
+/// Runs the real compiled binary to completion (or typed failure) with
+/// fault injection armed but no `--pause-for-kill` -- the failpoint returns
+/// a typed graceful error instead of pausing, so this call returns once the
+/// process has actually exited on its own. Used by the pre-commit typed
+/// rollback tests (never a hard kill).
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_typed_failpoint(
+    reader_mode: &str,
+    import_name: &str,
+    chunk_size: u32,
+    size_flag: (&str, usize),
+    fail_at_chunk: u32,
+    failure_mode: &str,
+) -> Output {
+    bin()
+        .arg("run")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--chunk-size")
+        .arg(chunk_size.to_string())
+        .arg("--reader")
+        .arg(reader_mode)
+        .arg(size_flag.0)
+        .arg(size_flag.1.to_string())
+        .arg("--fail-at-chunk")
+        .arg(fail_at_chunk.to_string())
+        .arg("--failure-mode")
+        .arg(failure_mode)
+        .output()
+        .expect("spawn postgres-postgres run with typed failpoint")
+}
+
+/// A plain `run` invocation (no fault injection), returned without
+/// asserting success -- for callers that expect (and must observe) a
+/// rejection, e.g. a plain restart against an execution the framework still
+/// considers in-progress.
+pub fn run_plain(
+    reader_mode: &str,
+    import_name: &str,
+    chunk_size: u32,
+    size_flag: (&str, usize),
+) -> Output {
+    bin()
+        .arg("run")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--chunk-size")
+        .arg(chunk_size.to_string())
+        .arg("--reader")
+        .arg(reader_mode)
+        .arg(size_flag.0)
+        .arg(size_flag.1.to_string())
+        .output()
+        .expect("spawn postgres-postgres run")
+}
+
+/// Polls `destination_row_count` until it reaches `expected` or `timeout`
+/// elapses, then returns whatever the last observed count was. Guards
+/// against PostgreSQL's own (fast, but not instantaneous relative to
+/// `Child::wait()` returning) rollback of a hard-killed backend's abandoned
+/// transaction -- polling for the real converged value, never a fixed sleep
+/// guess.
+pub async fn wait_for_row_count(
+    pool: &PgPool,
+    import_name: &str,
+    source_digest: &str,
+    expected: i64,
+    timeout: Duration,
+) -> i64 {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let count = destination_row_count(pool, import_name, source_digest).await;
+        if count == expected || Instant::now() >= deadline {
+            return count;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Polls (never a fixed sleep-and-hope) for `marker_path` to appear with
+/// nonempty content, up to `timeout`, and returns the PID the failpoint
+/// wrote into it -- independent, file-based proof of exactly which process
+/// paused, on top of `Child::id()`. Panics with a clear diagnostic if the
+/// failpoint never fires within `timeout`, rather than silently proceeding
+/// against database state the target chunk never actually reached.
+pub fn wait_for_marker(marker_path: &Path, timeout: Duration) -> u32 {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(contents) = std::fs::read_to_string(marker_path) {
+            if let Some(first_line) = contents.lines().next() {
+                if let Ok(pid) = first_line.trim().parse::<u32>() {
+                    return pid;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "failpoint marker file {} never appeared within {timeout:?} -- the target chunk's \
+             write phase was never reached",
+            marker_path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Sends a real `SIGKILL` (via `Child::kill`, never `Result::Err`, a
+/// graceful shutdown, or a self-inflicted `abort()`) to `child` and reaps
+/// it, returning the resulting `ExitStatus` as crash evidence.
+pub fn kill_and_wait(child: &mut Child) -> std::process::ExitStatus {
+    child.kill().expect("deliver SIGKILL to paused child");
+    child.wait().expect("reap killed child")
+}
+
+/// `recover --import-name <name> --reader <mode>` against the real
+/// compiled binary -- the public OxideBatch recovery/operator API,
+/// exercised only through this workload's own CLI, never by mutating
+/// `oxide_batch` metadata directly from a test.
+pub fn recover(import_name: &str, reader_mode: &str) -> Output {
+    bin()
+        .arg("recover")
+        .arg("--import-name")
+        .arg(import_name)
+        .arg("--reader")
+        .arg(reader_mode)
+        .output()
+        .expect("spawn postgres-postgres recover")
+}
+
+/// `(status, commit_count, checkpoint position)` for the latest attempt's
+/// single step execution -- read-only introspection of framework-owned
+/// durable metadata (`oxide_batch.ob_step_execution`'s `checkpoint_payload`
+/// literally is `job::state_provider`'s `{"position": N}` shape), used only
+/// to *observe* durable facts, never to construct or mutate them (see this
+/// module's own doc comment and the crate README's recovery-evidence
+/// section on why production code and tests alike never write to
+/// `oxide_batch` directly).
+pub async fn latest_checkpoint(pool: &PgPool, job_name: &str) -> Option<(String, i64, i64)> {
+    sqlx::query_as::<_, (String, i64, i64)>(
+        "SELECT e.status, s.commit_count, (s.checkpoint_payload->>'position')::bigint \
+         FROM oxide_batch.ob_job_execution e \
+         JOIN oxide_batch.ob_job_instance i ON i.id = e.job_instance_id \
+         JOIN oxide_batch.ob_step_execution s ON s.job_execution_id = e.id \
+         WHERE i.job_name = $1 \
+         ORDER BY e.attempt DESC LIMIT 1",
+    )
+    .bind(job_name)
+    .fetch_optional(pool)
+    .await
+    .expect("query latest checkpoint")
+}
+
+/// Number of durable `JobExecution` attempts recorded for `job_name`,
+/// across every `JobInstance` sharing that name -- used to confirm recovery
+/// continuation is tracked as a genuinely new execution lifecycle, not an
+/// overwrite of the crashed attempt's own history.
+pub async fn job_execution_count(pool: &PgPool, job_name: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM oxide_batch.ob_job_execution e \
+         JOIN oxide_batch.ob_job_instance i ON i.id = e.job_instance_id \
+         WHERE i.job_name = $1",
+    )
+    .bind(job_name)
+    .fetch_one(pool)
+    .await
+    .expect("count job executions")
+}
+
+/// A deterministic destination content digest over one import's whole
+/// `(display_name, loyalty_score, is_premium, row_fingerprint)` projection,
+/// ordered by `customer_id` -- used to confirm a clean run and a
+/// crash+recover+restart run of the identical source content converge to
+/// representation-identical final business state, not merely the same row
+/// count.
+pub async fn destination_content_digest(
+    pool: &PgPool,
+    import_name: &str,
+    source_digest: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let rows = full_projection_rows(pool, import_name, source_digest).await;
+    let mut hasher = Sha256::new();
+    for (customer_id, display_name, loyalty_score, is_premium, row_fingerprint) in &rows {
+        hasher.update(customer_id.to_le_bytes());
+        hasher.update(display_name.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(loyalty_score.to_le_bytes());
+        hasher.update([u8::from(*is_premium)]);
+        hasher.update(row_fingerprint);
+        hasher.update([0xFFu8]);
+    }
+    postgres_postgres::hex::hex_digest(&hasher.finalize())
 }
 
 pub fn verify(import_name: &str) -> std::process::Output {

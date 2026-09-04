@@ -8,6 +8,7 @@
 //! directly against a test database, instead of scraping it back out of the
 //! CLI's stdout/logs.
 
+pub mod failpoint;
 pub mod generator;
 pub mod hex;
 pub mod job;
