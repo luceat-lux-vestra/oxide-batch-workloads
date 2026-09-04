@@ -2,192 +2,56 @@
   "schema_version": 2,
   "workload": "postgres-postgres",
   "producer": {
-    "base_revision": "da1273e6e425aae32651ade2b966f52db3af0535",
+    "base_revision": "4df4a8426689a2a91fcc68a1c6132577d30cf5ec",
     "revision_role": "producer-checkout",
     "run": {
-      "kind": "manual-local",
-      "identity": null,
+      "kind": "github-actions-one-shot",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/33916280736",
       "binding": "recorded-metadata"
     }
   },
   "semantic_closure": {
     "algorithm": "sha256-git-tree-entries-v1",
-    "includes": [
-      "Cargo.toml",
-      "Cargo.lock",
-      "docker-compose.yml",
-      "migrations",
-      "src",
-      "validation/generate-evidence.sh"
-    ],
-    "excluded_generated_paths": [
-      "validation/cursor-run.json",
-      "validation/paging-run.json"
-    ],
+    "includes": ["Cargo.toml","Cargo.lock","docker-compose.yml","migrations","src","validation/generate-evidence.sh"],
+    "excluded_generated_paths": ["validation/cursor-run.json","validation/paging-run.json"],
     "entries": [
-      {"path": "Cargo.lock", "mode": "100644", "git_blob_oid": "01437f671f4e97c0501e4a0d9997840e38e128b4"},
-      {"path": "Cargo.toml", "mode": "100644", "git_blob_oid": "9389575e2508f3e84ecd7c4bed093dfcf48d6a39"},
-      {"path": "docker-compose.yml", "mode": "100644", "git_blob_oid": "b7704be301810cb35c4543e0d9a01b96fb168a4e"},
-      {"path": "migrations/001_init.sql", "mode": "100644", "git_blob_oid": "aca417c806339fb6c926a95fb06beb30872d9242"},
-      {"path": "src/failpoint.rs", "mode": "100644", "git_blob_oid": "5ce837362c2fe7736fef7cb05b55ee5b224ff61b"},
-      {"path": "src/generator.rs", "mode": "100644", "git_blob_oid": "8308b3051cdc7f15cf9def815a026ec1fb91aa8a"},
-      {"path": "src/hex.rs", "mode": "100644", "git_blob_oid": "b25993dc1ee6e30bcdb7eaf185ae9c833b2d59e7"},
-      {"path": "src/job.rs", "mode": "100644", "git_blob_oid": "f04d9fe9ff07b1a33746a1cf9cca8b8ea7761a6a"},
-      {"path": "src/lib.rs", "mode": "100644", "git_blob_oid": "227ac83a04acffed75f9ccfe37920dadd58f0233"},
-      {"path": "src/main.rs", "mode": "100644", "git_blob_oid": "26e58a8057d4593753f8669199413f36dece721f"},
-      {"path": "src/processor.rs", "mode": "100644", "git_blob_oid": "f0547463258a8135822c157e4bc633b342b5973d"},
-      {"path": "src/source_digest.rs", "mode": "100644", "git_blob_oid": "8d6590d214de60676d9473b58de67c08e30ec5ac"},
-      {"path": "src/verify.rs", "mode": "100644", "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"},
-      {"path": "src/writer.rs", "mode": "100644", "git_blob_oid": "8131f6a4dd2713f70fdb2957dea1f1f5c7d9c5e2"},
-      {"path": "validation/generate-evidence.sh", "mode": "100755", "git_blob_oid": "43647d6268ad1e5e7877dee5e556ee4a331dc272"}
+      {"path":"Cargo.lock","mode":"100644","git_blob_oid":"01437f671f4e97c0501e4a0d9997840e38e128b4"},
+      {"path":"Cargo.toml","mode":"100644","git_blob_oid":"9389575e2508f3e84ecd7c4bed093dfcf48d6a39"},
+      {"path":"docker-compose.yml","mode":"100644","git_blob_oid":"b7704be301810cb35c4543e0d9a01b96fb168a4e"},
+      {"path":"migrations/001_init.sql","mode":"100644","git_blob_oid":"aca417c806339fb6c926a95fb06beb30872d9242"},
+      {"path":"src/failpoint.rs","mode":"100644","git_blob_oid":"5ce837362c2fe7736fef7cb05b55ee5b224ff61b"},
+      {"path":"src/generator.rs","mode":"100644","git_blob_oid":"8308b3051cdc7f15cf9def815a026ec1fb91aa8a"},
+      {"path":"src/hex.rs","mode":"100644","git_blob_oid":"b25993dc1ee6e30bcdb7eaf185ae9c833b2d59e7"},
+      {"path":"src/job.rs","mode":"100644","git_blob_oid":"f04d9fe9ff07b1a33746a1cf9cca8b8ea7761a6a"},
+      {"path":"src/lib.rs","mode":"100644","git_blob_oid":"227ac83a04acffed75f9ccfe37920dadd58f0233"},
+      {"path":"src/main.rs","mode":"100644","git_blob_oid":"26e58a8057d4593753f8669199413f36dece721f"},
+      {"path":"src/processor.rs","mode":"100644","git_blob_oid":"f0547463258a8135822c157e4bc633b342b5973d"},
+      {"path":"src/source_digest.rs","mode":"100644","git_blob_oid":"8d6590d214de60676d9473b58de67c08e30ec5ac"},
+      {"path":"src/verify.rs","mode":"100644","git_blob_oid":"019bda616237a7c50c74ead47651b7fe63e24060"},
+      {"path":"src/writer.rs","mode":"100644","git_blob_oid":"8131f6a4dd2713f70fdb2957dea1f1f5c7d9c5e2"},
+      {"path":"validation/generate-evidence.sh","mode":"100755","git_blob_oid":"af7d50d89a85b0a5044fb6d22cdef3115a0568ce"}
     ],
-    "digest_sha256": "6e23cd4087acd5599176c534062a005aa0106c11863ee0afafe0cb761cf3edb9"
+    "digest_sha256": "1174985a8a2bc7556081551b936af2f97c67a361e97fecbdc20cf29e7da376e7"
   },
   "validation_subject": {
-    "lockfile": {
-      "path": "Cargo.lock",
-      "git_blob_oid": "01437f671f4e97c0501e4a0d9997840e38e128b4"
-    },
-    "crates": [
-      {
-        "name": "oxide-batch",
-        "version": "0.6.0",
-        "source": "registry+https://github.com/rust-lang/crates.io-index",
-        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
-      }
-    ]
+    "lockfile": {"path":"Cargo.lock","git_blob_oid":"01437f671f4e97c0501e4a0d9997840e38e128b4"},
+    "crates": [{"name":"oxide-batch","version":"0.6.0","source":"registry+https://github.com/rust-lang/crates.io-index","checksum":"eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"}]
   },
   "records": [
-    {
-      "scenario": "cursor_bounded_resource_run",
-      "artifact": {
-        "path": "validation/cursor-run.json",
-        "sha256": "7937316186b60dbbe67b9c255a1b25fef5a9a9466ca90893e8c06e578d7fa69b",
-        "size_bytes": 2235
-      },
-      "input": {
-        "identity": {
-          "kind": "generated-postgres-rows",
-          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
-        },
-        "reproduction": {
-          "generator": "src/generator.rs",
-          "rows": 200000,
-          "seed": 20260904,
-          "id_offset": 0
-        }
-      },
-      "parameters": {
-        "chunk_size": 1000,
-        "fetch_size": 500,
-        "import_name": "evidence_cursor_run"
-      },
-      "failure_point": null
-    },
-    {
-      "scenario": "paging_bounded_resource_run",
-      "artifact": {
-        "path": "validation/paging-run.json",
-        "sha256": "3dcda58992e7d8292c23d229d249e2439b15d7bfd7293490df6d759e95e1e626",
-        "size_bytes": 2234
-      },
-      "input": {
-        "identity": {
-          "kind": "generated-postgres-rows",
-          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
-        },
-        "reproduction": {
-          "generator": "src/generator.rs",
-          "rows": 200000,
-          "seed": 20260904,
-          "id_offset": 0
-        }
-      },
-      "parameters": {
-        "chunk_size": 1000,
-        "page_size": 750,
-        "import_name": "evidence_paging_run"
-      },
-      "failure_point": null
-    }
+    {"scenario":"cursor_bounded_resource_run","artifact":{"path":"validation/cursor-run.json","sha256":"66ad9b252afeb8e47e1a0bac3fa2ae07ba4f27ec5c317b219fab954c0fa971e4","size_bytes":2233},"input":{"identity":{"kind":"generated-postgres-rows","sha256":"55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"},"reproduction":{"generator":"src/generator.rs","rows":200000,"seed":20260904,"id_offset":0}},"parameters":{"chunk_size":1000,"fetch_size":500,"import_name":"evidence_cursor_run"},"failure_point":null},
+    {"scenario":"paging_bounded_resource_run","artifact":{"path":"validation/paging-run.json","sha256":"2af272f20802812c0c8a9d0bb7a4e0cdfca624175ad65a75ef0210fb630231d1","size_bytes":2232},"input":{"identity":{"kind":"generated-postgres-rows","sha256":"55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"},"reproduction":{"generator":"src/generator.rs","rows":200000,"seed":20260904,"id_offset":0}},"parameters":{"chunk_size":1000,"page_size":750,"import_name":"evidence_paging_run"},"failure_point":null}
   ],
-  "verifier": {
-    "canonical": {
-      "path": "validation/verify-retained-evidence.py",
-      "sha256": "810131c062905a20d806b3038278881d508477e0b47c1ee7d3408c1c600afcd0",
-      "result_model": "violations-v1"
-    },
-    "producer": {
-      "path": "src/verify.rs",
-      "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"
-    }
-  },
-  "environment": {
-    "observations": [
-      {
-        "name": "declared-rust-msrv",
-        "value": "1.95",
-        "trust": "recorded-metadata",
-        "source": "producer Cargo.toml in semantic closure"
-      },
-      {
-        "name": "database-server-version",
-        "value": "18.6",
-        "trust": "recorded-metadata",
-        "source": "SHOW server_version; observed against the live database used for this producer run"
-      },
-      {
-        "name": "database-image-declared",
-        "value": "postgres:18",
-        "trust": "recorded-metadata",
-        "source": "producer docker-compose.yml in semantic closure"
-      },
-      {
-        "name": "os-kernel",
-        "value": "Linux 6.8.0-117-generic x86_64",
-        "trust": "recorded-metadata",
-        "source": "uname -srm on the producer host, recorded by generate-evidence.sh's own printed output"
-      },
-      {
-        "name": "rustc-version",
-        "value": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
-        "trust": "recorded-metadata",
-        "source": "rustc --version on the producer host"
-      },
-      {
-        "name": "cargo-version",
-        "value": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
-        "trust": "recorded-metadata",
-        "source": "cargo --version on the producer host"
-      },
-      {
-        "name": "build-profile",
-        "value": "release",
-        "trust": "recorded-metadata",
-        "source": "generate-evidence.sh's own `cargo build --locked --release` invocation"
-      },
-      {
-        "name": "container-runtime",
-        "value": "Docker rust:1.98-bookworm (linux/amd64 under emulation); PostgreSQL reached directly over TCP, not via docker-compose",
-        "trust": "recorded-metadata",
-        "source": "the producer ran in a transient Linux Docker container and reached the separately provisioned PostgreSQL 18.6 server at host.docker.internal:5432 instead of starting docker-compose.yml's service"
-      }
-    ],
-    "limitations": [
-      "docker-compose.yml's service was not started for this run. The producer ran in a transient rust:1.98-bookworm Linux container (linux/amd64 under emulation) and reached a separately provisioned PostgreSQL 18.6 Homebrew server over host.docker.internal:5432; the dedicated postgres_postgres_workload database was created for this evidence run.",
-      "No CPU core-count, memory-limit, or disk-throughput observation was retained for the producer host beyond the peak RSS figures themselves; no cross-host or cross-platform comparability claim is made about those figures.",
-      "Peak RSS was measured by polling /proc/<pid>/status's VmHWM every 20ms for each process's whole lifetime (see validation/generate-evidence.sh's measure_peak_rss_kib); a peak reached and released entirely between two consecutive polls could in principle be missed. No such gap is known to have occurred for any of the four measured processes, but this is a polling measurement, not an exhaustive kernel trace.",
-      "The producer run had no durable CI workflow/run identifier or external attestation -- see producer.run.binding above (recorded-metadata, not trusted-producer-bound)."
-    ]
-  },
-  "retention": {
-    "committed_artifacts": {
-      "directory": "validation",
-      "max_count": 2,
-      "max_total_bytes": 8192,
-      "supersession": "One current cursor/paging bounded-resource-run pair; replacement requires an atomic manifest update."
-    },
-    "wall_clock_freshness_merge_gate": false
-  },
-  "external_artifacts": []
+  "verifier": {"canonical":{"path":"validation/verify-retained-evidence.py","sha256":"810131c062905a20d806b3038278881d508477e0b47c1ee7d3408c1c600afcd0","result_model":"violations-v1"},"producer":{"path":"src/verify.rs","git_blob_oid":"019bda616237a7c50c74ead47651b7fe63e24060"}},
+  "environment": {"observations":[
+    {"name":"declared-rust-msrv","value":"1.95","trust":"recorded-metadata","source":"producer Cargo.toml in semantic closure"},
+    {"name":"database-server-version","value":"18.6 (Debian 18.6-1.pgdg13+2)","trust":"recorded-metadata","source":"SHOW server_version; observed against the fresh dedicated PostgreSQL database used for this producer run"},
+    {"name":"database-image-declared","value":"postgres:18","trust":"recorded-metadata","source":"producer docker-compose.yml in semantic closure; the evidence run used the same postgres:18 image through the workload CI environment"},
+    {"name":"os-kernel","value":"Linux 6.17.0-1022-azure x86_64","trust":"recorded-metadata","source":"uname -srm on the GitHub Actions producer runner"},
+    {"name":"rustc-version","value":"rustc 1.98.1 (48a229cea 2026-09-01)","trust":"recorded-metadata","source":"rustc --version on the GitHub Actions producer runner"},
+    {"name":"cargo-version","value":"cargo 1.98.1 (797e8a9bc 2026-08-05)","trust":"recorded-metadata","source":"cargo --version on the GitHub Actions producer runner"},
+    {"name":"build-profile","value":"release","trust":"recorded-metadata","source":"generate-evidence.sh's own `cargo build --locked --release` invocation"},
+    {"name":"container-runtime","value":"GitHub Actions ubuntu-24.04 runner with workload docker-compose postgres:18 service","trust":"recorded-metadata","source":"PR #71 CI run 33916280736; the one-shot harness created a fresh dedicated database inside the workload PostgreSQL 18 service before invoking the exact producer script"}
+  ],"limitations":["One dataset size, one hosted runner, and one retained run per reader mode; no statistical distribution, repeated-trial variance, soak, or longevity claim is made.","No CPU core-count, memory-limit, or disk-throughput observation was retained beyond the peak RSS figures themselves; no cross-host or cross-platform comparability claim is made.","Peak RSS was measured by polling /proc/<pid>/status's VmHWM every 20ms for each process's whole lifetime; a peak reached and released entirely between two consecutive polls could in principle be missed.","The producer execution has a durable GitHub Actions run identifier, but evidence manifest v2 still classifies the binding as recorded-metadata rather than trusted-producer-bound because no external attestation verifier is implemented."]},
+  "retention":{"committed_artifacts":{"directory":"validation","max_count":2,"max_total_bytes":8192,"supersession":"One current cursor/paging bounded-resource-run pair; replacement requires an atomic manifest update."},"wall_clock_freshness_merge_gate":false},
+  "external_artifacts":[]
 }
