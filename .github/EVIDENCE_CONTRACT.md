@@ -3,8 +3,8 @@
 This document defines the repository-wide contract for retained workload
 evidence. The contract is intentionally narrower than a provenance
 attestation system: it makes committed evidence machine-checkable,
-recomputable where the repository has enough inputs, and explicit about where
-trust stops.
+recomputable where the repository has enough inputs, squash-merge durable,
+and explicit about where trust stops.
 
 The canonical validator is
 [`.github/scripts/validate-evidence.py`](scripts/validate-evidence.py).
@@ -29,13 +29,13 @@ structurally:
 There is no per-workload boolean that can silently disable validation for an
 existing `validation/` directory.
 
-## Manifest v1
+## Manifest v2
 
 The top-level object is strict and contains exactly:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "workload": "<workloads.json name>",
   "producer": {},
   "semantic_closure": {},
@@ -51,30 +51,40 @@ The top-level object is strict and contains exactly:
 Unknown top-level fields are rejected so a misspelling cannot silently turn a
 required control into decorative metadata.
 
-### Producer/base revision
+### Producer revision and squash durability
 
-`producer.base_revision` is a 40-hex Git commit used to recover the source
-snapshot from which the manifest's semantic closure is recomputed.
+`producer.base_revision` remains the 40-hex Git commit that identifies the
+producer checkout or legacy source snapshot from which the evidence claim was
+made. It is provenance metadata and MUST NOT be rewritten to the later squash
+commit merely to make validation pass.
 
 `producer.revision_role` is one of:
 
 - `producer-checkout`: the revision was the checked-out source revision used
   for the run;
 - `legacy-source-snapshot`: pre-contract evidence did not retain a durable
-  pre-run checkout identity. The revision is the first durable source snapshot
+  pre-run checkout identity. The revision is the historical source snapshot
   used for migration and MUST NOT be represented as a trusted run
   attestation.
 
 `producer.run` records the run kind, an identity when one exists, and a trust
-class. Manifest v1 intentionally rejects `trusted-producer-bound`: this
-repository does not yet verify an external run attestation or cryptographic
-trust anchor. A workflow URL, local note, or adjacent digest is recorded
-metadata unless a future contract adds an independently verified binding.
+class. Manifest v2 rejects `trusted-producer-bound`: this repository still
+has no independently verified external run attestation or cryptographic trust
+anchor.
 
-The manifest itself MUST NOT use the commit that contains that manifest as a
-self-authenticating identity. Existing pre-contract evidence may reference an
-older durable source snapshot as `legacy-source-snapshot`; its limitations
-remain explicit.
+A producer commit can legitimately become unreachable from authoritative
+`main` after GitHub squash merge. Full-history checkout cannot recover an
+object that is not in `main` history merely because the PR once referenced it.
+Therefore v2 does **not** use `producer.base_revision` as the sole historical
+content locator. If that commit is available, the validator cross-checks it
+against the recorded semantic closure. If it is unavailable, unavailability
+alone is not a failure; the exact closure must still satisfy the durable
+representation rule below.
+
+The manifest MUST NOT replace the original producer identity with the commit
+that first introduces the evidence. A squash commit can act only as a durable
+representation of already-recorded semantic content, never as a retroactive
+claim that the producer run executed from that squash commit.
 
 ### Semantic closure
 
@@ -89,32 +99,70 @@ inputs that define and produce the claim, such as:
 
 Generated evidence JSON and `evidence-manifest.json` itself are excluded.
 
-Manifest v1 uses `sha256-git-tree-entries-v1`. The validator:
+Manifest v2 keeps the `sha256-git-tree-entries-v1` serialization and adds the
+exact entries used to compute it. Each `entries[]` member records:
 
-1. reads the workload tree at `producer.base_revision`;
-2. expands each declared `includes` path as an exact file or directory prefix;
-3. emits each selected blob as
-   `<workload-relative-path>\0<git-mode>\0<git-blob-oid>\n`;
-4. sorts by workload-relative path; and
-5. SHA-256 hashes the resulting byte stream.
+```json
+{
+  "path": "src/example.rs",
+  "mode": "100644",
+  "git_blob_oid": "<40-hex Git blob object id>"
+}
+```
 
-The Git blob object IDs are repository content identifiers used inside the
-canonical serialization. The outer SHA-256 is a deterministic closure
-identity. This proves internal consistency with the referenced repository
-history; it does **not** prove authenticity against a coordinated edit of the
-source, manifest, and repository history.
+The canonical serialization remains:
+
+`<workload-relative-path>\0<git-mode>\0<git-blob-oid>\n`
+
+sorted by workload-relative path and SHA-256 hashed. `entries` must be sorted,
+unique, use regular-file Git modes, lie inside the declared `includes`, and
+cover every include selector. The recorded `digest_sha256` must equal a fresh
+recomputation from those exact entries.
+
+The Git blob object IDs are content identities, not producer-authored verdicts.
+The outer SHA-256 gives a deterministic closure identity. Neither identity is
+itself a run attestation.
+
+#### Durable representation rule
+
+The complete recorded path/mode/blob entry set MUST be represented exactly by
+at least one commit reachable from the checked-out `HEAD`. The validator scans
+`HEAD` ancestry and expands the same `includes` selectors at each candidate
+commit. A candidate matches only when the **entire** selected entry set is
+identical.
+
+This is the squash-stability boundary:
+
+- before merge, an available producer/PR representation can satisfy the rule;
+- after squash merge, the authoritative squash commit can satisfy it when the
+  semantic producer content was preserved byte-for-byte with the same Git
+  modes;
+- if squash/rebase/manual integration altered any semantic path, mode, added or
+  removed included file, or blob content, no exact representation exists and
+  validation fails closed;
+- hand-editing the manifest entries and digest without a corresponding exact
+  repository representation also fails closed.
+
+When `producer.base_revision` is still available, it must independently expand
+to the same exact entry set. Thus PR-time verification cannot silently record
+one closure while the named producer commit contains another.
+
+This mechanism deliberately proves repository/content consistency, not
+cryptographic authenticity against an actor able to coordinate edits to the
+source, evidence, manifest, and repository history. That stronger guarantee
+requires an external trust anchor or independently verified attestation.
 
 `excluded_generated_paths` MUST exactly equal the manifest's retained
-generated artifact paths. The validator also proves none of those paths enters
-the semantic closure.
+generated artifact paths. The validator proves none of those paths, nor the
+manifest itself, enters the semantic closure.
 
 ### Exact validation subject
 
 `validation_subject` binds evidence to the exact published first-party
-OxideBatch crates used at the producer snapshot.
+OxideBatch crates in the semantic producer snapshot.
 
-The validator recovers the producer revision's `Cargo.toml` and `Cargo.lock`
-and reuses the same #29 provenance rules:
+Manifest v2 reads the exact `Cargo.toml` and `Cargo.lock` blobs recorded in
+`semantic_closure.entries`, then reuses the same #29 provenance rules:
 
 - directly declared first-party dependencies are exact `=x.y.z`;
 - the lockfile resolves each exactly once from canonical crates.io;
@@ -125,6 +173,12 @@ The manifest records each direct first-party crate's name, version, registry
 source, and checksum plus the producer lockfile Git blob identity. Those fields
 must exactly match deterministic recomputation; they are not free-form
 producer claims.
+
+Repository/workload `.cargo` source configuration is also checked under the
+existing #29 contract. When the original producer commit is unavailable, the
+validator uses the durable closure-representation commit as the historical
+repository context; current repository-wide #29 validation remains an
+independent gate as well.
 
 ### Scenario and input identity
 
@@ -153,13 +207,14 @@ must follow the external-artifact rules below.
 
 The manifest separately identifies:
 
-- `verifier.producer`: the verifier implementation at the producer/base
-  revision, by path and Git blob identity; and
+- `verifier.producer`: the verifier implementation inside the semantic
+  producer closure, by path and Git blob identity; and
 - `verifier.canonical`: the current workload-owned retained-evidence verifier,
   by path and SHA-256.
 
-The central validator executes the current canonical verifier. Its machine
-contract is:
+The central validator requires the producer verifier path/OID to equal the
+corresponding semantic-closure entry. It then executes the current canonical
+verifier. Its machine contract is:
 
 ```json
 {
@@ -179,12 +234,9 @@ that determine the verdict from retained observations.
 ### Environment
 
 `environment.observations` records only environment facts meaningful to the
-workload. Each observation carries one of the trust classes below and names
-its source. Exact values that were not retained MUST NOT be invented;
+workload. Each observation carries one of the supported trust classes and
+names its source. Exact values that were not retained MUST NOT be invented;
 `environment.limitations` records those gaps.
-
-This allows a PostgreSQL workload to record its database image while avoiding
-irrelevant broker/object-store fields in workloads that do not use them.
 
 ### Deterministic retention
 
@@ -218,65 +270,76 @@ MUST record:
 
 A reference with no real retention guarantee is invalid metadata for this
 purpose. Do not call third-party storage "immutable" unless an enforced
-immutability mechanism actually exists. Manifest v1 schema-checks these
+immutability mechanism actually exists. Manifest v2 schema-checks these
 declarations; it does not independently audit the external storage provider.
 
 ## Trust model
 
 The contract deliberately separates integrity/consistency from authenticity.
 
-| Field/control | Trust class | What v1 proves | What v1 does not prove |
+| Field/control | Trust class | What v2 proves | What v2 does not prove |
 |---|---|---|---|
-| Producer/base revision | recorded metadata + Git existence | referenced commit exists locally | that a legacy/manual run actually executed from it |
-| Semantic closure | deterministic recomputation | selected source/config/schema/producer inputs match the recorded closure digest | authenticity against coordinated repository/history edits |
-| OxideBatch subject + lockfile | deterministic recomputation | exact first-party versions/source/checksums match producer `Cargo.toml`/`Cargo.lock` and #29 rules | crates.io/server attestation beyond committed registry checksum semantics |
+| Producer/base revision | recorded metadata + conditional Git cross-check | original producer identity is preserved; if available, its closure equals recorded entries | that an unavailable producer commit or manual run was externally attested |
+| Semantic closure entries + digest | deterministic recomputation | exact path/mode/blob set is internally consistent and digest-correct | run authenticity against coordinated repository/history edits |
+| Durable closure representation | deterministic Git-history check | some `HEAD`-reachable commit contains the complete exact closure, including after squash | that the producer run executed from that durable representation commit |
+| OxideBatch subject + lockfile | deterministic recomputation | exact first-party versions/source/checksums match closure `Cargo.toml`/`Cargo.lock` and #29 rules | crates.io/server attestation beyond committed registry checksum semantics |
 | Retained artifact digest/size | deterministic recomputation | current committed artifact bytes match the manifest | that the producer did not fabricate those bytes |
 | Input identity | schema/internal consistency; workload verifier as applicable | stable identity is present and scenario relationships can be checked | possession/retention of raw bytes unless separately declared |
-| Producer verifier | deterministic repository identity | exact verifier blob at producer snapshot | that it was actually invoked unless a trusted run binding exists |
-| Canonical verifier | deterministic current-file identity + execution | verifier bytes match manifest and its `violations` result is executed in CI | correctness of the verifier beyond review/tests |
+| Producer verifier | deterministic closure identity | exact verifier blob is part of the producer closure | that it was actually invoked unless a trusted run binding exists |
+| Canonical verifier | deterministic current-file identity + execution | verifier bytes match manifest and its `violations` result is executed in CI | correctness of verifier logic beyond review/tests |
 | Environment observations | per-entry trust class | declared source/trust semantics are explicit | exact values that were not retained |
-| Producer/run identity | recorded metadata in v1 | available identity is preserved | trusted attestation; v1 rejects that stronger claim |
+| Producer/run identity | recorded metadata in v2 | available identity is preserved | trusted attestation; v2 rejects that stronger claim |
 | External artifact metadata | schema/internal consistency | digest/reference/storage/retention fields are present | external storage availability or policy enforcement |
 
-No adjacent digest can detect a coordinated edit if the attacker/editor can
-change both the content and its recorded digest. Claiming that requires an
-external trust anchor, independent replay, or attestation mechanism that v1
-does not implement.
+No adjacent digest can detect a coordinated edit if the editor can change both
+the content and its recorded digest. Claiming that requires an external trust
+anchor, independent replay, or attestation mechanism that v2 does not
+implement.
 
-## `csv-postgres` migration
+## Existing workload migrations
+
+### `csv-postgres`
 
 The existing `clean-run.json`, `crash-run.json`, and `restart-run.json` predate
-this contract. Their v1 migration is deliberate:
+this contract. Their v2 migration retains their generated bytes unchanged and
+adds the exact historical semantic closure entries. The original
+`e0294d62747270d8b4ae959dc1b5f23e27bd9363` remains
+`legacy-source-snapshot`; no trusted pre-run attestation is invented.
 
-- their generated bytes are retained unchanged and content-addressed;
-- the first durable final source snapshot associated with that regenerated
-  evidence, `e0294d62747270d8b4ae959dc1b5f23e27bd9363`, is recorded as
-  `legacy-source-snapshot`, not as a trusted pre-run checkout attestation;
-- the semantic closure is recomputed from source/config/schema/producer inputs
-  in that snapshot and excludes all three generated JSON files;
-- the exact historical `oxide-batch` and `oxide-batch-test` 0.6.0 crates and
-  lockfile identity are re-derived under #29 provenance rules;
-- the canonical retained-evidence verifier recomputes clean/crash/restart
-  relationships rather than trusting the generated booleans/notes;
-- environment values not retained exactly are called out as limitations.
+### `postgres-postgres`
 
-This migration upgrades machine-checkable provenance without retroactively
-inventing producer/run or environment facts.
+The retained cursor/paging evidence was produced from
+`da1273e6e425aae32651ade2b966f52db3af0535`. PR #70 was later squash-merged,
+so that producer commit is not guaranteed to remain reachable from
+`main`. Manifest v2 preserves the original producer SHA while recording the
+exact producer closure entries. The PR #70 squash commit preserves those
+semantic blobs and therefore supplies the durable `main` representation
+without being relabeled as the producer run revision.
+
+No retained workload evidence JSON is regenerated merely to perform this
+schema migration.
 
 ## CI and future changes
 
-The `discover` job runs both the evidence contract tests and the canonical
-validator before workload fan-out. It fetches full Git history because a
-manifest can legitimately bind retained evidence to an older producer
-revision.
+The `discover` job runs both the evidence-contract tests and canonical
+validator before workload fan-out. It uses full Git history because v2 must
+search authoritative `HEAD` ancestry for exact semantic-closure
+representations and should still cross-check older producer commits when they
+remain available. Full history is necessary but is no longer incorrectly
+assumed to make pre-squash PR commits durable.
 
-A new workload-specific evidence shape should add only the semantic checks
-that belong to that workload verifier. Repository-wide identity, provenance,
-retention, trust, and canonical-verdict mechanics stay in the central
-contract.
+The contract test suite includes an adversarial squash simulation that:
 
-Issue #35 owns the broader mutation/negative-test campaign. Issue #34 keeps
-only the load-bearing negative controls required to establish this v1
-contract: missing provenance, semantic-closure mismatch, deterministic
-retention violation, generated-output exclusion, and proof that a
-producer-authored pass flag cannot override a canonical verifier violation.
+1. creates evidence from a producer commit;
+2. creates a squash-style main commit with the resulting content;
+3. expires refs/reflogs and prunes the producer commit object;
+4. requires validation to pass when all semantic producer entries are
+   preserved;
+5. requires validation to fail when semantic producer content is altered; and
+6. requires hand-edited entries/digests with no exact reachable representation
+   to fail.
+
+A new workload-specific evidence shape should add only semantic checks that
+belong to that workload verifier. Repository-wide identity, provenance,
+retention, squash durability, trust, and canonical-verdict mechanics stay in
+the central contract.
