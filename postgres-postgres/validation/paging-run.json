@@ -12,7 +12,7 @@
   "resource_measurement": {
     "metric": "VmHWM (kernel-reported peak resident set size across the process's whole lifetime)",
     "note": "run's own peak RSS includes this run's source_digest computation (job::run computes it before launching the reader, in the same process); verify's own peak RSS likewise includes verify's own independent source_digest recomputation. Neither figure isolates source-digest computation into a separate measured process -- see postgres-postgres/README.md's resource-observation section.",
-    "platform": "Linux 6.8.0-117-generic x86_64",
+    "platform": "Linux 6.17.0-1022-azure x86_64",
     "tool": "generate-evidence.sh's own measure_peak_rss_kib: polls /proc/<pid>/status VmHWM every 20ms until the process exits",
     "units": "KiB"
   },
@@ -21,8 +21,8 @@
     "committed_read": 200000,
     "committed_written": 200000,
     "job_execution_status": "COMPLETED",
-    "peak_rss_kib": 17528,
-    "runtime_seconds": 20.698
+    "peak_rss_kib": 10892,
+    "runtime_seconds": 2.353
   },
   "scenario": "paging_bounded_resource_run",
   "verify": {
@@ -31,10 +31,10 @@
     "digests_match": true,
     "expected_digest_sha256": "de250fdb6cf9dc2bf919d554c66a076d857a318ffa494c89c0f6c4528f641d89",
     "mismatches_truncated": false,
-    "peak_rss_kib": 11728,
+    "peak_rss_kib": 7752,
     "process_exit_code": 0,
     "row_counts_match": true,
-    "runtime_seconds": 1.051,
+    "runtime_seconds": 0.563,
     "source_rows": 200000,
     "total_mismatches": 0
   },

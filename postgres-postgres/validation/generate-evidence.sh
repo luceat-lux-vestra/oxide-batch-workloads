@@ -6,10 +6,15 @@
 # process-level peak-RSS observation for every one of those four processes.
 #
 # Requires a running PostgreSQL reachable at $DATABASE_URL (default: the
-# docker-compose service on localhost:5434) and produces a release build of
-# the postgres-postgres binary. Linux-only: peak RSS is read from
-# /proc/<pid>/status's VmHWM (see measure_peak_rss_kib below), which has no
-# portable equivalent on non-Linux hosts.
+# docker-compose service on localhost:5434) and a fresh dedicated database:
+# none of oxide_batch, app_source, or app_business may already exist. The
+# producer fails closed rather than deleting framework metadata to make a
+# rerun fit an already-used database. `migrate` is the only operation allowed
+# to create oxide_batch metadata, through the released public API.
+#
+# Produces a release build of the postgres-postgres binary. Linux-only: peak
+# RSS is read from /proc/<pid>/status's VmHWM (see measure_peak_rss_kib below),
+# which has no portable equivalent on non-Linux hosts.
 #
 # Usage: DATABASE_URL=... ./validation/generate-evidence.sh
 set -euo pipefail
@@ -34,6 +39,19 @@ PAGE_SIZE=750
 
 psql_scalar() {
   psql "$DATABASE_URL" -t -A -c "$1"
+}
+
+require_fresh_dedicated_database() {
+  local existing_schemas
+  existing_schemas=$(psql_scalar \
+    "SELECT COALESCE(string_agg(nspname, ',' ORDER BY nspname), '') \
+     FROM pg_namespace \
+     WHERE nspname IN ('oxide_batch', 'app_source', 'app_business');")
+  if [ -n "$existing_schemas" ]; then
+    echo "evidence producer requires a fresh dedicated database; found existing campaign schema(s): $existing_schemas" >&2
+    echo "create a new empty database and rerun; this producer never deletes oxide_batch metadata" >&2
+    exit 1
+  fi
 }
 
 now_seconds() {
@@ -76,13 +94,10 @@ measure_peak_rss_kib() {
   PEAK_RSS_KIB=$peak
 }
 
+require_fresh_dedicated_database
 cargo build --locked --release --quiet
 
 "$BIN" migrate
-"$BIN" reset
-psql "$DATABASE_URL" -q -c "TRUNCATE oxide_batch.ob_job_execution CASCADE;" \
-                      -c "TRUNCATE oxide_batch.ob_job_instance CASCADE;"
-
 "$BIN" seed --rows "$ROWS" --seed "$SEED" --id-offset "$ID_OFFSET"
 
 DATABASE_VERSION=$(psql_scalar "SHOW server_version;")
@@ -190,10 +205,6 @@ record = {
         "rows": int(env["REC_ROWS"]),
         "seed": int(env["REC_SEED"]),
         "id_offset": int(env["REC_ID_OFFSET"]),
-        # verify's own JSON report already recomputes and prints this
-        # (src/verify.rs's VerifyReport.source_digest), via the same
-        # streaming src/source_digest.rs::compute both `run` and `verify`
-        # use -- no separate probe pass is needed to obtain it.
         "source_digest_sha256": verify_report["source_digest"],
     },
     "chunk_size": int(env["REC_CHUNK_SIZE"]),
