@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "workload": "csv-postgres",
   "producer": {
     "base_revision": "e0294d62747270d8b4ae959dc1b5f23e27bd9363",
@@ -24,6 +24,20 @@
       "validation/clean-run.json",
       "validation/crash-run.json",
       "validation/restart-run.json"
+    ],
+    "entries": [
+      {"path": "Cargo.lock", "mode": "100644", "git_blob_oid": "1f18ba2c8f480aae063037fb5ad46f0f54ddabc3"},
+      {"path": "Cargo.toml", "mode": "100644", "git_blob_oid": "9fecdbbe4187a3b41162b2cbf7b2e7c47629a8c0"},
+      {"path": "docker-compose.yml", "mode": "100644", "git_blob_oid": "5831973e802372b4787501531bad1bae4ac63662"},
+      {"path": "migrations/001_init.sql", "mode": "100644", "git_blob_oid": "f2ecc870b0b80eb3bea1cf772cd1e7129cbf11e7"},
+      {"path": "src/failpoint.rs", "mode": "100644", "git_blob_oid": "11e97b6237a47460d0c26fef15a28254d6b4eeca"},
+      {"path": "src/generator.rs", "mode": "100644", "git_blob_oid": "24130ac499c639d7a100c0b18fd4b7fa88ab6f9d"},
+      {"path": "src/job.rs", "mode": "100644", "git_blob_oid": "5c967d96afda44b9b230763a09f7f81fb36f3e6d"},
+      {"path": "src/main.rs", "mode": "100644", "git_blob_oid": "6fb54fd880bc1fc77b220797f2f71db1b885184e"},
+      {"path": "src/processor.rs", "mode": "100644", "git_blob_oid": "f6672de524740573e417f6d995741badb0cc0970"},
+      {"path": "src/verify.rs", "mode": "100644", "git_blob_oid": "1b88914272ec43fe2dc036f6517a5ba89f2de502"},
+      {"path": "src/writer.rs", "mode": "100644", "git_blob_oid": "9f560558ec6c6384bada412da4f1daccf25b9cdf"},
+      {"path": "validation/generate-evidence.sh", "mode": "100755", "git_blob_oid": "a5bfd4fdb9a1bcba8cbcacad68be1c95f34ff85c"}
     ],
     "digest_sha256": "6b35c1f6e1bb397b777e322d883a8d003401b16cc883a43f3180fb55a4dc886e"
   },
