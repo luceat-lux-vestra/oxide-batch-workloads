@@ -18,6 +18,8 @@
 //! below. Only reader construction, stream namespace, and component
 //! revisions differ per mode -- see [`run`].
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 
 use oxide_batch::item_components::{
@@ -27,15 +29,18 @@ use oxide_batch::item_components::{
 use oxide_batch::{
     Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
     ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
-    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts, InFlightPolicy,
-    ItemReader, ItemStream, JobLauncher, JobName, JobParameter, JobParameters, NoopChunkCompletion,
+    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
+    FailureCategory, FailureId, InFlightPolicy, ItemReader, ItemStream, JobInstanceKey,
+    JobLauncher, JobName, JobParameter, JobParameters, JobRepository, NoopChunkCompletion,
     ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresJobRepository, PostgresMigrator, ReaderError, SequentialIdGenerator, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepName, StopSource, StreamStateContract, SystemClock,
-    TlsMode,
+    PostgresJobRepository, PostgresMigrator, ReaderError, RecoveryRequest, SequentialIdGenerator,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource, StreamStateContract,
+    SystemClock, TlsMode,
 };
+use sha2::{Digest, Sha256};
 
+use crate::failpoint::{FailAction, FailingTransactionManager, FailingWriter, FailureMode};
 use crate::processor::{CustomerProjector, ProjectedRow, SourceRow};
 
 const CURSOR_READER_NAMESPACE: &str = "oxide-batch-workload.postgres-postgres.cursor-reader";
@@ -314,6 +319,9 @@ async fn launch_and_finish<R>(
     processor: CustomerProjector,
     writer: oxide_batch::item_components::PostgresBatchWriter<ProjectedRow>,
     parameters: JobParameters,
+    fail_at_chunk: u32,
+    failure_mode: FailureMode,
+    pause_for_kill: Option<PathBuf>,
 ) -> anyhow::Result<()>
 where
     R: ItemReader<SourceRow> + Send + 'static,
@@ -321,13 +329,46 @@ where
     let raw_transactions =
         PostgresChunkTransactionManager::new(repository.clone(), state_provider());
 
+    // Both decorators share one chunk ordinal (advanced exactly once per
+    // chunk transaction attempt, by the transaction manager's `begin_for`,
+    // which the real production launch path always calls before that same
+    // chunk's `write` -- see `crate::failpoint`'s module documentation) and
+    // one `fired` flag, purely for end-of-run diagnostics. With
+    // `fail_at_chunk == 0` (the default, no `--fail-at-chunk` given)
+    // neither decorator ever targets a chunk, so a clean run's behavior is
+    // unchanged from an unwrapped writer/transaction manager.
+    let action = match pause_for_kill {
+        Some(marker_path) => FailAction::PauseForKill(marker_path),
+        None => FailAction::TypedError,
+    };
+    let chunk_ordinal = Arc::new(AtomicU32::new(0));
+    let fired = Arc::new(AtomicBool::new(false));
+
+    let writer = FailingWriter::new(
+        writer,
+        Arc::clone(&chunk_ordinal),
+        fail_at_chunk,
+        failure_mode,
+        action.clone(),
+        Arc::clone(&fired),
+    );
+    let fire_after_commit = fail_at_chunk != 0 && failure_mode == FailureMode::AfterBusinessCommit;
+    let transactions = FailingTransactionManager::new(
+        raw_transactions,
+        Arc::clone(&chunk_ordinal),
+        fail_at_chunk,
+        fire_after_commit,
+        action,
+        Arc::clone(&fired),
+    );
+
     let step = ChunkStep::new(
         StepName::new("transform_customers")?,
         ChunkSize::new(chunk_size)?,
         reader,
         processor,
         writer,
-        Arc::new(raw_transactions),
+        Arc::new(transactions),
         Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(namespace, stream, contract);
@@ -358,6 +399,7 @@ where
     tracing::info!(
         job_execution_id = %execution.id(),
         status = %execution.metadata().status(),
+        fault_injected = fired.load(std::sync::atomic::Ordering::SeqCst),
         "run finished"
     );
     if let Some(chunk_report) = report.chunk() {
@@ -407,6 +449,7 @@ where
 /// reader modes (see `src/source_digest.rs`'s module documentation, and
 /// `tests/source_stability.rs` for tests that actually attack this window
 /// rather than assuming it is closed).
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     database_url: &str,
     import_name: &str,
@@ -414,6 +457,9 @@ pub async fn run(
     reader_mode: ReaderMode,
     fetch_size: Option<usize>,
     page_size: Option<usize>,
+    fail_at_chunk: u32,
+    failure_mode: FailureMode,
+    pause_for_kill: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     match reader_mode {
         ReaderMode::Cursor if page_size.is_some() => {
@@ -489,6 +535,9 @@ pub async fn run(
                 processor,
                 writer,
                 job_parameters,
+                fail_at_chunk,
+                failure_mode,
+                pause_for_kill,
             )
             .await
         }
@@ -521,8 +570,118 @@ pub async fn run(
                 processor,
                 writer,
                 job_parameters,
+                fail_at_chunk,
+                failure_mode,
+                pause_for_kill,
             )
             .await
         }
     }
+}
+
+fn sha256_hex_bytes(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().into()
+}
+
+/// Marks a `Starting/Started/Stopping/Unknown` execution left behind by a
+/// hard crash as recoverable, so a subsequent `run` can resume it. Mirrors
+/// `oxide-batch`'s own `postgres_local_partition.rs` example, and
+/// `csv-postgres/src/job.rs::recover`'s established shape in this same
+/// repository (an independent, workload-local copy -- see the crate
+/// README's scope notes).
+///
+/// The identifying key this looks up is exactly [`parameters`]'s
+/// `(import_name, source_digest, reader_mode)`, with `source_digest`
+/// recomputed live from `app_source.source_customer`'s *current* content
+/// under the same `lock_source_for_stable_read` guard [`run`] and `verify`
+/// use -- never accepted as a caller-supplied value, and never read back
+/// from the crashed instance's own stored parameters. This is deliberate:
+/// it is what makes recovery source-mutation-safe rather than merely
+/// source-mutation-blind. If the source has been mutated since the crash,
+/// the live digest differs from the one the crashed instance was keyed
+/// under, `find_job_instance` finds nothing, and this fails closed with an
+/// explicit error -- it can never silently resume a stale checkpoint
+/// against different content (see `tests/source_mutation_recovery.rs`).
+/// `--reader` is required for the same reason `run` requires it: reader
+/// mode is its own identifying parameter (see [`parameters`]'s doc
+/// comment), so an unspecified or wrong mode must not silently resolve to
+/// some other instance.
+///
+/// # Errors
+///
+/// Returns an error (nonzero process exit) if no job instance matches the
+/// current `(import_name, source_digest, reader_mode)` identity, if that
+/// instance has no executions, or if its latest execution's status does not
+/// require recovery (already `Completed`/`Failed`/... -- recovery is never
+/// applied speculatively).
+pub async fn recover(
+    database_url: &str,
+    import_name: &str,
+    reader_mode: ReaderMode,
+) -> anyhow::Result<()> {
+    let clock = Arc::new(SystemClock);
+    let repository = PostgresJobRepository::connect(pg_config(database_url)?, clock).await?;
+
+    let guard_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(database_url)
+        .await?;
+    let mut source_guard = crate::source_digest::lock_source_for_stable_read(&guard_pool).await?;
+    let source_digest = crate::source_digest::compute(&mut *source_guard).await?;
+    source_guard.commit().await?;
+    guard_pool.close().await;
+
+    let job_parameters = parameters(import_name, &source_digest, reader_mode)?;
+    let key = JobInstanceKey::new(JobName::new(import_name)?, &job_parameters);
+
+    let mut unit = repository.begin().await?;
+    let instance = unit.find_job_instance(&key).await?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no job instance found for import_name={import_name:?}, reader_mode={reader_mode}, \
+             current source_digest={source_digest} -- either nothing was ever launched under this \
+             exact identity, or the source content has changed since the execution being recovered"
+        )
+    })?;
+    let execution = unit
+        .job_executions(instance.id())
+        .await?
+        .into_iter()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("job instance has no executions"))?;
+    unit.rollback().await?;
+
+    use oxide_batch::BatchStatus;
+    if !matches!(
+        execution.metadata().status(),
+        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown
+    ) {
+        anyhow::bail!(
+            "latest execution status is {}, which does not require recovery",
+            execution.metadata().status()
+        );
+    }
+
+    let evidence_digest = sha256_hex_bytes(
+        format!("postgres-postgres-operator-recovery:{import_name}:{reader_mode}").as_bytes(),
+    );
+    let request = RecoveryRequest::mark_failed(
+        execution.version(),
+        "POSTGRES_POSTGRES_WORKLOAD_HARD_CRASH_RECOVERY",
+        "postgres-postgres-cli",
+        evidence_digest,
+        FailureCategory::PermanentInfrastructure,
+        FailureId::new(1)?,
+    )?;
+    let mut unit = repository.begin().await?;
+    let recovered = unit.recover_job_execution(execution.id(), &request).await?;
+    unit.commit().await?;
+    tracing::info!(
+        job_execution_id = %execution.id(),
+        resulting_status = %recovered.decision().resulting_status(),
+        "marked crashed execution recoverable"
+    );
+    repository.close().await?;
+    Ok(())
 }

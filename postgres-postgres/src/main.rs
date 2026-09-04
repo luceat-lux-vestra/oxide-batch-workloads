@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
+use postgres_postgres::failpoint::FailureMode;
 use postgres_postgres::job::ReaderMode;
 use postgres_postgres::{generator, job, verify};
 
@@ -68,6 +71,41 @@ enum Command {
         /// Rejected under `--reader cursor`.
         #[arg(long)]
         page_size: Option<usize>,
+        /// Deterministic fault injection (campaign #63 PR 3): 1-based
+        /// ordinal of the chunk transaction attempt to target. Omitted (or
+        /// `0`) means no fault is ever injected -- a clean run, unchanged
+        /// from PR 1/PR 2 behavior.
+        #[arg(long, default_value_t = 0)]
+        fail_at_chunk: u32,
+        /// Which point in the targeted chunk's lifecycle to fire at. Only
+        /// meaningful when `--fail-at-chunk` is nonzero.
+        #[arg(long, default_value = "during-write")]
+        failure_mode: FailureMode,
+        /// Instead of returning a typed graceful error at the failpoint,
+        /// write this process's PID to the given marker file and then
+        /// block forever, so a test harness can observe the marker and
+        /// deliver a real SIGKILL at the exact semantic boundary under
+        /// test. Only meaningful together with `--fail-at-chunk`.
+        #[arg(long)]
+        pause_for_kill: Option<PathBuf>,
+    },
+    /// Marks a `Starting`/`Started`/`Stopping`/`Unknown` execution left
+    /// behind by a hard crash as recoverable, through the public
+    /// OxideBatch operator/recovery API only (never by mutating
+    /// `oxide_batch` metadata directly), so a subsequent `run` can resume
+    /// it. Which execution is recovered is fully deterministic: the exact
+    /// same `(import_name, source_digest, reader_mode)` identity `run`
+    /// itself would resolve right now, with `source_digest` recomputed live
+    /// from the current source content -- never a caller-supplied digest,
+    /// never an ambiguous "most recent" execution across identities. See
+    /// `job::recover`'s doc comment.
+    Recover {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        import_name: String,
+        #[arg(long)]
+        reader: ReaderMode,
     },
     /// Independently verify `app_business.customer_projection` against
     /// `app_source.source_customer` for one import name's current source
@@ -126,6 +164,9 @@ async fn main() -> anyhow::Result<()> {
             reader,
             fetch_size,
             page_size,
+            fail_at_chunk,
+            failure_mode,
+            pause_for_kill,
         } => {
             job::run(
                 &database_url,
@@ -134,9 +175,17 @@ async fn main() -> anyhow::Result<()> {
                 reader,
                 fetch_size,
                 page_size,
+                fail_at_chunk,
+                failure_mode,
+                pause_for_kill,
             )
             .await
         }
+        Command::Recover {
+            database_url,
+            import_name,
+            reader,
+        } => job::recover(&database_url, &import_name, reader).await,
         Command::Verify {
             database_url,
             import_name,
