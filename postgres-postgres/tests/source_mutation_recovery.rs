@@ -137,13 +137,11 @@ async fn source_mutation_case(reader_mode: &str, size_flag: (&str, usize), seed:
         String::from_utf8_lossy(&recover_output.stderr),
     );
 
-    // A plain restart is likewise refused: the mutated content resolves to
-    // a *different* JobInstanceKey than the crashed (still in-progress)
-    // instance, so the framework's own duplicate-in-progress-execution
-    // guard for THAT key does not apply -- but the crashed instance A is
-    // still unresolved, so the run below launches as instance B rather than
-    // resuming A. Confirmed below via job_instance_count and via A's own
-    // destination scope being left completely untouched.
+    // The old checkpoint is not resumed: the mutated content resolves to a
+    // *different* JobInstanceKey than the crashed (still in-progress)
+    // instance, so the duplicate-in-progress guard for A does not apply to B.
+    // The run below must therefore launch a distinct instance B rather than
+    // reinterpret or resume A's stale checkpoint.
     let fresh_run = match reader_mode {
         "cursor" => support::run_cursor_with_fetch_size(&import_name, CHUNK_SIZE, size_flag.1),
         "paging" => support::run_paging_with_page_size(&import_name, CHUNK_SIZE, size_flag.1),
