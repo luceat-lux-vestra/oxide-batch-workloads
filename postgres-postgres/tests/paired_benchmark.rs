@@ -55,12 +55,37 @@ fn paired_benchmark_harness_contract_and_database_smoke_pass() {
     let report: serde_json::Value =
         serde_json::from_str(&report_text).expect("paired smoke report must be valid JSON");
 
-    assert!(status.success(), "paired database smoke failed: {report_text}");
+    assert!(
+        status.success(),
+        "paired database smoke failed: {report_text}"
+    );
     assert_eq!(report["status"], "passed");
-    assert_eq!(report["clean"]["cursor"]["measured_pairs"].as_array().map(Vec::len), Some(1));
-    assert_eq!(report["clean"]["paging"]["measured_pairs"].as_array().map(Vec::len), Some(1));
-    assert_eq!(report["recovery"]["cursor"]["candidates"]["oxide"]["verification"]["total_mismatches"], 0);
-    assert_eq!(report["recovery"]["cursor"]["candidates"]["raw"]["verification"]["total_mismatches"], 0);
-    assert_eq!(report["recovery"]["paging"]["candidates"]["oxide"]["verification"]["total_mismatches"], 0);
-    assert_eq!(report["recovery"]["paging"]["candidates"]["raw"]["verification"]["total_mismatches"], 0);
+    assert_eq!(
+        report["clean"]["cursor"]["measured_pairs"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        report["clean"]["paging"]["measured_pairs"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        report["recovery"]["cursor"]["candidates"]["oxide"]["verification"]["total_mismatches"],
+        0
+    );
+    assert_eq!(
+        report["recovery"]["cursor"]["candidates"]["raw"]["verification"]["total_mismatches"],
+        0
+    );
+    assert_eq!(
+        report["recovery"]["paging"]["candidates"]["oxide"]["verification"]["total_mismatches"],
+        0
+    );
+    assert_eq!(
+        report["recovery"]["paging"]["candidates"]["raw"]["verification"]["total_mismatches"],
+        0
+    );
 }
