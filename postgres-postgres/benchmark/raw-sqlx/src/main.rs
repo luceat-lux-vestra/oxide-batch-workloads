@@ -161,7 +161,6 @@ async fn run(
 ) -> Result<()> {
     validate_run_args(import_name, chunk_size, page_size)?;
 
-    migrate(pool).await?;
     let mut source_guard = lock_source(pool).await?;
     let digest = source_digest(&mut *source_guard).await?;
     let (mut durable_position, mut committed_chunks, mut committed_rows) =
