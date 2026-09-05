@@ -61,17 +61,17 @@ run_raw_sqlx_static_guards() {
     exit 1
   fi
 
-  echo "raw-sqlx guard: production path never mutates framework-owned oxide_batch metadata"
-  if grep -nEi '(INSERT[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM|TRUNCATE)[[:space:]]+oxide_batch\.' "$raw_source"; then
-    echo "::error::raw-sqlx must never mutate framework-owned oxide_batch.* metadata" >&2
+  echo "raw-sqlx guard: production path never accesses framework-owned oxide_batch metadata"
+  if grep -nE 'oxide_batch\.' "$raw_source"; then
+    echo "::error::raw-sqlx must never read or mutate framework-owned oxide_batch.* metadata" >&2
     exit 1
   fi
 }
 
 run_raw_sqlx_database_checks() {
-  echo "raw-sqlx smoke: clean paging execution -> independent verifier"
+  echo "raw-sqlx smoke: cross-page buffering + partial final chunk -> independent verifier"
   cargo run --locked -q -p postgres-postgres -- reset
-  cargo run --locked -q -p postgres-postgres -- seed --rows 2000 --seed 42
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2051 --seed 42
   cargo run --locked -q -p raw-sqlx -- --database-url "$DATABASE_URL" migrate
   cargo run --locked -q -p raw-sqlx -- \
     --database-url "$DATABASE_URL" run \
@@ -81,29 +81,46 @@ run_raw_sqlx_database_checks() {
   cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_clean
   assert_scalar \
     "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_clean'" \
-    "2000"
+    "2051"
   assert_scalar \
     "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_clean'" \
-    "2000"
+    "2051"
 
-  echo "raw-sqlx rollback: post-write/pre-commit failure leaves business/checkpoint state absent"
+  echo "raw-sqlx rollback: second chunk failure preserves only the first committed prefix"
   cargo run --locked -q -p postgres-postgres -- reset
-  cargo run --locked -q -p postgres-postgres -- seed --rows 2000 --seed 42
+  cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
   if cargo run --locked -q -p raw-sqlx -- \
     --database-url "$DATABASE_URL" run \
     --import-name raw_ci_rollback \
     --chunk-size 200 \
     --page-size 128 \
-    --fail-after-chunk 1; then
+    --fail-after-chunk 2; then
     echo "::error::raw-sqlx injected rollback run unexpectedly succeeded" >&2
     exit 1
   fi
   assert_scalar \
     "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_rollback'" \
-    "0"
+    "200"
   assert_scalar \
-    "SELECT count(*) FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
-    "0"
+    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "200"
+  assert_scalar \
+    "SELECT committed_chunks FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "1"
+
+  echo "raw-sqlx typed-failure continuation: resume from durable prefix and verify partial tail"
+  cargo run --locked -q -p raw-sqlx -- \
+    --database-url "$DATABASE_URL" run \
+    --import-name raw_ci_rollback \
+    --chunk-size 200 \
+    --page-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_rollback
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_rollback'" \
+    "451"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "451"
 }
 
 run_ci_stage() {
