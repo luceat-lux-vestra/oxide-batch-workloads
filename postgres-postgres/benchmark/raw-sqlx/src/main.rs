@@ -10,6 +10,8 @@ const COLUMNS_PER_ROW: usize = 7;
 const MAX_PARAMETERS_PER_STATEMENT: usize = 2_000;
 const ROWS_PER_STATEMENT: usize = MAX_PARAMETERS_PER_STATEMENT / COLUMNS_PER_ROW;
 const MAX_BOUND_PARAMETERS: usize = ROWS_PER_STATEMENT * COLUMNS_PER_ROW;
+const MAX_CHUNK_SIZE: usize = 1_000_000;
+const MAX_PAGE_SIZE: i64 = 1_000_000;
 const FINGERPRINT_LEN: usize = 16;
 const PREMIUM_THRESHOLD_CENTS: i64 = 50_000;
 
@@ -130,6 +132,19 @@ where
     Ok(hex(&hasher.finalize()))
 }
 
+fn validate_run_args(import_name: &str, chunk_size: usize, page_size: i64) -> Result<()> {
+    if import_name.is_empty() {
+        bail!("import_name must not be empty");
+    }
+    if !(1..=MAX_CHUNK_SIZE).contains(&chunk_size) {
+        bail!("chunk_size must be between 1 and {MAX_CHUNK_SIZE}");
+    }
+    if !(1..=MAX_PAGE_SIZE).contains(&page_size) {
+        bail!("page_size must be between 1 and {MAX_PAGE_SIZE}");
+    }
+    Ok(())
+}
+
 async fn run(
     pool: &PgPool,
     import_name: &str,
@@ -137,15 +152,7 @@ async fn run(
     page_size: i64,
     fail_after_chunk: Option<u64>,
 ) -> Result<()> {
-    if import_name.is_empty() {
-        bail!("import_name must not be empty");
-    }
-    if chunk_size == 0 {
-        bail!("chunk_size must be > 0");
-    }
-    if page_size <= 0 {
-        bail!("page_size must be > 0");
-    }
+    validate_run_args(import_name, chunk_size, page_size)?;
 
     migrate(pool).await?;
     let mut source_guard = lock_source(pool).await?;
@@ -160,7 +167,7 @@ async fn run(
         if page.is_empty() {
             break;
         }
-        read_position = page.last().context("non-empty page")?.customer_id;
+        read_position = Some(page.last().context("non-empty page")?.customer_id);
         for row in page {
             chunk.push(project(import_name, &digest, row)?);
             if chunk.len() == chunk_size {
@@ -178,7 +185,7 @@ async fn run(
                 .await?;
                 committed_chunks += 1;
                 committed_rows += chunk.len() as u64;
-                durable_position = chunk_last;
+                durable_position = Some(chunk_last);
                 chunk.clear();
             }
         }
@@ -199,17 +206,24 @@ async fn run(
         .await?;
         committed_chunks += 1;
         committed_rows += chunk.len() as u64;
-        durable_position = chunk_last;
+        durable_position = Some(chunk_last);
     }
 
+    let last_customer_id = durable_position
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_owned());
     println!(
-        "source_digest={digest} reader_mode={READER_MODE} last_customer_id={durable_position} committed_chunks={committed_chunks} committed_rows={committed_rows}"
+        "source_digest={digest} reader_mode={READER_MODE} last_customer_id={last_customer_id} committed_chunks={committed_chunks} committed_rows={committed_rows}"
     );
     source_guard.rollback().await?;
     Ok(())
 }
 
-async fn load_checkpoint(pool: &PgPool, import_name: &str, digest: &str) -> Result<(i64, u64, u64)> {
+async fn load_checkpoint(
+    pool: &PgPool,
+    import_name: &str,
+    digest: &str,
+) -> Result<(Option<i64>, u64, u64)> {
     let row = sqlx::query(
         "SELECT last_customer_id, committed_chunks, committed_rows \
          FROM benchmark_raw.paging_checkpoint \
@@ -224,23 +238,35 @@ async fn load_checkpoint(pool: &PgPool, import_name: &str, digest: &str) -> Resu
 
     match row {
         Some(row) => Ok((
-            row.try_get::<i64, _>("last_customer_id")?,
+            Some(row.try_get::<i64, _>("last_customer_id")?),
             u64::try_from(row.try_get::<i64, _>("committed_chunks")?)?,
             u64::try_from(row.try_get::<i64, _>("committed_rows")?)?,
         )),
-        None => Ok((i64::MIN, 0, 0)),
+        None => Ok((None, 0, 0)),
     }
 }
 
-async fn fetch_page(pool: &PgPool, last_customer_id: i64, page_size: i64) -> Result<Vec<SourceRow>> {
-    let mut rows = sqlx::query(
-        "SELECT customer_id, full_name, is_active, balance_cents \
-         FROM app_source.source_customer \
-         WHERE customer_id > $1 ORDER BY customer_id LIMIT $2",
-    )
-    .bind(last_customer_id)
-    .bind(page_size)
-    .fetch(pool);
+async fn fetch_page(
+    pool: &PgPool,
+    after_customer_id: Option<i64>,
+    page_size: i64,
+) -> Result<Vec<SourceRow>> {
+    let mut rows = match after_customer_id {
+        Some(customer_id) => sqlx::query(
+            "SELECT customer_id, full_name, is_active, balance_cents \
+             FROM app_source.source_customer \
+             WHERE customer_id > $1 ORDER BY customer_id LIMIT $2",
+        )
+        .bind(customer_id)
+        .bind(page_size)
+        .fetch(pool),
+        None => sqlx::query(
+            "SELECT customer_id, full_name, is_active, balance_cents \
+             FROM app_source.source_customer ORDER BY customer_id LIMIT $1",
+        )
+        .bind(page_size)
+        .fetch(pool),
+    };
 
     let mut page = Vec::with_capacity(usize::try_from(page_size)?);
     while let Some(row) = rows.try_next().await? {
@@ -322,8 +348,14 @@ async fn commit_chunk(
 }
 
 async fn insert_batch(tx: &mut Transaction<'_, Postgres>, batch: &[ProjectedRow]) -> Result<()> {
-    if batch.len() > ROWS_PER_STATEMENT {
-        bail!("writer batch exceeds parity bound of {ROWS_PER_STATEMENT} rows");
+    let bound_parameters = batch
+        .len()
+        .checked_mul(COLUMNS_PER_ROW)
+        .context("writer bind count overflow")?;
+    if batch.len() > ROWS_PER_STATEMENT || bound_parameters > MAX_BOUND_PARAMETERS {
+        bail!(
+            "writer batch exceeds parity bound of {ROWS_PER_STATEMENT} rows / {MAX_BOUND_PARAMETERS} parameters"
+        );
     }
     let mut builder = QueryBuilder::<Postgres>::new(
         "INSERT INTO app_business.customer_projection \
@@ -386,6 +418,17 @@ mod tests {
         assert_eq!(ROWS_PER_STATEMENT, 285);
         assert_eq!(MAX_BOUND_PARAMETERS, 1_995);
         assert_eq!(1_000_usize.div_ceil(ROWS_PER_STATEMENT), 4);
+    }
+
+    #[test]
+    fn run_arguments_are_bounded() {
+        assert!(validate_run_args("import", 1, 1).is_ok());
+        assert!(validate_run_args("import", MAX_CHUNK_SIZE, MAX_PAGE_SIZE).is_ok());
+        assert!(validate_run_args("", 1, 1).is_err());
+        assert!(validate_run_args("import", 0, 1).is_err());
+        assert!(validate_run_args("import", MAX_CHUNK_SIZE + 1, 1).is_err());
+        assert!(validate_run_args("import", 1, 0).is_err());
+        assert!(validate_run_args("import", 1, MAX_PAGE_SIZE + 1).is_err());
     }
 
     #[test]
