@@ -30,6 +30,7 @@ jobs:
           from pathlib import Path
           p = Path('postgres-postgres/benchmark/raw-sqlx/src/main.rs')
           s = p.read_text()
+
           marker = '''struct ProjectedRow {
               import_name: String,
               source_digest: String,
@@ -51,21 +52,38 @@ jobs:
           if marker not in s:
               raise SystemExit('ProjectedRow marker not found')
           s = s.replace(marker, replacement, 1)
-          old_call = '''                    chunk_last,
+
+          call_inner = '''                    chunk_last,
                               committed_chunks + 1,
                               committed_rows + chunk.len() as u64,
                               fail_after_chunk,
           '''
-          new_call = '''                    CheckpointUpdate {
+          call_outer = '''            chunk_last,
+                      committed_chunks + 1,
+                      committed_rows + chunk.len() as u64,
+                      fail_after_chunk,
+          '''
+          replacement_inner = '''                    CheckpointUpdate {
                                   last_customer_id: chunk_last,
                                   committed_chunks: committed_chunks + 1,
                                   committed_rows: committed_rows + chunk.len() as u64,
                               },
                               fail_after_chunk,
           '''
-          if s.count(old_call) != 2:
-              raise SystemExit(f'expected 2 commit call fragments, found {s.count(old_call)}')
-          s = s.replace(old_call, new_call)
+          replacement_outer = '''            CheckpointUpdate {
+                          last_customer_id: chunk_last,
+                          committed_chunks: committed_chunks + 1,
+                          committed_rows: committed_rows + chunk.len() as u64,
+                      },
+                      fail_after_chunk,
+          '''
+          if s.count(call_inner) != 1 or s.count(call_outer) != 1:
+              raise SystemExit(
+                  f'expected one inner/outer call; got {s.count(call_inner)}/{s.count(call_outer)}'
+              )
+          s = s.replace(call_inner, replacement_inner, 1)
+          s = s.replace(call_outer, replacement_outer, 1)
+
           old_sig = '''    chunk: &[ProjectedRow],
               last_customer_id: i64,
               committed_chunks: u64,
@@ -79,9 +97,34 @@ jobs:
           if old_sig not in s:
               raise SystemExit('commit_chunk signature fragment not found')
           s = s.replace(old_sig, new_sig, 1)
-          s = s.replace('if fail_after_chunk == Some(committed_chunks) {', 'if fail_after_chunk == Some(checkpoint.committed_chunks) {', 1)
-          s = s.replace('at chunk {committed_chunks}', 'at chunk {}", checkpoint.committed_chunks', 1)
-          s = s.replace('.bind(last_customer_id)\n    .bind(i64::try_from(committed_chunks)?)\n    .bind(i64::try_from(committed_rows)?)', '.bind(checkpoint.last_customer_id)\n    .bind(i64::try_from(checkpoint.committed_chunks)?)\n    .bind(i64::try_from(checkpoint.committed_rows)?)', 1)
+
+          old_failure = '''    if fail_after_chunk == Some(committed_chunks) {
+              bail!("injected failure after business writes before checkpoint/commit at chunk {committed_chunks}");
+          }
+          '''
+          new_failure = '''    if fail_after_chunk == Some(checkpoint.committed_chunks) {
+              bail!(
+                  "injected failure after business writes before checkpoint/commit at chunk {}",
+                  checkpoint.committed_chunks
+              );
+          }
+          '''
+          if old_failure not in s:
+              raise SystemExit('failure fragment not found')
+          s = s.replace(old_failure, new_failure, 1)
+
+          old_binds = '''    .bind(last_customer_id)
+              .bind(i64::try_from(committed_chunks)?)
+              .bind(i64::try_from(committed_rows)?)
+          '''
+          new_binds = '''    .bind(checkpoint.last_customer_id)
+              .bind(i64::try_from(checkpoint.committed_chunks)?)
+              .bind(i64::try_from(checkpoint.committed_rows)?)
+          '''
+          if old_binds not in s:
+              raise SystemExit('checkpoint bind fragment not found')
+          s = s.replace(old_binds, new_binds, 1)
+
           p.write_text(s)
           PY
           cd postgres-postgres
