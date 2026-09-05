@@ -64,12 +64,14 @@ Protected workload CI additionally proves that:
 
 - `raw-sqlx` has no direct or transitive `oxide-batch*` dependency;
 - its production source contains no `.fetch_all(` whole-dataset call;
-- it does not mutate framework-owned `oxide_batch.*` metadata;
+- it does not access framework-owned `oxide_batch.*` metadata;
 - workspace format/clippy/build/test and the declared Rust 1.95 MSRV build
   include the raw member;
 - clean paging output passes the independent verifier;
-- an injected failure after business writes but before checkpoint/commit leaves
-  neither business rows nor checkpoint state durable.
+- an injected failure in a later chunk preserves the previously committed
+  prefix while making neither that failing chunk's business writes nor its
+  checkpoint advancement durable; a subsequent run resumes from the durable
+  prefix and reaches independently verified final state.
 
 GitHub Actions remains the authoritative verification source. Local builds are
 only optional fast feedback.
