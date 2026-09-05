@@ -150,15 +150,17 @@ async fn run(
     migrate(pool).await?;
     let mut source_guard = lock_source(pool).await?;
     let digest = source_digest(&mut *source_guard).await?;
-    let (mut last_customer_id, mut committed_chunks, mut committed_rows) =
+    let (mut durable_position, mut committed_chunks, mut committed_rows) =
         load_checkpoint(pool, import_name, &digest).await?;
+    let mut read_position = durable_position;
 
     let mut chunk = Vec::with_capacity(chunk_size);
     loop {
-        let page = fetch_page(pool, last_customer_id, page_size).await?;
+        let page = fetch_page(pool, read_position, page_size).await?;
         if page.is_empty() {
             break;
         }
+        read_position = page.last().context("non-empty page")?.customer_id;
         for row in page {
             chunk.push(project(import_name, &digest, row)?);
             if chunk.len() == chunk_size {
@@ -176,7 +178,7 @@ async fn run(
                 .await?;
                 committed_chunks += 1;
                 committed_rows += chunk.len() as u64;
-                last_customer_id = chunk_last;
+                durable_position = chunk_last;
                 chunk.clear();
             }
         }
@@ -197,11 +199,11 @@ async fn run(
         .await?;
         committed_chunks += 1;
         committed_rows += chunk.len() as u64;
-        last_customer_id = chunk_last;
+        durable_position = chunk_last;
     }
 
     println!(
-        "source_digest={digest} reader_mode={READER_MODE} last_customer_id={last_customer_id} committed_chunks={committed_chunks} committed_rows={committed_rows}"
+        "source_digest={digest} reader_mode={READER_MODE} last_customer_id={durable_position} committed_chunks={committed_chunks} committed_rows={committed_rows}"
     );
     source_guard.rollback().await?;
     Ok(())
@@ -342,7 +344,7 @@ async fn insert_batch(tx: &mut Transaction<'_, Postgres>, batch: &[ProjectedRow]
 }
 
 async fn inspect(pool: &PgPool, import_name: &str) -> Result<()> {
-    let rows = sqlx::query(
+    let mut rows = sqlx::query(
         "SELECT source_digest, last_customer_id, committed_chunks, committed_rows \
          FROM benchmark_raw.paging_checkpoint \
          WHERE import_name = $1 AND reader_mode = $2 AND definition_revision = $3 \
@@ -351,10 +353,9 @@ async fn inspect(pool: &PgPool, import_name: &str) -> Result<()> {
     .bind(import_name)
     .bind(READER_MODE)
     .bind(DEFINITION_REVISION)
-    .fetch_all(pool)
-    .await?;
+    .fetch(pool);
 
-    for row in rows {
+    while let Some(row) = rows.try_next().await? {
         println!(
             "source_digest={} last_customer_id={} committed_chunks={} committed_rows={}",
             row.try_get::<String, _>("source_digest")?,
@@ -389,7 +390,7 @@ mod tests {
 
     #[test]
     fn projection_matches_documented_transform() {
-        let projected = project(
+        let result = project(
             "import",
             "digest",
             SourceRow {
@@ -398,8 +399,10 @@ mod tests {
                 is_active: true,
                 balance_cents: 50_099,
             },
-        )
-        .expect("valid projection");
+        );
+        let Ok(projected) = result else {
+            panic!("valid source row must project successfully");
+        };
         assert_eq!(projected.display_name, "ALICE SMITH");
         assert_eq!(projected.loyalty_score, 500);
         assert!(projected.is_premium);
