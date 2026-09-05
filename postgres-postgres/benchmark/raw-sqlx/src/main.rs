@@ -62,6 +62,13 @@ struct ProjectedRow {
     row_fingerprint: [u8; FINGERPRINT_LEN],
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CheckpointUpdate {
+    last_customer_id: i64,
+    committed_chunks: u64,
+    committed_rows: u64,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -177,9 +184,11 @@ async fn run(
                     import_name,
                     &digest,
                     &chunk,
-                    chunk_last,
-                    committed_chunks + 1,
-                    committed_rows + chunk.len() as u64,
+                    CheckpointUpdate {
+                        last_customer_id: chunk_last,
+                        committed_chunks: committed_chunks + 1,
+                        committed_rows: committed_rows + chunk.len() as u64,
+                    },
                     fail_after_chunk,
                 )
                 .await?;
@@ -198,9 +207,11 @@ async fn run(
             import_name,
             &digest,
             &chunk,
-            chunk_last,
-            committed_chunks + 1,
-            committed_rows + chunk.len() as u64,
+            CheckpointUpdate {
+                last_customer_id: chunk_last,
+                committed_chunks: committed_chunks + 1,
+                committed_rows: committed_rows + chunk.len() as u64,
+            },
             fail_after_chunk,
         )
         .await?;
@@ -314,9 +325,7 @@ async fn commit_chunk(
     import_name: &str,
     digest: &str,
     chunk: &[ProjectedRow],
-    last_customer_id: i64,
-    committed_chunks: u64,
-    committed_rows: u64,
+    checkpoint: CheckpointUpdate,
     fail_after_chunk: Option<u64>,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -324,8 +333,11 @@ async fn commit_chunk(
         insert_batch(&mut tx, batch).await?;
     }
 
-    if fail_after_chunk == Some(committed_chunks) {
-        bail!("injected failure after business writes before checkpoint/commit at chunk {committed_chunks}");
+    if fail_after_chunk == Some(checkpoint.committed_chunks) {
+        bail!(
+            "injected failure after business writes before checkpoint/commit at chunk {}",
+            checkpoint.committed_chunks
+        );
     }
 
     sqlx::query(
@@ -341,9 +353,9 @@ async fn commit_chunk(
     .bind(digest)
     .bind(READER_MODE)
     .bind(DEFINITION_REVISION)
-    .bind(last_customer_id)
-    .bind(i64::try_from(committed_chunks)?)
-    .bind(i64::try_from(committed_rows)?)
+    .bind(checkpoint.last_customer_id)
+    .bind(i64::try_from(checkpoint.committed_chunks)?)
+    .bind(i64::try_from(checkpoint.committed_rows)?)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
