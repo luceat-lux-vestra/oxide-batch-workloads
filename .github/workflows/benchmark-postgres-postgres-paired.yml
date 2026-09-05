@@ -1,0 +1,142 @@
+name: Benchmark PostgreSQL paired raw vs OxideBatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Deterministic source row count
+        required: true
+        default: "1000000"
+      seed:
+        description: Deterministic source seed
+        required: true
+        default: "20260904"
+      chunk_size:
+        description: Shared chunk size
+        required: true
+        default: "1000"
+      cursor_fetch_size:
+        description: Shared cursor fetch size
+        required: true
+        default: "500"
+      paging_page_size:
+        description: Shared paging page size
+        required: true
+        default: "750"
+      warmups:
+        description: Warmup pairs per reader mode
+        required: true
+        default: "2"
+      measured_runs:
+        description: Measured pairs per reader mode
+        required: true
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-postgres-postgres-paired-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  paired:
+    name: postgres-postgres-paired
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      BENCH_ROWS: ${{ inputs.rows }}
+      BENCH_SEED: ${{ inputs.seed }}
+      BENCH_CHUNK_SIZE: ${{ inputs.chunk_size }}
+      BENCH_CURSOR_FETCH_SIZE: ${{ inputs.cursor_fetch_size }}
+      BENCH_PAGING_PAGE_SIZE: ${{ inputs.paging_page_size }}
+      BENCH_WARMUPS: ${{ inputs.warmups }}
+      BENCH_MEASURED_RUNS: ${{ inputs.measured_runs }}
+    defaults:
+      run:
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate paired harness logic
+        run: python3 benchmark/test_paired.py
+
+      - name: Validate bounded numeric inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in \
+            "$BENCH_ROWS" \
+            "$BENCH_SEED" \
+            "$BENCH_CHUNK_SIZE" \
+            "$BENCH_CURSOR_FETCH_SIZE" \
+            "$BENCH_PAGING_PAGE_SIZE" \
+            "$BENCH_WARMUPS" \
+            "$BENCH_MEASURED_RUNS"; do
+            [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::benchmark inputs must be non-negative integers"; exit 1; }
+          done
+          (( BENCH_ROWS >= 1 && BENCH_ROWS <= 10000000 )) || { echo "::error::rows out of range"; exit 1; }
+          (( BENCH_CHUNK_SIZE >= 1 && BENCH_CHUNK_SIZE <= 1000000 )) || { echo "::error::chunk_size out of range"; exit 1; }
+          (( BENCH_CURSOR_FETCH_SIZE >= 1 && BENCH_CURSOR_FETCH_SIZE <= 1000000 )) || { echo "::error::cursor_fetch_size out of range"; exit 1; }
+          (( BENCH_PAGING_PAGE_SIZE >= 1 && BENCH_PAGING_PAGE_SIZE <= 1000000 )) || { echo "::error::paging_page_size out of range"; exit 1; }
+          (( BENCH_WARMUPS <= 10 )) || { echo "::error::warmups out of range"; exit 1; }
+          (( BENCH_MEASURED_RUNS >= 1 && BENCH_MEASURED_RUNS <= 20 )) || { echo "::error::measured_runs out of range"; exit 1; }
+          total_chunks=$(( (BENCH_ROWS + BENCH_CHUNK_SIZE - 1) / BENCH_CHUNK_SIZE ))
+          (( total_chunks >= 4 )) || { echo "::error::configuration must yield at least four chunks for recovery measurement"; exit 1; }
+
+      - name: Build both candidates once in release mode
+        run: cargo build --locked --release --workspace
+
+      - name: Start PostgreSQL 18
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run paired campaign
+        id: campaign
+        continue-on-error: true
+        run: |
+          python3 benchmark/paired.py \
+            --oxide-binary "$(pwd)/target/release/postgres-postgres" \
+            --raw-binary "$(pwd)/target/release/raw-sqlx" \
+            --base-database-url "$DATABASE_URL" \
+            --rows "$BENCH_ROWS" \
+            --seed "$BENCH_SEED" \
+            --chunk-size "$BENCH_CHUNK_SIZE" \
+            --fetch-size "$BENCH_CURSOR_FETCH_SIZE" \
+            --page-size "$BENCH_PAGING_PAGE_SIZE" \
+            --warmups "$BENCH_WARMUPS" \
+            --measured-runs "$BENCH_MEASURED_RUNS" \
+            --output "$RUNNER_TEMP/postgres-postgres-paired.json"
+
+      - name: Upload paired evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: postgres-postgres-paired-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/postgres-postgres-paired.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if campaign failed
+        if: steps.campaign.outcome != 'success'
+        run: |
+          echo "::error::paired benchmark campaign failed; inspect retained artifact"
+          exit 1

@@ -3,9 +3,10 @@
 Campaign: #73
 Primary Track: #13
 
-This directory contains comparison implementations for the correctness-complete
-`postgres-postgres` OxideBatch workload. It is not a third validation workload
-and is not registered independently in `workloads.json`.
+This directory contains comparison implementations and measurement tooling for
+the correctness-complete `postgres-postgres` OxideBatch workload. It is not a
+third validation workload and is not registered independently in
+`workloads.json`.
 
 ## Comparison class
 
@@ -78,7 +79,7 @@ implementation:
   cannot be reinterpreted as the other's;
 - a hard-death failpoint writes a marker containing the real child PID and then
   only pauses. The CI parent waits for that exact marker and sends `SIGKILL`;
-  the program never self-aborts or self-signals;
+  the raw program never self-aborts or self-signals;
 - the before-commit crash point occurs after both business INSERTs and the raw
   checkpoint UPSERT have executed inside the still-open transaction. A kill
   there must roll back both;
@@ -92,7 +93,147 @@ implementation:
   permits continuation from the original durable prefix.
 
 The crash controls are correctness-test instrumentation only. They are never
-part of a retained performance sample.
+part of a retained performance sample except where PR 3 deliberately arms the
+pre-commit hard-death point for the recovery measurement described below.
+
+## PR 3: same-host paired measurement/report harness
+
+`benchmark/paired.py` is the campaign measurement harness. It measures raw sqlx
+and OxideBatch in the **same process-hosting GitHub Actions job/runner**, against
+one PostgreSQL 18 service and one committed benchmark implementation/config.
+The workflow is manual-only:
+
+`.github/workflows/benchmark-postgres-postgres-paired.yml`
+
+The canonical retained configuration is:
+
+- rows: `1,000,000`;
+- seed: `20260904`;
+- chunk size: `1000`;
+- cursor fetch size: `500`;
+- paging page size: `750`;
+- warmup pairs: `2` per reader mode;
+- measured pairs: `7` per reader mode;
+- recovery: `1` deterministic pre-commit hard-death pair per reader mode.
+
+Workflow inputs may use bounded overrides for diagnostic runs, but every
+effective value is retained in the JSON report. A non-canonical diagnostic run
+is not campaign acceptance evidence.
+
+### Fresh database isolation
+
+The harness does not repeatedly reset one long-lived execution repository and
+pretend later samples are fresh. Before timing, it creates one deterministic
+**template database** from `template0`, applies both the normal OxideBatch
+workload migration and the benchmark-owned raw migration, and seeds the source
+exactly once.
+
+Each warmup, measured candidate, and recovery candidate then receives a fresh
+PostgreSQL database cloned from that template. Database creation/cloning,
+migration, deterministic seed generation, teardown, and independent final
+verification all remain outside timed intervals.
+
+This gives raw and OxideBatch samples the same initial source/schema state while
+preventing a previous sample's framework metadata, raw checkpoint, destination
+rows, or completion state from leaking into the next one.
+
+### Paired order and clean timing
+
+Within each pair, candidate order alternates deterministically:
+
+1. OxideBatch -> raw sqlx;
+2. raw sqlx -> OxideBatch;
+3. repeat.
+
+Warmups use the same pairing/order policy but are excluded from measured
+summaries.
+
+A clean candidate's timed interval is only its normal `run` command. Source
+digest calculation remains inside that interval because both candidates perform
+it as part of normal execution. Compilation, PostgreSQL startup, database clone,
+migration, seed, and verification are not timed.
+
+Every candidate sample must pass the existing independent
+`postgres-postgres verify` implementation. Paired candidates must also report
+the same source digest. An incorrect run is a failed campaign sample, regardless
+of speed.
+
+### Recovery timing
+
+For each reader mode the harness also measures one deterministic restart pair.
+The target chunk is chosen so the last durable prefix before the killed chunk is
+near 50% of the source rows. The same semantic boundary is used for both
+candidates: real business writes have happened inside the target chunk's still-
+open transaction, but the chunk has not committed.
+
+- OxideBatch uses its public workload failpoint with `during-write` plus
+  `--pause-for-kill`;
+- raw sqlx uses `before-commit` plus `--pause-marker`;
+- the child writes its real PID to a marker;
+- the harness sends `SIGKILL` to that exact PID rather than using a timing
+  guess;
+- the killed PID must no longer exist before recovery starts;
+- the durable business prefix is checked outside either implementation's
+  private metadata;
+- OxideBatch's public `recover` command is included as a separately timed
+  operator phase because it is required by the released framework contract;
+- raw sqlx needs no operator-recovery command;
+- continuation runs in a new command/process and must pass the independent
+  verifier.
+
+The report retains first-phase time, optional operator-recovery time,
+continuation time, combined active processing time, durable position after the
+kill, reprocessed rows, and zero duplicate/skipped/lost counts after successful
+verification.
+
+The expected reprocessed rows are the uncommitted target chunk. This is not a
+claim that the two implementations have equal metadata/lifecycle work; it is a
+correctness/accounting measure for the deliberately equivalent pre-commit crash
+boundary.
+
+### Report and metrics
+
+The JSON artifact is observational evidence and has no numeric pass/fail
+throughput or RSS threshold. It records, where reliable:
+
+- wall-clock elapsed time;
+- rows/second;
+- GNU `time` user/system CPU and peak RSS;
+- committed rows/chunks;
+- derived writer statement/sub-batch counts and effective bind counts under the
+  pinned 7-column / 2,000-parameter writer contract;
+- independent source/destination digests and correctness verdict;
+- candidate exit status;
+- candidate binary SHA-256;
+- exact GitHub commit/run/attempt/runner identity;
+- rustc/cargo versions;
+- raw sqlx 0.9.0 Cargo.lock source/checksum;
+- exact OxideBatch 0.6.0 Cargo.lock source/checksum;
+- OS/kernel/CPU/memory;
+- PostgreSQL configured image, server version, and image id.
+
+Clean summaries contain min/median/max/p95 distributions for elapsed,
+throughput, CPU, and peak RSS plus paired raw/Oxide ratios.
+
+Transaction/commit/rollback counts are represented explicitly as
+`not-reliably-observed`/`null` rather than invented. The campaign did not find a
+symmetric, non-perturbing observation path that would make those counts honest
+for both candidates.
+
+Recovery timing includes the small external harness reaction interval between
+observing the marker and sending `SIGKILL`; the same mechanism is used for both
+candidates and the limitation is retained in the report.
+
+### Retention and failure behavior
+
+The manual workflow uploads the JSON artifact even if the campaign fails, so a
+partial report and failure reason survive diagnosis. The artifact retention
+period is 30 days. GitHub-hosted-runner numbers are observational distributions,
+not a merge-blocking performance threshold.
+
+Only a **fresh run from authoritative `main` after PR 3 merges** can become the
+canonical #73 performance evidence. PR CI's small database smoke and any branch
+workflow run are semantic harness validation only.
 
 ## Dependency and CI boundary
 
@@ -117,13 +258,28 @@ Protected workload CI proves that:
 - real SIGKILL after commit preserves business rows and checkpoint together;
 - both cursor and paging recover in new OS processes to independently verified
   final state;
-- stale checkpoint reuse after source mutation fails closed.
+- stale checkpoint reuse after source mutation fails closed;
+- the paired Python harness's report/order/input/security logic passes unit
+  tests;
+- while PostgreSQL is live in protected CI, a bounded 401-row debug-binary
+  semantic smoke executes the entire paired harness for cursor+paging,
+  raw+Oxide clean runs, and both recovery paths. These debug measurements are
+  discarded as performance evidence; only their semantic success matters.
 
 GitHub Actions remains the authoritative verification source. Local builds are
 only optional fast feedback.
 
 ## Remaining campaign work
 
-No number produced by PR 1 or PR 2 is a performance claim. The next #73 slice
-builds the same-host paired measurement/report harness and only then produces
-fresh authoritative-main raw-vs-OxideBatch comparison evidence.
+PR 1 and PR 2 establish correctness/durability parity; PR 3 establishes the
+measurement mechanism. None of their protected-CI smoke timings is a campaign
+performance claim.
+
+After PR 3 merges and authoritative-main aggregate CI is green:
+
+1. dispatch the paired benchmark workflow from fresh authoritative `main` with
+   the canonical configuration above;
+2. review the retained JSON artifact under the same proof-obligation gate;
+3. record run id, commit SHA, artifact identity/hash, environment/config,
+   correctness verdicts, distributions, paired ratios, and limitations in #73;
+4. close #73 only if every acceptance criterion is supported by that evidence.
