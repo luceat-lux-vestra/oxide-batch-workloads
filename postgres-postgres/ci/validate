@@ -34,6 +34,14 @@ psql_scalar() {
     -Atqc "$1"
 }
 
+psql_exec() {
+  compose exec -T postgres psql \
+    -U oxide_batch_workload \
+    -d postgres_postgres_workload \
+    -v ON_ERROR_STOP=1 \
+    -qc "$1"
+}
+
 assert_scalar() {
   local sql="$1"
   local expected="$2"
@@ -66,32 +74,224 @@ run_raw_sqlx_static_guards() {
     echo "::error::raw-sqlx must never read or mutate framework-owned oxide_batch.* metadata" >&2
     exit 1
   fi
+
+  echo "raw-sqlx guard: cursor mode is an explicit server-side DECLARE/FETCH path"
+  grep -qF 'NO SCROLL CURSOR' "$raw_source"
+  grep -qF 'FETCH FORWARD' "$raw_source"
+
+  echo "raw-sqlx guard: hard-death failpoint only pauses for an external parent SIGKILL"
+  if grep -nE 'process::(abort|exit)|libc::kill' "$raw_source"; then
+    echo "::error::raw-sqlx hard-death proof must not self-abort, self-exit, or self-signal" >&2
+    exit 1
+  fi
+}
+
+wait_for_raw_marker() {
+  local marker="$1"
+  local expected_pid="$2"
+  local marker_pid=""
+  local attempt
+
+  for attempt in $(seq 1 300); do
+    if [[ -s "$marker" ]]; then
+      marker_pid="$(sed -n 's/^pid=\([0-9][0-9]*\) .*/\1/p' "$marker")"
+      if [[ "$marker_pid" != "$expected_pid" ]]; then
+        echo "::error::raw-sqlx marker PID '$marker_pid' did not match spawned PID '$expected_pid'" >&2
+        cat "$marker" >&2 || true
+        exit 1
+      fi
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  echo "::error::timed out waiting for raw-sqlx external-kill marker $marker" >&2
+  return 1
+}
+
+CRASHED_PID=""
+crash_raw_at_marker() {
+  local marker="$1"
+  local log="$2"
+  shift 2
+
+  rm -f "$marker"
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run "$@" --pause-marker "$marker" >"$log" 2>&1 &
+  local pid=$!
+  wait_for_raw_marker "$marker" "$pid"
+
+  kill -KILL "$pid"
+  local status=0
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 137 ]]; then
+    echo "::error::raw-sqlx hard-death process exited with status $status, expected SIGKILL status 137" >&2
+    cat "$log" >&2 || true
+    exit 1
+  fi
+  CRASHED_PID="$pid"
+}
+
+run_raw_recovery_process() {
+  local log="$1"
+  shift
+
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run "$@" >"$log" 2>&1 &
+  local recovery_pid=$!
+  if [[ "$recovery_pid" == "$CRASHED_PID" ]]; then
+    echo "::error::recovery must run in a genuinely new OS process" >&2
+    exit 1
+  fi
+  if ! wait "$recovery_pid"; then
+    echo "::error::raw-sqlx recovery process failed" >&2
+    cat "$log" >&2 || true
+    exit 1
+  fi
+}
+
+hard_crash_recovery_case() {
+  local reader="$1"
+  local reader_size="$2"
+  local phase="$3"
+  local expected_rows_after_kill="$4"
+  local expected_chunks_after_kill="$5"
+  local import_name="$6"
+  local mutation_check="${7:-false}"
+  local size_flag
+
+  case "$reader" in
+    cursor) size_flag="--fetch-size" ;;
+    paging) size_flag="--page-size" ;;
+    *)
+      echo "::error::unknown raw reader mode '$reader'" >&2
+      exit 1
+      ;;
+  esac
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 550 --seed 42
+
+  local marker
+  local crash_log
+  local recovery_log
+  marker="$(mktemp)"
+  crash_log="$(mktemp)"
+  recovery_log="$(mktemp)"
+
+  crash_raw_at_marker \
+    "$marker" \
+    "$crash_log" \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size" \
+    --pause-at-chunk 3 \
+    --pause-phase "$phase"
+
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "$expected_rows_after_kill"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "$expected_rows_after_kill"
+  assert_scalar \
+    "SELECT committed_chunks FROM benchmark_raw.checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "$expected_chunks_after_kill"
+
+  if [[ "$mutation_check" == "true" ]]; then
+    echo "raw-sqlx source mutation: stale crashed checkpoint must fail closed"
+    psql_exec \
+      "UPDATE app_source.source_customer SET balance_cents = balance_cents + 1 \
+       WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+    if "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run \
+      --import-name "$import_name" \
+      --reader "$reader" \
+      --chunk-size 100 \
+      "$size_flag" "$reader_size"; then
+      echo "::error::raw-sqlx unexpectedly accepted a changed source against stale checkpoint state" >&2
+      exit 1
+    fi
+    assert_scalar \
+      "SELECT count(*) FROM benchmark_raw.checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+      "1"
+    assert_scalar \
+      "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+      "$expected_rows_after_kill"
+    psql_exec \
+      "UPDATE app_source.source_customer SET balance_cents = balance_cents - 1 \
+       WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+  fi
+
+  run_raw_recovery_process \
+    "$recovery_log" \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+
+  cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "550"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "550"
+  assert_scalar \
+    "SELECT committed_chunks FROM benchmark_raw.checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "6"
+
+  rm -f "$marker" "$crash_log" "$recovery_log"
 }
 
 run_raw_sqlx_database_checks() {
-  echo "raw-sqlx smoke: cross-page buffering + partial final chunk -> independent verifier"
+  RAW_SQLX_BIN="./target/debug/raw-sqlx"
+  if [[ ! -x "$RAW_SQLX_BIN" ]]; then
+    echo "::error::expected built raw-sqlx binary at $RAW_SQLX_BIN" >&2
+    exit 1
+  fi
+
+  echo "raw-sqlx smoke: explicit migration remains outside run timing/execution"
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" migrate
+
+  echo "raw-sqlx paging smoke: cross-page buffering + partial final chunk -> independent verifier"
   cargo run --locked -q -p postgres-postgres -- reset
   cargo run --locked -q -p postgres-postgres -- seed --rows 2051 --seed 42
-  cargo run --locked -q -p raw-sqlx -- --database-url "$DATABASE_URL" migrate
-  cargo run --locked -q -p raw-sqlx -- \
-    --database-url "$DATABASE_URL" run \
-    --import-name raw_ci_clean \
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run \
+    --import-name raw_ci_paging_clean \
+    --reader paging \
     --chunk-size 200 \
     --page-size 128
-  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_clean
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_paging_clean
   assert_scalar \
-    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_clean'" \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_paging_clean'" \
     "2051"
   assert_scalar \
-    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_clean'" \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = 'raw_ci_paging_clean' AND reader_mode = 'paging'" \
     "2051"
 
-  echo "raw-sqlx rollback: second chunk failure preserves only the first committed prefix"
+  echo "raw-sqlx cursor smoke: bounded server-side FETCH batches cross chunk boundaries"
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run \
+    --import-name raw_ci_cursor_clean \
+    --reader cursor \
+    --chunk-size 200 \
+    --fetch-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_cursor_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_cursor_clean'" \
+    "2051"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = 'raw_ci_cursor_clean' AND reader_mode = 'cursor'" \
+    "2051"
+
+  echo "raw-sqlx typed rollback: second paging chunk failure preserves only the first committed prefix"
   cargo run --locked -q -p postgres-postgres -- reset
   cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
-  if cargo run --locked -q -p raw-sqlx -- \
-    --database-url "$DATABASE_URL" run \
+  if "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run \
     --import-name raw_ci_rollback \
+    --reader paging \
     --chunk-size 200 \
     --page-size 128 \
     --fail-after-chunk 2; then
@@ -102,16 +302,16 @@ run_raw_sqlx_database_checks() {
     "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_rollback'" \
     "200"
   assert_scalar \
-    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = 'raw_ci_rollback' AND reader_mode = 'paging'" \
     "200"
   assert_scalar \
-    "SELECT committed_chunks FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "SELECT committed_chunks FROM benchmark_raw.checkpoint WHERE import_name = 'raw_ci_rollback' AND reader_mode = 'paging'" \
     "1"
 
   echo "raw-sqlx typed-failure continuation: resume from durable prefix and verify partial tail"
-  cargo run --locked -q -p raw-sqlx -- \
-    --database-url "$DATABASE_URL" run \
+  "$RAW_SQLX_BIN" --database-url "$DATABASE_URL" run \
     --import-name raw_ci_rollback \
+    --reader paging \
     --chunk-size 200 \
     --page-size 128
   cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_rollback
@@ -119,8 +319,20 @@ run_raw_sqlx_database_checks() {
     "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_rollback'" \
     "451"
   assert_scalar \
-    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "SELECT committed_rows FROM benchmark_raw.checkpoint WHERE import_name = 'raw_ci_rollback' AND reader_mode = 'paging'" \
     "451"
+
+  echo "raw-sqlx hard death: cursor before commit rolls back both business rows and checkpoint"
+  hard_crash_recovery_case cursor 50 before-commit 200 2 raw_ci_cursor_before true
+
+  echo "raw-sqlx hard death: cursor after commit preserves both business rows and checkpoint"
+  hard_crash_recovery_case cursor 50 after-commit 300 3 raw_ci_cursor_after
+
+  echo "raw-sqlx hard death: paging before commit rolls back both business rows and checkpoint"
+  hard_crash_recovery_case paging 60 before-commit 200 2 raw_ci_paging_before
+
+  echo "raw-sqlx hard death: paging after commit preserves both business rows and checkpoint"
+  hard_crash_recovery_case paging 60 after-commit 300 3 raw_ci_paging_after
 }
 
 run_ci_stage() {
