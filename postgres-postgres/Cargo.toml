@@ -1,3 +1,7 @@
+[workspace]
+members = ["benchmark/raw-sqlx"]
+resolver = "2"
+
 [package]
 name = "postgres-postgres"
 version = "0.1.0"
