@@ -18,7 +18,7 @@ const PREMIUM_THRESHOLD_CENTS: i64 = 50_000;
 #[derive(Parser)]
 #[command(name = "raw-sqlx")]
 struct Cli {
-    #[arg(long, env = "DATABASE_URL", global = true)]
+    #[arg(long, env = "DATABASE_URL")]
     database_url: String,
     #[command(subcommand)]
     command: Command,
@@ -427,6 +427,17 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_accepts_required_database_url_before_subcommand() {
+        let parsed = Cli::try_parse_from([
+            "raw-sqlx",
+            "--database-url",
+            "postgres://postgres:postgres@localhost:5432/postgres",
+            "migrate",
+        ]);
+        assert!(parsed.is_ok());
+    }
 
     #[test]
     fn writer_bound_matches_oxide_batch_060_contract() {
