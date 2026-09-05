@@ -27,10 +27,89 @@ stop_postgres() {
   compose down --volumes
 }
 
+psql_scalar() {
+  compose exec -T postgres psql \
+    -U oxide_batch_workload \
+    -d postgres_postgres_workload \
+    -Atqc "$1"
+}
+
+assert_scalar() {
+  local sql="$1"
+  local expected="$2"
+  local actual
+  actual="$(psql_scalar "$sql")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "::error::SQL assertion failed: expected '$expected', got '$actual' for: $sql" >&2
+    exit 1
+  fi
+}
+
+run_raw_sqlx_static_guards() {
+  local raw_manifest="benchmark/raw-sqlx/Cargo.toml"
+  local raw_source="benchmark/raw-sqlx/src/main.rs"
+
+  echo "raw-sqlx guard: dependency graph contains no oxide-batch packages"
+  if cargo tree --locked --manifest-path "$raw_manifest" | grep -E '(^| )oxide-batch([ -]|$)'; then
+    echo "::error::raw-sqlx dependency graph must not contain oxide-batch*" >&2
+    exit 1
+  fi
+
+  echo "raw-sqlx guard: production path has no whole-dataset fetch_all"
+  if grep -nF '.fetch_all(' "$raw_source"; then
+    echo "::error::raw-sqlx production source must not call .fetch_all(" >&2
+    exit 1
+  fi
+
+  echo "raw-sqlx guard: production path never mutates framework-owned oxide_batch metadata"
+  if grep -nEi '(INSERT[[:space:]]+INTO|UPDATE|DELETE[[:space:]]+FROM|TRUNCATE)[[:space:]]+oxide_batch\.' "$raw_source"; then
+    echo "::error::raw-sqlx must never mutate framework-owned oxide_batch.* metadata" >&2
+    exit 1
+  fi
+}
+
+run_raw_sqlx_database_checks() {
+  echo "raw-sqlx smoke: clean paging execution -> independent verifier"
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2000 --seed 42
+  cargo run --locked -q -p raw-sqlx -- --database-url "$DATABASE_URL" migrate
+  cargo run --locked -q -p raw-sqlx -- \
+    --database-url "$DATABASE_URL" run \
+    --import-name raw_ci_clean \
+    --chunk-size 200 \
+    --page-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_ci_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_clean'" \
+    "2000"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_clean'" \
+    "2000"
+
+  echo "raw-sqlx rollback: post-write/pre-commit failure leaves business/checkpoint state absent"
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2000 --seed 42
+  if cargo run --locked -q -p raw-sqlx -- \
+    --database-url "$DATABASE_URL" run \
+    --import-name raw_ci_rollback \
+    --chunk-size 200 \
+    --page-size 128 \
+    --fail-after-chunk 1; then
+    echo "::error::raw-sqlx injected rollback run unexpectedly succeeded" >&2
+    exit 1
+  fi
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_ci_rollback'" \
+    "0"
+  assert_scalar \
+    "SELECT count(*) FROM benchmark_raw.paging_checkpoint WHERE import_name = 'raw_ci_rollback'" \
+    "0"
+}
+
 run_ci_stage() {
-  cargo fmt --check
-  cargo clippy --locked --all-targets -- -D warnings
-  cargo build --locked --all-targets
+  cargo fmt --check --all
+  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo build --locked --workspace --all-targets
 
   echo "guard: no unguarded unwrap/expect on the production path"
   if grep -rnE '\.(unwrap|expect)\(' src/; then
@@ -38,30 +117,35 @@ run_ci_stage() {
     exit 1
   fi
 
+  run_raw_sqlx_static_guards
+
   echo "retained-evidence verifier adversarial tests"
   python3 validation/test_verify_retained_evidence.py
 
   trap stop_postgres EXIT
   start_postgres
 
-  cargo run --locked -q -- migrate
-  cargo test --locked -- --test-threads=1
+  cargo run --locked -q -p postgres-postgres -- migrate
+  cargo test --locked --workspace -- --test-threads=1
 
   echo "golden-path smoke: reset -> seed -> run (cursor) -> verify"
-  cargo run --locked -q -- reset
-  cargo run --locked -q -- seed --rows 2000 --seed 42
-  cargo run --locked -q -- run --import-name ci_smoke_cursor --chunk-size 200 --reader cursor --fetch-size 128
-  cargo run --locked -q -- verify --import-name ci_smoke_cursor
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2000 --seed 42
+  cargo run --locked -q -p postgres-postgres -- run --import-name ci_smoke_cursor --chunk-size 200 --reader cursor --fetch-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name ci_smoke_cursor
 
   echo "golden-path smoke: run (paging) -> verify"
-  cargo run --locked -q -- run --import-name ci_smoke_paging --chunk-size 200 --reader paging --page-size 128
-  cargo run --locked -q -- verify --import-name ci_smoke_paging
+  cargo run --locked -q -p postgres-postgres -- run --import-name ci_smoke_paging --chunk-size 200 --reader paging --page-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name ci_smoke_paging
+
+  run_raw_sqlx_database_checks
 }
 
 run_msrv_stage() {
-  # Matches csv-postgres's dedicated msrv stage: a locked build of all
-  # targets at the declared toolchain, no database required.
-  cargo build --locked --all-targets
+  # Both workspace members declare the same MSRV. The locked workspace build
+  # proves the raw comparison crate cannot silently escape the workload's
+  # published toolchain contract.
+  cargo build --locked --workspace --all-targets
 }
 
 case "$stage" in
