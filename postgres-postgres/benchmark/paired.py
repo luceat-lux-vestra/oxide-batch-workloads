@@ -421,7 +421,7 @@ def timed_crash_process(command: list[str], *, env: dict[str, str], marker: Path
     with tempfile.NamedTemporaryFile(prefix="pgpg-time-crash-", delete=False) as handle:
         time_path = Path(handle.name)
     marker.unlink(missing_ok=True)
-    full = ["/usr/bin/time", "-f", TIME_FORMAT, "-o", str(time_path), *command]
+    full = ["/usr/bin/time", "-q", "-f", TIME_FORMAT, "-o", str(time_path), *command]
     started_at = time.time()
     started_perf = time.perf_counter()
     wrapper = subprocess.Popen(full, text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
