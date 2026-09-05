@@ -282,7 +282,10 @@ async fn fetch_page(
 
 fn project(import_name: &str, digest: &str, source: SourceRow) -> Result<ProjectedRow> {
     if source.full_name.trim().is_empty() {
-        bail!("source full_name must not be empty for customer {}", source.customer_id);
+        bail!(
+            "source full_name must not be empty for customer {}",
+            source.customer_id
+        );
     }
     let mut hasher = Sha256::new();
     hasher.update(source.customer_id.to_le_bytes());
