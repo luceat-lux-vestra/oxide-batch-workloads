@@ -1,0 +1,55 @@
+name: Temporary PR73 minimal lockfile refresh
+
+on:
+  push:
+    branches:
+      - feat/73-raw-sqlx-paging
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Restore base lock and resolve only the new workspace member
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout 893740529d8477859b0f0b9870fe30e351f267c0 -- postgres-postgres/Cargo.lock
+          cd postgres-postgres
+          cargo metadata --format-version 1 >/dev/null
+
+      - name: Reject unrelated registry package drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff -- postgres-postgres/Cargo.lock > "$RUNNER_TEMP/lock.diff"
+          cat "$RUNNER_TEMP/lock.diff"
+          if grep -E '^[+-](version|source|checksum) = ' "$RUNNER_TEMP/lock.diff"; then
+            echo "::error::minimal workspace lock refresh changed an existing registry package" >&2
+            exit 1
+          fi
+
+      - name: Commit minimal lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add postgres-postgres/Cargo.lock
+          git commit -m "build(postgres-postgres): minimally lock raw sqlx member"
+          git push
