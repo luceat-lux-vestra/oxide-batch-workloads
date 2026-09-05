@@ -1,0 +1,98 @@
+name: Temporary PR76 checkpoint refactor
+
+on:
+  push:
+    branches:
+      - feat/73-raw-sqlx-paging
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Refactor commit state
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('postgres-postgres/benchmark/raw-sqlx/src/main.rs')
+          s = p.read_text()
+          marker = '''struct ProjectedRow {
+              import_name: String,
+              source_digest: String,
+              customer_id: i64,
+              display_name: String,
+              loyalty_score: i64,
+              is_premium: bool,
+              row_fingerprint: [u8; FINGERPRINT_LEN],
+          }
+          '''
+          replacement = marker + '''
+          #[derive(Debug, Clone, Copy)]
+          struct CheckpointUpdate {
+              last_customer_id: i64,
+              committed_chunks: u64,
+              committed_rows: u64,
+          }
+          '''
+          if marker not in s:
+              raise SystemExit('ProjectedRow marker not found')
+          s = s.replace(marker, replacement, 1)
+          old_call = '''                    chunk_last,
+                              committed_chunks + 1,
+                              committed_rows + chunk.len() as u64,
+                              fail_after_chunk,
+          '''
+          new_call = '''                    CheckpointUpdate {
+                                  last_customer_id: chunk_last,
+                                  committed_chunks: committed_chunks + 1,
+                                  committed_rows: committed_rows + chunk.len() as u64,
+                              },
+                              fail_after_chunk,
+          '''
+          if s.count(old_call) != 2:
+              raise SystemExit(f'expected 2 commit call fragments, found {s.count(old_call)}')
+          s = s.replace(old_call, new_call)
+          old_sig = '''    chunk: &[ProjectedRow],
+              last_customer_id: i64,
+              committed_chunks: u64,
+              committed_rows: u64,
+              fail_after_chunk: Option<u64>,
+          '''
+          new_sig = '''    chunk: &[ProjectedRow],
+              checkpoint: CheckpointUpdate,
+              fail_after_chunk: Option<u64>,
+          '''
+          if old_sig not in s:
+              raise SystemExit('commit_chunk signature fragment not found')
+          s = s.replace(old_sig, new_sig, 1)
+          s = s.replace('if fail_after_chunk == Some(committed_chunks) {', 'if fail_after_chunk == Some(checkpoint.committed_chunks) {', 1)
+          s = s.replace('at chunk {committed_chunks}', 'at chunk {}", checkpoint.committed_chunks', 1)
+          s = s.replace('.bind(last_customer_id)\n    .bind(i64::try_from(committed_chunks)?)\n    .bind(i64::try_from(committed_rows)?)', '.bind(checkpoint.last_customer_id)\n    .bind(i64::try_from(checkpoint.committed_chunks)?)\n    .bind(i64::try_from(checkpoint.committed_rows)?)', 1)
+          p.write_text(s)
+          PY
+          cd postgres-postgres
+          cargo fmt --all
+      - name: Commit refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git diff --check
+          git add postgres-postgres
+          git commit -m "refactor(raw-sqlx): group checkpoint commit state"
+          git push
