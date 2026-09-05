@@ -98,20 +98,16 @@ jobs:
               raise SystemExit('commit_chunk signature fragment not found')
           s = s.replace(old_sig, new_sig, 1)
 
-          old_failure = '''    if fail_after_chunk == Some(committed_chunks) {
-              bail!("injected failure after business writes before checkpoint/commit at chunk {committed_chunks}");
-          }
-          '''
-          new_failure = '''    if fail_after_chunk == Some(checkpoint.committed_chunks) {
-              bail!(
-                  "injected failure after business writes before checkpoint/commit at chunk {}",
-                  checkpoint.committed_chunks
-              );
-          }
-          '''
-          if old_failure not in s:
-              raise SystemExit('failure fragment not found')
-          s = s.replace(old_failure, new_failure, 1)
+          old_condition = 'if fail_after_chunk == Some(committed_chunks) {'
+          new_condition = 'if fail_after_chunk == Some(checkpoint.committed_chunks) {'
+          old_bail = 'bail!("injected failure after business writes before checkpoint/commit at chunk {committed_chunks}");'
+          new_bail = 'bail!("injected failure after business writes before checkpoint/commit at chunk {}", checkpoint.committed_chunks);'
+          if s.count(old_condition) != 1 or s.count(old_bail) != 1:
+              raise SystemExit(
+                  f'expected one condition/bail; got {s.count(old_condition)}/{s.count(old_bail)}'
+              )
+          s = s.replace(old_condition, new_condition, 1)
+          s = s.replace(old_bail, new_bail, 1)
 
           old_binds = '''    .bind(last_customer_id)
               .bind(i64::try_from(committed_chunks)?)
