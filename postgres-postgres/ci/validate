@@ -15,6 +15,9 @@ export POSTGRES_POSTGRES_TEST_DATABASE_URL="$DATABASE_URL"
 export RAW_JDBC_DATABASE_URL="jdbc:postgresql://localhost:5434/postgres_postgres_workload"
 export RAW_JDBC_DATABASE_USER="oxide_batch_workload"
 export RAW_JDBC_DATABASE_PASSWORD="oxide_batch_workload"
+export SPRING_BATCH_DATABASE_URL="jdbc:postgresql://localhost:5434/postgres_postgres_workload"
+export SPRING_BATCH_DATABASE_USER="oxide_batch_workload"
+export SPRING_BATCH_DATABASE_PASSWORD="oxide_batch_workload"
 
 if docker compose version >/dev/null 2>&1; then
   compose() { docker compose "$@"; }
@@ -105,10 +108,46 @@ run_raw_jdbc_static_guards() {
   fi
   rm -f "$dependency_tree"
 
+  echo "spring-batch guard: resolve and inspect runtime Maven dependency graph"
+  dependency_tree="$(mktemp)"
+  mvn -B -ntp -f benchmark/java/spring-batch/pom.xml \
+    org.apache.maven.plugins:maven-dependency-plugin:3.11.0:tree \
+    -Dscope=runtime \
+    -DoutputFile="$dependency_tree"
+  cat "$dependency_tree"
+  if ! grep -qF 'org.springframework.batch:spring-batch-core:jar:6.0.5' "$dependency_tree"; then
+    echo "::error::spring-batch resolved graph does not contain exact Spring Batch core 6.0.5" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  if ! grep -qF 'org.springframework.batch:spring-batch-infrastructure:jar:6.0.5' "$dependency_tree"; then
+    echo "::error::spring-batch resolved graph does not contain exact Spring Batch infrastructure 6.0.5" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  if ! grep -qF 'org.postgresql:postgresql:jar:42.7.13' "$dependency_tree"; then
+    echo "::error::spring-batch resolved graph does not contain exact pgjdbc 42.7.13" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  if grep -Ei 'oxide[-_]batch' "$dependency_tree"; then
+    echo "::error::spring-batch resolved graph must not contain OxideBatch" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  rm -f "$dependency_tree"
+
   RAW_JDBC_CLASSPATH="benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar:benchmark/java/raw-jdbc/target/dependency/*"
   export RAW_JDBC_CLASSPATH
   if [[ ! -f benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar ]]; then
     echo "::error::raw-jdbc Maven build did not produce the expected candidate JAR" >&2
+    exit 1
+  fi
+
+  SPRING_BATCH_CLASSPATH="benchmark/java/spring-batch/target/spring-batch-0.1.0.jar:benchmark/java/spring-batch/target/dependency/*"
+  export SPRING_BATCH_CLASSPATH
+  if [[ ! -f benchmark/java/spring-batch/target/spring-batch-0.1.0.jar ]]; then
+    echo "::error::spring-batch Maven build did not produce the expected candidate JAR" >&2
     exit 1
   fi
 }
@@ -204,6 +243,111 @@ run_raw_jdbc_database_checks() {
 
   echo "raw-jdbc typed rollback: cursor business writes/checkpoint remain atomic"
   raw_jdbc_rollback_case cursor --fetch-size 128 raw_java_ci_cursor_rollback
+}
+
+
+run_spring_batch() {
+  java -cp "$SPRING_BATCH_CLASSPATH" \
+    io.oxidebatch.workloads.postgres.benchmark.springbatch.SpringBatchMain "$@"
+}
+
+spring_batch_rollback_case() {
+  local reader="$1"
+  local size_flag="$2"
+  local reader_size="$3"
+  local import_name="$4"
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
+
+  if run_spring_batch run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 200 \
+    "$size_flag" "$reader_size" \
+    --fail-after-chunk 2; then
+    echo "::error::Spring Batch injected rollback run unexpectedly succeeded ($reader)" >&2
+    exit 1
+  fi
+
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "200"
+  assert_scalar \
+    "SELECT count(*) FROM spring_batch.batch_job_execution je JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name' AND je.status = 'FAILED'" \
+    "1"
+  assert_scalar \
+    "SELECT COALESCE(sum(se.write_count), 0) FROM spring_batch.batch_step_execution se JOIN spring_batch.batch_job_execution je ON je.job_execution_id = se.job_execution_id JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name' AND je.status = 'FAILED'" \
+    "200"
+
+  echo "Spring Batch typed-failure restart ($reader): public JobOperator restart from durable execution context"
+  run_spring_batch run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 200 \
+    "$size_flag" "$reader_size"
+  cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "451"
+  assert_scalar \
+    "SELECT count(*) FROM spring_batch.batch_job_execution je JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'" \
+    "2"
+  assert_scalar \
+    "SELECT count(*) FROM spring_batch.batch_job_execution je JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name' AND je.status = 'COMPLETED'" \
+    "1"
+  assert_scalar \
+    "SELECT COALESCE(sum(se.write_count), 0) FROM spring_batch.batch_step_execution se JOIN spring_batch.batch_job_execution je ON je.job_execution_id = se.job_execution_id JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'" \
+    "451"
+  assert_scalar \
+    "SELECT count(*) FROM spring_batch.batch_step_execution_context sec JOIN spring_batch.batch_step_execution se ON se.step_execution_id = sec.step_execution_id JOIN spring_batch.batch_job_execution je ON je.job_execution_id = se.job_execution_id JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'" \
+    "2"
+}
+
+run_spring_batch_database_checks() {
+  echo "Spring Batch smoke: initialize official PostgreSQL JobRepository schema outside run execution"
+  run_spring_batch migrate
+  assert_scalar \
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'spring_batch' AND table_name IN ('batch_job_instance','batch_job_execution','batch_job_execution_params','batch_step_execution','batch_step_execution_context','batch_job_execution_context')" \
+    "6"
+  assert_scalar \
+    "SELECT count(*) FROM information_schema.sequences WHERE sequence_schema = 'spring_batch' AND sequence_name IN ('batch_step_execution_seq','batch_job_execution_seq','batch_job_instance_seq')" \
+    "3"
+  assert_scalar \
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'batch_%'" \
+    "0"
+  echo "Spring Batch smoke: official metadata migration is idempotent only for the complete schema"
+  run_spring_batch migrate
+
+  echo "Spring Batch paging smoke: JdbcPagingItemReader + unique customer_id sort -> independent Rust verifier"
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2051 --seed 42
+  run_spring_batch run \
+    --import-name spring_ci_paging_clean \
+    --reader paging \
+    --chunk-size 200 \
+    --page-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name spring_ci_paging_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'spring_ci_paging_clean'" \
+    "2051"
+
+  echo "Spring Batch cursor smoke: JdbcCursorItemReader + bounded pgjdbc fetch -> independent Rust verifier"
+  run_spring_batch run \
+    --import-name spring_ci_cursor_clean \
+    --reader cursor \
+    --chunk-size 200 \
+    --fetch-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name spring_ci_cursor_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'spring_ci_cursor_clean'" \
+    "2051"
+
+  echo "Spring Batch typed rollback/restart: paging business writes and ExecutionContext remain atomic"
+  spring_batch_rollback_case paging --page-size 128 spring_ci_paging_rollback
+
+  echo "Spring Batch typed rollback/restart: cursor business writes and ExecutionContext remain atomic"
+  spring_batch_rollback_case cursor --fetch-size 128 spring_ci_cursor_rollback
 }
 
 run_raw_sqlx_static_guards() {
@@ -523,6 +667,7 @@ run_ci_stage() {
 
   run_raw_sqlx_database_checks
   run_raw_jdbc_database_checks
+  run_spring_batch_database_checks
 }
 
 run_msrv_stage() {
