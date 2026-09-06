@@ -1,0 +1,68 @@
+name: JBeret crash/restart qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/jberet-crash.yml'
+      - 'postgres-postgres/benchmark/java/jberet/src/test/**'
+      - 'postgres-postgres/benchmark/java/ci/validate-jberet-crash.py'
+      - 'postgres-postgres/benchmark/java/ci/test-validate-jberet-crash.py'
+      - 'postgres-postgres/ci/validate-jberet-crash-recovery'
+      - 'postgres-postgres/benchmark/java/jberet/src/main/**'
+      - 'postgres-postgres/benchmark/java/jberet/pom.xml'
+      - 'postgres-postgres/Cargo.toml'
+      - 'postgres-postgres/Cargo.lock'
+      - 'postgres-postgres/src/**'
+      - 'postgres-postgres/migrations/**'
+      - 'postgres-postgres/docker-compose.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/jberet-crash.yml'
+      - 'postgres-postgres/benchmark/java/jberet/src/test/**'
+      - 'postgres-postgres/benchmark/java/ci/validate-jberet-crash.py'
+      - 'postgres-postgres/benchmark/java/ci/test-validate-jberet-crash.py'
+      - 'postgres-postgres/ci/validate-jberet-crash-recovery'
+      - 'postgres-postgres/benchmark/java/jberet/src/main/**'
+      - 'postgres-postgres/benchmark/java/jberet/pom.xml'
+      - 'postgres-postgres/Cargo.toml'
+      - 'postgres-postgres/Cargo.lock'
+      - 'postgres-postgres/src/**'
+      - 'postgres-postgres/migrations/**'
+      - 'postgres-postgres/docker-compose.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  jberet-crash-restart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select Java 25
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          [[ -n "${JAVA_HOME_25_X64:-}" && -x "$JAVA_HOME_25_X64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
+          export JAVA_HOME="$JAVA_HOME_25_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || { echo "::error::ambient JVM tuning flags are forbidden"; exit 1; }
+          java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
+          [[ "$java_major" == "25" ]] || { echo "::error::expected Java 25, got ${java_major:-unknown}"; exit 1; }
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          java -version
+          javac -version
+          mvn -version
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: postgres-postgres
+      - name: Run external crash/restart qualification
+        working-directory: postgres-postgres
+        run: ./ci/validate-jberet-crash-recovery
