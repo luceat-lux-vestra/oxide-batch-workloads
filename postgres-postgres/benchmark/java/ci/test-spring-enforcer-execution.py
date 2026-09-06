@@ -37,7 +37,7 @@ def reviewed_pom(
         "<configuration>"
         f"{execution_configuration_prefix}"
         "<rules>"
-        "<requireJavaVersion><version>[21,22)</version></requireJavaVersion>"
+        "<requireJavaVersion><version>[25,26)</version></requireJavaVersion>"
         "<requireMavenVersion><version>[3.9,4.0)</version></requireMavenVersion>"
         "<requireReleaseDeps><onlyWhenRelease>true</onlyWhenRelease></requireReleaseDeps>"
         "<dependencyConvergence><excludes><exclude>org.jspecify:jspecify</exclude></excludes></dependencyConvergence>"

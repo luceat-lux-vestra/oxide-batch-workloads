@@ -59,16 +59,16 @@ assert_scalar() {
   fi
 }
 
-select_java21() {
-  if [[ -n "${JAVA_HOME_21_X64:-}" && -x "${JAVA_HOME_21_X64}/bin/java" ]]; then
-    export JAVA_HOME="$JAVA_HOME_21_X64"
+select_java25() {
+  if [[ -n "${JAVA_HOME_25_X64:-}" && -x "${JAVA_HOME_25_X64}/bin/java" ]]; then
+    export JAVA_HOME="$JAVA_HOME_25_X64"
     export PATH="$JAVA_HOME/bin:$PATH"
   fi
 
   local java_major
   java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
-  if [[ "$java_major" != "21" ]]; then
-    echo "::error::campaign #79 Java controls require Java 21, got major '${java_major:-unknown}'" >&2
+  if [[ "$java_major" != "25" ]]; then
+    echo "::error::campaign #79 Java controls require Java 25, got major '${java_major:-unknown}'" >&2
     java -version >&2 || true
     exit 1
   fi
@@ -83,9 +83,9 @@ run_raw_jdbc_static_guards() {
   python3 benchmark/java/ci/test-validate-poms.py
   python3 benchmark/java/ci/validate-poms.py
 
-  select_java21
+  select_java25
 
-  echo "raw-jdbc build: Java 21 reactor with exact release dependencies/plugins"
+  echo "raw-jdbc build: Java 25 reactor with exact release dependencies/plugins"
   mvn -B -ntp -f benchmark/java/pom.xml verify
 
   echo "raw-jdbc guard: resolve and inspect runtime Maven dependency graph"

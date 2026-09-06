@@ -17,7 +17,7 @@ is a performance claim by itself.
 
 ## Frozen JVM-side contract
 
-- Java: 21 LTS. Protected CI fails if the selected runtime is not Java 21 and
+- Java: 25 LTS. Protected CI fails if the selected runtime is not Java 25 and
   records the concrete `java -version` / `mvn -version` output in the job log.
 - PostgreSQL JDBC: exact `org.postgresql:postgresql:42.7.13`.
 - Spring Batch: exact stable `org.springframework.batch:spring-batch-core:6.0.5`.
@@ -136,7 +136,7 @@ single-coordinate Spring convergence exception, guards Spring and raw-JDBC
 external crash/recovery controls against self-termination or transaction-
 boundary drift, and executes the four-way report/order/parser policy tests.
 Protected workload CI also resolves both Java runtime dependency trees and
-builds the reactor on Java 21. GitHub `dependency-review` remains the
+builds the reactor on Java 25. GitHub `dependency-review` remains the
 diff-scoped dependency gate. Frozen comparison subjects such as pgjdbc and
 Spring Batch are advanced only by an explicit validation campaign, not routine
 dependency churn.
