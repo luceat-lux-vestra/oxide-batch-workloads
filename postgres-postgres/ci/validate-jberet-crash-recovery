@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export DATABASE_URL="postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload"
+export JBERET_DATABASE_URL="jdbc:postgresql://localhost:5434/postgres_postgres_workload"
+export JBERET_DATABASE_USER="oxide_batch_workload"
+export JBERET_DATABASE_PASSWORD="oxide_batch_workload"
+
+if docker compose version >/dev/null 2>&1; then compose() { docker compose "$@"; }; else compose() { docker-compose "$@"; }; fi
+cleanup() { compose down --volumes >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+compose up -d --wait --wait-timeout 60
+
+python3 benchmark/java/ci/test-validate-jberet-crash.py
+python3 benchmark/java/ci/validate-jberet-crash.py
+mvn -B -ntp -f benchmark/java/pom.xml verify
+cargo run --locked -q -p postgres-postgres -- migrate
+
+MAIN_CP="benchmark/java/jberet/target/classes:benchmark/java/jberet/target/dependency/*"
+CRASH_CP="benchmark/java/jberet/target/test-classes:$MAIN_CP"
+java -cp "$MAIN_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain migrate
+
+psql_scalar() {
+  compose exec -T postgres psql -U oxide_batch_workload -d postgres_postgres_workload -Atqc "$1"
+}
+psql_exec() {
+  compose exec -T postgres psql -U oxide_batch_workload -d postgres_postgres_workload -v ON_ERROR_STOP=1 -qc "$1"
+}
+assert_eq() {
+  [[ "$1" == "$2" ]] || { echo "::error::expected '$2', got '$1'" >&2; exit 1; }
+}
+
+run_case() {
+  local reader="$1" phase="$2" expected_rows="$3"
+  local import_name="jberet_pr2_${reader}_${phase//-/_}"
+  local tmp marker run_log inspect_log restart_log pid marker_pid execution_id exit_code old_metrics new_id rows restart_pid
+  tmp="$(mktemp -d)"; marker="$tmp/marker"; run_log="$tmp/run.log"; inspect_log="$tmp/inspect.log"; restart_log="$tmp/restart.log"
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
+
+  local reader_args=(--reader "$reader" --chunk-size 100)
+  if [[ "$reader" == cursor ]]; then reader_args+=(--fetch-size 64); else reader_args+=(--page-size 75); fi
+
+  java -cp "$CRASH_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain run \
+    --import-name "$import_name" "${reader_args[@]}" \
+    --pause-at-chunk 3 --pause-phase "$phase" --pause-marker "$marker" >"$run_log" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 400); do
+    [[ -f "$marker" ]] && break
+    kill -0 "$pid" 2>/dev/null || { cat "$run_log" >&2; echo "::error::JBeret process exited before marker" >&2; exit 1; }
+    sleep 0.05
+  done
+  [[ -f "$marker" ]] || { cat "$run_log" >&2; echo "::error::timed out waiting for crash marker" >&2; exit 1; }
+
+  execution_id="$(sed -n 's/.*started_execution_id=\([0-9][0-9]*\).*/\1/p' "$run_log" | tail -1)"
+  marker_pid="$(sed -n 's/^pid=\([0-9][0-9]*\).*/\1/p' "$marker")"
+  [[ -n "$execution_id" ]] || { cat "$run_log" >&2; echo "::error::missing execution id" >&2; exit 1; }
+  assert_eq "$marker_pid" "$pid"
+  grep -q "phase=$phase chunk=3" "$marker"
+
+  rows="$(psql_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name='$import_name'")"
+  assert_eq "$rows" "$expected_rows"
+  echo "case_boundary reader=$reader phase=$phase old_pid=$pid execution_id=$execution_id business_rows=$rows"
+
+  kill -KILL "$pid"
+  set +e; wait "$pid"; exit_code=$?; set -e
+  assert_eq "$exit_code" "137"
+  ! kill -0 "$pid" 2>/dev/null || { echo "::error::killed JVM still exists" >&2; exit 1; }
+
+  java -cp "$CRASH_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain inspect --execution-id "$execution_id" >"$inspect_log" 2>&1
+  cat "$inspect_log"
+  old_metrics="$(grep 'execution_id=' "$inspect_log" | tail -1)"
+  # WRITE_COUNT is the durable checkpoint proof. JBeret 3.2.0.Final persists
+  # step state before committing and only then increments COMMIT_COUNT, so the
+  # repository-visible COMMIT_COUNT intentionally lags by one checkpoint and
+  # is recorded observationally rather than used as the parity gate.
+  [[ "$old_metrics" == *"status=STARTED"* && "$old_metrics" == *"read_count=200"* && "$old_metrics" == *"write_count=200"* ]] || {
+    echo "::error::unexpected durable pre-restart metrics: $old_metrics" >&2; exit 1;
+  }
+
+  java -cp "$CRASH_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain restart --execution-id "$execution_id" >"$restart_log" 2>&1 &
+  restart_pid=$!
+  [[ "$restart_pid" != "$pid" ]] || { echo "::error::restart JVM reused killed PID $pid" >&2; exit 1; }
+  set +e; wait "$restart_pid"; exit_code=$?; set -e
+  cat "$restart_log"
+  new_id="$(sed -n 's/.*restarted_execution_id=\([0-9][0-9]*\).*/\1/p' "$restart_log" | tail -1)"
+  [[ -n "$new_id" && "$new_id" != "$execution_id" ]] || { echo "::error::restart did not create a distinct execution" >&2; exit 1; }
+
+  if [[ "$phase" == before-write ]]; then
+    assert_eq "$exit_code" "0"
+    grep -q "restart_terminal_execution_id=$new_id status=COMPLETED" "$restart_log" || {
+      echo "::error::before-write public restart did not report COMPLETED" >&2; exit 1;
+    }
+    cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+    rows="$(psql_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name='$import_name'")"
+    assert_eq "$rows" "451"
+    echo "case_result reader=$reader phase=$phase old_pid=$pid restart_pid=$restart_pid old_execution_id=$execution_id new_execution_id=$new_id result=completed final_business_rows=$rows"
+  else
+    [[ "$exit_code" -ne 0 ]] || { echo "::error::after-write restart unexpectedly completed" >&2; exit 1; }
+    grep -q "restart_terminal_execution_id=$new_id status=FAILED" "$restart_log" || {
+      echo "::error::after-write public restart did not report terminal FAILED" >&2; exit 1;
+    }
+    rows="$(psql_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name='$import_name'")"
+    assert_eq "$rows" "300"
+    set +e
+    cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name" >"$tmp/verify.log" 2>&1
+    exit_code=$?
+    set -e
+    [[ "$exit_code" -ne 0 ]] || { echo "::error::incomplete after-write state unexpectedly passed independent verifier" >&2; exit 1; }
+    grep -Eiq 'duplicate key|customer_projection_pkey' "$restart_log" || {
+      echo "::error::restart failure lacked replay-conflict diagnostic" >&2; exit 1;
+    }
+    echo "case_result reader=$reader phase=$phase old_pid=$pid restart_pid=$restart_pid old_execution_id=$execution_id new_execution_id=$new_id result=expected-replay-failure business_rows=$rows"
+  fi
+}
+
+run_case cursor before-write 200
+run_case paging before-write 200
+run_case cursor after-write 300
+run_case paging after-write 300
+
+# Adversarial source-mutation gate: restart must fail before JobOperator.restart.
+cargo run --locked -q -p postgres-postgres -- reset
+cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
+tmp="$(mktemp -d)"; marker="$tmp/marker"; log="$tmp/run.log"
+java -cp "$CRASH_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain run \
+  --import-name jberet_pr2_source_mutation --reader cursor --chunk-size 100 --fetch-size 64 \
+  --pause-at-chunk 3 --pause-phase before-write --pause-marker "$marker" >"$log" 2>&1 &
+pid=$!
+for _ in $(seq 1 400); do [[ -f "$marker" ]] && break; kill -0 "$pid" 2>/dev/null || exit 1; sleep 0.05; done
+[[ -f "$marker" ]] || exit 1
+execution_id="$(sed -n 's/.*started_execution_id=\([0-9][0-9]*\).*/\1/p' "$log" | tail -1)"
+kill -KILL "$pid"; set +e; wait "$pid"; exit_code=$?; set -e; assert_eq "$exit_code" "137"
+psql_exec "UPDATE app_source.source_customer SET full_name='CAMPAIGN_86_MUTATED' WHERE customer_id=451"
+set +e
+java -cp "$CRASH_CP" io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain restart --execution-id "$execution_id" >"$tmp/restart.log" 2>&1
+exit_code=$?
+set -e
+[[ "$exit_code" -ne 0 ]] || { echo "::error::source mutation restart unexpectedly succeeded" >&2; exit 1; }
+grep -q 'source digest changed for existing JBeret execution' "$tmp/restart.log"
+echo "source_mutation_result execution_id=$execution_id result=fail-closed-before-restart"
+
+echo "JBeret external crash/restart qualification matrix passed"

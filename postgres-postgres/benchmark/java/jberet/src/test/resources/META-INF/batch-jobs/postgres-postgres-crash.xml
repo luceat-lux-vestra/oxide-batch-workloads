@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job id="postgres-postgres-crash" xmlns="https://jakarta.ee/xml/ns/jakartaee" version="2.0" restartable="true">
+  <step id="postgres-postgres-step">
+    <listeners>
+      <listener ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretCrashMain$CrashBoundaryListener">
+        <properties>
+          <property name="pauseAtChunk" value="#{jobParameters['pauseAtChunk']}"/>
+          <property name="pausePhase" value="#{jobParameters['pausePhase']}"/>
+          <property name="pauseMarker" value="#{jobParameters['pauseMarker']}"/>
+        </properties>
+      </listener>
+    </listeners>
+    <chunk item-count="#{jobParameters['chunkSize']}">
+      <reader ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresReader">
+        <properties>
+          <property name="importName" value="#{jobParameters['importName']}"/>
+          <property name="sourceDigest" value="#{jobParameters['sourceDigest']}"/>
+          <property name="readerMode" value="#{jobParameters['readerMode']}"/>
+          <property name="fetchSize" value="#{jobParameters['fetchSize']}"/>
+          <property name="pageSize" value="#{jobParameters['pageSize']}"/>
+        </properties>
+      </reader>
+      <processor ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresProcessor">
+        <properties>
+          <property name="importName" value="#{jobParameters['importName']}"/>
+          <property name="sourceDigest" value="#{jobParameters['sourceDigest']}"/>
+        </properties>
+      </processor>
+      <writer ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresWriter">
+        <properties>
+          <property name="maxBindParams" value="#{jobParameters['maxBindParams']}"/>
+        </properties>
+      </writer>
+    </chunk>
+  </step>
+</job>
