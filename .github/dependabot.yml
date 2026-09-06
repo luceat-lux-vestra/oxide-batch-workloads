@@ -22,6 +22,27 @@ updates:
     labels:
       - dependencies
 
+  - package-ecosystem: maven
+    directory: /postgres-postgres/benchmark/java
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # pgjdbc is a frozen comparison subject for campaign #79. Advancing it
+      # is a deliberate benchmark-contract change, not routine dependency churn.
+      - dependency-name: "org.postgresql:postgresql"
+    labels:
+      - dependencies
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
