@@ -1,0 +1,123 @@
+name: PR4 four-way semantic gate
+
+on:
+  pull_request:
+    paths:
+      - "postgres-postgres/**"
+      - ".github/workflows/pr4-four-way-semantic.yml"
+      - ".github/workflows/benchmark-postgres-postgres-four-way.yml"
+  push:
+    branches: [main]
+    paths:
+      - "postgres-postgres/**"
+      - ".github/workflows/pr4-four-way-semantic.yml"
+      - ".github/workflows/benchmark-postgres-postgres-four-way.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr4-four-way-semantic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semantic:
+    name: pr4-four-way-semantic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+    defaults:
+      run:
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Java 21
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${JAVA_HOME_21_X64:-}" && -x "$JAVA_HOME_21_X64/bin/java" ]] || exit 1
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || exit 1
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          java -version
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: postgres-postgres
+
+      - name: Static and adversarial harness tests
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_four_way.py
+          python3 benchmark/java/ci/test-validate-raw-jdbc-crash.py
+          python3 benchmark/java/ci/validate-raw-jdbc-crash.py
+          python3 -m py_compile benchmark/four_way.py benchmark/test_four_way.py benchmark/java/ci/validate-raw-jdbc-crash.py benchmark/java/ci/test-validate-raw-jdbc-crash.py
+          bash -n ci/validate-raw-jdbc-crash-recovery
+
+      - name: Build candidates once for semantic smoke
+        run: |
+          set -euo pipefail
+          cargo build --locked --workspace
+          mvn -B -ntp -f benchmark/java/pom.xml verify
+          mkdir -p "$RUNNER_TEMP/benchmark-launcher"
+          javac -d "$RUNNER_TEMP/benchmark-launcher" benchmark/java/ci/BenchmarkLauncher.java
+          mvn -B -ntp -f benchmark/java/raw-jdbc/pom.xml \
+            org.apache.maven.plugins:maven-dependency-plugin:3.11.0:tree \
+            -Dscope=runtime -DoutputFile="$RUNNER_TEMP/raw-jdbc-dependency-tree.txt"
+          mvn -B -ntp -f benchmark/java/spring-batch/pom.xml \
+            org.apache.maven.plugins:maven-dependency-plugin:3.11.0:tree \
+            -Dscope=runtime -DoutputFile="$RUNNER_TEMP/spring-dependency-tree.txt"
+
+      - name: Start PostgreSQL 18
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Initialize canonical workload schema
+        run: cargo run --locked -q -p postgres-postgres -- migrate
+
+      - name: Prove raw Java external crash/recovery
+        run: |
+          export RAW_JDBC_CLASSPATH="benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar:benchmark/java/raw-jdbc/target/dependency/*"
+          ./ci/validate-raw-jdbc-crash-recovery
+
+      - name: Run bounded four-way semantic smoke
+        run: |
+          set -euo pipefail
+          python3 benchmark/four_way.py \
+            --oxide-binary "$(pwd)/target/debug/postgres-postgres" \
+            --raw-rust-binary "$(pwd)/target/debug/raw-sqlx" \
+            --launcher-classes "$RUNNER_TEMP/benchmark-launcher" \
+            --launcher-class "$RUNNER_TEMP/benchmark-launcher/io/oxidebatch/workloads/postgres/benchmark/ci/BenchmarkLauncher.class" \
+            --raw-java-classpath "$(pwd)/benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar:$(pwd)/benchmark/java/raw-jdbc/target/dependency/*" \
+            --spring-classpath "$(pwd)/benchmark/java/spring-batch/target/spring-batch-0.1.0.jar:$(pwd)/benchmark/java/spring-batch/target/dependency/*" \
+            --raw-java-jar "$(pwd)/benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar" \
+            --spring-jar "$(pwd)/benchmark/java/spring-batch/target/spring-batch-0.1.0.jar" \
+            --raw-java-dependency-tree "$RUNNER_TEMP/raw-jdbc-dependency-tree.txt" \
+            --spring-dependency-tree "$RUNNER_TEMP/spring-dependency-tree.txt" \
+            --base-database-url "$DATABASE_URL" \
+            --rows 401 --seed 42 --chunk-size 100 --fetch-size 50 --page-size 60 \
+            --warmups 0 --measured-runs 4 --output "$RUNNER_TEMP/four-way-semantic-smoke.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "four-way-semantic-smoke.json").read_text())
+          assert report["status"] == "passed"
+          assert report["canonical_configuration"] is False
+          PY
+          rm -f "$RUNNER_TEMP/four-way-semantic-smoke.json"
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
