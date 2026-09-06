@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Bounded PR1 qualification for JBeret 3.2.0.Final on Java 25/PostgreSQL 18.
+# Clean cursor/paging behavior only: no crash/restart or performance claim.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+export DATABASE_URL="postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload"
+export POSTGRES_POSTGRES_TEST_DATABASE_URL="$DATABASE_URL"
+export JBERET_DATABASE_URL="jdbc:postgresql://localhost:5434/postgres_postgres_workload"
+export JBERET_DATABASE_USER="oxide_batch_workload"
+export JBERET_DATABASE_PASSWORD="oxide_batch_workload"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+stop_postgres() {
+  compose down --volumes >/dev/null 2>&1 || true
+}
+trap stop_postgres EXIT
+stop_postgres
+compose up -d --wait --wait-timeout 60
+
+if [[ -n "${JAVA_HOME_25_X64:-}" && -x "${JAVA_HOME_25_X64}/bin/java" ]]; then
+  export JAVA_HOME="$JAVA_HOME_25_X64"
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
+if [[ "$java_major" != "25" ]]; then
+  echo "::error::campaign #86 JBeret qualification requires Java 25, got '${java_major:-unknown}'" >&2
+  java -version >&2 || true
+  exit 1
+fi
+java -version
+javac -version
+mvn -version
+
+python3 benchmark/java/ci/test-validate-poms.py
+python3 benchmark/java/ci/validate-poms.py
+python3 benchmark/java/ci/test-validate-jberet-enforcer.py
+python3 benchmark/java/ci/validate-jberet-enforcer.py
+python3 benchmark/java/ci/test-validate-established-boundaries.py
+python3 benchmark/java/ci/validate-established-boundaries.py
+
+echo "JBeret build: Java 25 reactor with exact release dependencies/plugins"
+mvn -B -ntp -f benchmark/java/pom.xml verify
+
+if [[ ! -f benchmark/java/jberet/target/jberet-0.1.0.jar ]]; then
+  echo "::error::JBeret module was not built by the Java reactor" >&2
+  exit 1
+fi
+JBERET_CLASSPATH="benchmark/java/jberet/target/jberet-0.1.0.jar:benchmark/java/jberet/target/dependency/*"
+
+run_jberet() {
+  java -cp "$JBERET_CLASSPATH" \
+    io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain "$@"
+}
+
+psql_scalar() {
+  compose exec -T postgres psql -U oxide_batch_workload -d postgres_postgres_workload -Atqc "$1"
+}
+
+assert_scalar() {
+  local sql="$1"
+  local expected="$2"
+  local actual
+  actual="$(psql_scalar "$sql")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "::error::JBeret SQL assertion failed: expected '$expected', got '$actual' for: $sql" >&2
+    exit 1
+  fi
+}
+
+echo "JBeret guard: exact Java-SE runtime dependency graph and framework isolation"
+dependency_tree="$(mktemp)"
+mvn -B -ntp -f benchmark/java/jberet/pom.xml \
+  org.apache.maven.plugins:maven-dependency-plugin:3.11.0:tree \
+  -Dscope=runtime \
+  -DoutputFile="$dependency_tree"
+cat "$dependency_tree"
+for required in \
+  'org.jberet:jberet-se:jar:3.2.0.Final' \
+  'org.jberet:jberet-core:jar:3.2.0.Final' \
+  'jakarta.batch:jakarta.batch-api:jar:2.1.1' \
+  'jakarta.inject:jakarta.inject-api:jar:2.0.1.MR' \
+  'jakarta.enterprise:jakarta.enterprise.cdi-api:jar:4.1.0' \
+  'jakarta.annotation:jakarta.annotation-api:jar:3.0.0' \
+  'jakarta.transaction:jakarta.transaction-api:jar:2.0.1' \
+  'org.jboss.logging:jboss-logging:jar:3.6.3.Final' \
+  'org.jboss.marshalling:jboss-marshalling:jar:2.3.0' \
+  'org.jboss.weld:weld-core-impl:jar:5.1.7.Final' \
+  'org.jboss.weld.se:weld-se-core:jar:5.1.7.Final' \
+  'org.wildfly.security:wildfly-elytron-security-manager:jar:2.9.2.Final' \
+  'org.wildfly.security:wildfly-elytron-security-manager-action:jar:2.9.2.Final' \
+  'org.postgresql:postgresql:jar:42.7.13'; do
+  if ! grep -qF "$required" "$dependency_tree"; then
+    echo "::error::JBeret resolved graph is missing exact required coordinate: $required" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+done
+if grep -Ei 'org\.springframework|oxide[-_]batch' "$dependency_tree"; then
+  echo "::error::JBeret resolved graph must contain neither Spring nor OxideBatch" >&2
+  rm -f "$dependency_tree"
+  exit 1
+fi
+rm -f "$dependency_tree"
+
+echo "JBeret clean qualification: initialize real JDBC repository in isolated schema"
+cargo run --locked -q -p postgres-postgres -- migrate
+run_jberet migrate
+run_jberet migrate
+assert_scalar \
+  "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'jberet' AND table_name IN ('job_instance','job_execution','step_execution','partition_execution')" \
+  "4"
+assert_scalar \
+  "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('job_instance','job_execution','step_execution','partition_execution')" \
+  "0"
+
+echo "JBeret clean qualification: bounded keyset paging -> independent Rust verifier"
+cargo run --locked -q -p postgres-postgres -- reset
+cargo run --locked -q -p postgres-postgres -- seed --rows 2051 --seed 42
+run_jberet run \
+  --import-name jberet_ci_paging_clean \
+  --reader paging \
+  --chunk-size 200 \
+  --page-size 128
+cargo run --locked -q -p postgres-postgres -- verify --import-name jberet_ci_paging_clean
+assert_scalar \
+  "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'jberet_ci_paging_clean'" \
+  "2051"
+
+echo "JBeret clean qualification: bounded pgjdbc cursor -> independent Rust verifier"
+run_jberet run \
+  --import-name jberet_ci_cursor_clean \
+  --reader cursor \
+  --chunk-size 200 \
+  --fetch-size 128
+cargo run --locked -q -p postgres-postgres -- verify --import-name jberet_ci_cursor_clean
+assert_scalar \
+  "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'jberet_ci_cursor_clean'" \
+  "2051"
+
+assert_scalar "SELECT count(*) FROM jberet.job_execution WHERE batchstatus = 'COMPLETED'" "2"
+assert_scalar "SELECT count(*) FROM jberet.step_execution WHERE batchstatus = 'COMPLETED'" "2"
+
+echo "JBeret PR1 clean semantic qualification passed; writer/repository crash atomicity remains UNVERIFIED for PR2"

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.oxidebatch.validation</groupId>
+    <artifactId>postgres-postgres-java-benchmark</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>jberet</artifactId>
+  <packaging>jar</packaging>
+  <name>JBeret PostgreSQL semantic-qualification candidate</name>
+
+  <dependencies>
+    <dependency><groupId>org.jberet</groupId><artifactId>jberet-se</artifactId><version>3.2.0.Final</version></dependency>
+    <dependency><groupId>jakarta.batch</groupId><artifactId>jakarta.batch-api</artifactId><version>2.1.1</version></dependency>
+    <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId><version>2.0.1.MR</version></dependency>
+    <dependency><groupId>jakarta.enterprise</groupId><artifactId>jakarta.enterprise.cdi-api</artifactId><version>4.1.0</version></dependency>
+    <dependency><groupId>jakarta.annotation</groupId><artifactId>jakarta.annotation-api</artifactId><version>3.0.0</version></dependency>
+    <dependency><groupId>jakarta.transaction</groupId><artifactId>jakarta.transaction-api</artifactId><version>2.0.1</version></dependency>
+    <dependency><groupId>org.jboss.logging</groupId><artifactId>jboss-logging</artifactId><version>3.6.3.Final</version></dependency>
+    <dependency><groupId>org.jboss.marshalling</groupId><artifactId>jboss-marshalling</artifactId><version>2.3.0</version></dependency>
+    <dependency><groupId>org.jboss.weld</groupId><artifactId>weld-core-impl</artifactId><version>5.1.7.Final</version></dependency>
+    <dependency><groupId>org.jboss.weld.se</groupId><artifactId>weld-se-core</artifactId><version>5.1.7.Final</version></dependency>
+    <dependency><groupId>org.wildfly.security</groupId><artifactId>wildfly-elytron-security-manager</artifactId><version>2.9.2.Final</version></dependency>
+    <dependency><groupId>org.wildfly.security</groupId><artifactId>wildfly-elytron-security-manager-action</artifactId><version>2.9.2.Final</version></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>42.7.13</version></dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>3.6.3</version>
+        <executions>
+          <execution>
+            <id>enforce-java-build-contract</id>
+            <configuration>
+              <rules>
+                <dependencyConvergence>
+                  <excludes>
+                    <exclude>jakarta.el:jakarta.el-api</exclude>
+                    <exclude>jakarta.inject:jakarta.inject-api</exclude>
+                    <exclude>jakarta.enterprise:jakarta.enterprise.cdi-api</exclude>
+                    <exclude>org.jboss.logging:jboss-logging</exclude>
+                    <exclude>jakarta.interceptor:jakarta.interceptor-api</exclude>
+                    <exclude>jakarta.annotation:jakarta.annotation-api</exclude>
+                  </excludes>
+                </dependencyConvergence>
+                <requireUpperBoundDeps>
+                  <includes>
+                    <include>jakarta.el:jakarta.el-api</include>
+                    <include>jakarta.inject:jakarta.inject-api</include>
+                    <include>jakarta.enterprise:jakarta.enterprise.cdi-api</include>
+                    <include>org.jboss.logging:jboss-logging</include>
+                    <include>jakarta.interceptor:jakarta.interceptor-api</include>
+                    <include>jakarta.annotation:jakarta.annotation-api</include>
+                  </includes>
+                </requireUpperBoundDeps>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.5.1</version>
+        <configuration>
+          <archive><manifest><mainClass>io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain</mainClass></manifest></archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.11.0</version>
+        <executions>
+          <execution>
+            <id>copy-runtime-dependencies</id>
+            <phase>package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <includeScope>runtime</includeScope>
+              <outputDirectory>${project.build.directory}/dependency</outputDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,66 @@
+name: JBeret clean qualification
+
+on:
+  pull_request:
+    paths:
+      - "postgres-postgres/benchmark/java/**"
+      - "postgres-postgres/ci/validate-jberet-clean"
+      - "postgres-postgres/ci/validate-supply-chain"
+      - ".github/workflows/jberet-clean.yml"
+  push:
+    branches: [main]
+    paths:
+      - "postgres-postgres/benchmark/java/**"
+      - "postgres-postgres/ci/validate-jberet-clean"
+      - "postgres-postgres/ci/validate-supply-chain"
+      - ".github/workflows/jberet-clean.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jberet-clean-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean:
+    name: jberet-clean
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Java 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${JAVA_HOME_25_X64:-}" && -x "$JAVA_HOME_25_X64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
+          export JAVA_HOME="$JAVA_HOME_25_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || { echo "::error::ambient JVM tuning flags are forbidden"; exit 1; }
+          java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
+          [[ "$java_major" == "25" ]] || { echo "::error::expected Java 25, got ${java_major:-unknown}"; exit 1; }
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+          java -version
+          javac -version
+          mvn -version
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: postgres-postgres
+
+      - name: Run bounded JBeret clean qualification
+        run: ./ci/validate-jberet-clean

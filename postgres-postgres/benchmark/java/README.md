@@ -1,19 +1,21 @@
 # Java attribution controls for PostgreSQL -> PostgreSQL
 
-This directory is campaign #79's JVM-side comparison boundary. It is nested
-under the existing `postgres-postgres` workload because it reuses that
-workload's canonical PostgreSQL 18 source schema, deterministic generator,
-business transformation, destination representation, and independent Rust
-verifier. It is not a new OxideBatch workload.
+This directory is the JVM-side comparison boundary for Track D campaigns #79
+and #86. It is nested under the existing `postgres-postgres` workload because
+it reuses that workload's canonical PostgreSQL 18 source schema, deterministic
+generator, business transformation, destination representation, and independent
+Rust verifier. It is not a new OxideBatch workload.
 
-The reactor contains two deliberately separate candidates:
+The reactor contains three deliberately separate candidates:
 
-- `raw-jdbc/`: the PR1 raw Java/JDBC control;
-- `spring-batch/`: the PR2 Spring Batch 6.0.5 candidate.
+- `raw-jdbc/`: the raw Java/JDBC attribution control;
+- `spring-batch/`: the Spring Batch 6.0.5 primary JVM framework candidate;
+- `jberet/`: the JBeret 3.2.0.Final secondary framework candidate under semantic qualification.
 
-The raw module must remain free of Spring and OxideBatch dependencies. The
-Spring module must remain free of OxideBatch dependencies. Neither candidate
-is a performance claim by itself.
+The raw module must remain free of Spring, JBeret, and OxideBatch dependencies.
+The Spring module must remain free of JBeret and OxideBatch dependencies. The
+JBeret module must remain free of Spring and OxideBatch dependencies. No
+candidate is a performance claim by itself.
 
 ## Frozen JVM-side contract
 
@@ -21,12 +23,27 @@ is a performance claim by itself.
   records the concrete `java -version` / `mvn -version` output in the job log.
 - PostgreSQL JDBC: exact `org.postgresql:postgresql:42.7.13`.
 - Spring Batch: exact stable `org.springframework.batch:spring-batch-core:6.0.5`.
+- JBeret: exact stable `org.jberet:jberet-se:3.2.0.Final`, with Jakarta Batch
+  2.1.1 and the Java-SE provided runtime prerequisites pinned explicitly from
+  the JBeret 3.2.0.Final release parent.
 - Spring Batch 6.0.5's published graph reaches `org.jspecify:jspecify` 1.0.0
   through Spring Framework and 1.0.1 through Micrometer. The Spring module has
   one scoped `dependencyConvergence` exception for exactly that coordinate and
   immediately applies `requireUpperBoundDeps` to exactly the same coordinate,
   so Maven must select the published upper bound rather than silently allowing
-  an arbitrary convergence escape. No other convergence exception is allowed.
+  an arbitrary convergence escape. No other Spring convergence exception is allowed.
+- JBeret 3.2.0.Final's released Java-SE graph contains version skew between its
+  parent-selected API/runtime versions and Weld/Elytron transitives. The JBeret
+  module therefore scopes `dependencyConvergence` exceptions to exactly these
+  six coordinates: `jakarta.el:jakarta.el-api`,
+  `jakarta.inject:jakarta.inject-api`,
+  `jakarta.enterprise:jakarta.enterprise.cdi-api`,
+  `org.jboss.logging:jboss-logging`,
+  `jakarta.interceptor:jakarta.interceptor-api`, and
+  `jakarta.annotation:jakarta.annotation-api`. `requireUpperBoundDeps` is
+  applied to exactly the same six coordinates, and adversarial validation
+  rejects any missing, additional, mismatched, reordered, skipped, or otherwise
+  broadened exception policy.
 - No Maven `SNAPSHOT`, version range, `LATEST`, `RELEASE`, property-indirected
   dependency/plugin version, custom repository, profile, or build extension.
 - Source identity is the same ordered streaming SHA-256 used by the Rust
@@ -37,7 +54,9 @@ is a performance claim by itself.
   a forward-only result set, ordered query, and positive `fetchSize` (500 by
   default).
 - Paging mode is bounded PostgreSQL keyset paging on unique `customer_id`, 750
-  rows by default, with no `OFFSET`.
+  rows by default, with no `OFFSET` for the raw-JDBC and JBeret controls; the
+  Spring candidate uses its reviewed PostgreSQL paging provider with the same
+  unique sort key.
 - Chunk size defaults to 1000.
 - Primary writer parity is ordinary multi-row `INSERT ... VALUES`: 7 bound
   columns, at most 2000 parameters, 285 rows / 1995 binds per full statement,
@@ -105,6 +124,28 @@ same import/reader/definition identity and rejects a changed source digest.
 This prevents a mutated source from silently becoming a new JobInstance after
 a crash.
 
+## JBeret semantic qualification
+
+Campaign #86 intentionally does not assume Jakarta Batch API similarity implies
+Spring-equivalent transaction/checkpoint semantics. The JBeret module runs the
+Java SE runtime with its real JDBC `JdbcRepository` under the isolated
+`jberet.*` schema, launches through public `BatchRuntime.getJobOperator()`, and
+uses Jakarta Batch `ItemReader`, `ItemProcessor`, and `ItemWriter` artifacts.
+Both cursor and paging readers maintain a key-based serializable checkpoint and
+reuse the same source digest, transformation, writer SQL bounds, and independent
+Rust verifier as the accepted PostgreSQL workload.
+
+PR1 proves only clean Java-25/PostgreSQL-18 cursor/paging execution. JBeret Java
+SE's `LocalTransactionManager` does not provide a JDBC enlistment contract for
+the workload writer, so the PR1 writer deliberately uses an explicit local JDBC
+transaction and reports `business_commit_model=writer-local-commit`. That is a
+qualification fact, not an accepted durability-parity claim. Business-write vs
+repository/checkpoint atomicity, external SIGKILL behavior, and public restart
+are mandatory PR2 proof obligations. If those semantics cannot satisfy
+`semantic-parity-minimal-durability` without private metadata repair, campaign
+#86 stops as a reference-only semantic mismatch and does not proceed to a
+primary performance comparison.
+
 ## Local build
 
 The benchmark reactor is Maven-based:
@@ -115,7 +156,7 @@ mvn -B -ntp -f postgres-postgres/benchmark/java/pom.xml verify
 
 Runtime database credentials are supplied through environment variables, not
 command-line arguments. Raw JDBC uses `RAW_JDBC_DATABASE_*`; Spring Batch uses
-`SPRING_BATCH_DATABASE_*`.
+`SPRING_BATCH_DATABASE_*`; JBeret uses `JBERET_DATABASE_*`.
 
 Candidate `migrate` commands only create candidate-owned durability metadata;
 canonical source/business schemas remain owned by the existing workload
@@ -131,21 +172,18 @@ The repository-wide Cargo scan remains unchanged for the Rust workload graph.
 Because this directory contains a nested Maven ecosystem, the central
 `supply-chain` validator fails closed if Maven manifests exist without the
 workload-owned executable `ci/validate-supply-chain` hook. The hook enforces the
-reviewed Maven manifest and Java source inventory, adversarially tests the
-single-coordinate Spring convergence exception, guards Spring and raw-JDBC
+reviewed Maven manifest, Java source, JBeret resource inventory, and the exact
+six-coordinate JBeret convergence/upper-bound policy; adversarially tests both
+Spring and JBeret scoped convergence exceptions; guards Spring and raw-JDBC
 external crash/recovery controls against self-termination or transaction-
-boundary drift, and executes the four-way report/order/parser policy tests.
-Protected workload CI also resolves both Java runtime dependency trees and
-builds the reactor on Java 25. GitHub `dependency-review` remains the
-diff-scoped dependency gate. Frozen comparison subjects such as pgjdbc and
-Spring Batch are advanced only by an explicit validation campaign, not routine
-dependency churn.
+boundary drift; and executes the four-way report/order/parser policy tests.
+Protected workload CI resolves the Java runtime dependency trees, builds the
+reactor on Java 25, and executes bounded real-PostgreSQL JBeret clean
+qualification. GitHub `dependency-review` remains the diff-scoped dependency
+gate. Frozen comparison subjects such as pgjdbc, Spring Batch, and JBeret are
+advanced only by an explicit validation campaign, not routine dependency churn.
 
-Four-way measurement starts only in PR4; PR1, PR2, and PR3 remain correctness,
-recovery, and parity evidence rather than performance evidence.
-
-No number emitted by PR1, PR2, PR3, PR4 branch CI, or the bounded PR4 semantic
-smoke is campaign performance evidence. The four-way methodology and manual
-canonical workflow are documented in `../FOUR_WAY.md`; accepted numbers can
-come only from a fresh canonical run on authoritative `main` after PR4 is
-merged and its post-merge gates are green.
+Four-way measurement starts only in PR4 for campaign #79 and remains unchanged.
+JBeret measurement is not added until campaign #86 PR2 proves an acceptable
+semantic class. No number emitted by #86 PR1 branch CI is campaign performance
+evidence.

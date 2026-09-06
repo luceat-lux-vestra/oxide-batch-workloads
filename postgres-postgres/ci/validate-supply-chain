@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Additional ecosystem supply-chain contract for the postgres-postgres workload.
 # Cargo remains covered by the repository-wide cargo-deny validator; this hook
-# fail-closes the nested Maven benchmark manifest and PR4 measurement-policy surface.
+# fail-closes the nested Maven benchmark manifest/source/resource surfaces.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -10,7 +10,12 @@ python3 benchmark/java/ci/validate-java25-baseline.py
 python3 benchmark/java/ci/test-spring-enforcer-execution.py
 python3 benchmark/java/ci/validate-spring-enforcer-execution.py
 python3 benchmark/java/ci/test-spring-enforcer-policy.py
+python3 benchmark/java/ci/test-validate-poms.py
 python3 benchmark/java/ci/validate-poms.py
+python3 benchmark/java/ci/test-validate-jberet-enforcer.py
+python3 benchmark/java/ci/validate-jberet-enforcer.py
+python3 benchmark/java/ci/test-validate-established-boundaries.py
+python3 benchmark/java/ci/validate-established-boundaries.py
 python3 benchmark/java/ci/test-validate-spring-crash.py
 python3 benchmark/java/ci/validate-spring-crash.py
 python3 benchmark/java/ci/test-validate-raw-jdbc-crash.py
