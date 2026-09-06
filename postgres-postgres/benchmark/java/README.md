@@ -6,17 +6,29 @@ workload's canonical PostgreSQL 18 source schema, deterministic generator,
 business transformation, destination representation, and independent Rust
 verifier. It is not a new OxideBatch workload.
 
-PR1 contains only `raw-jdbc/`. Spring Batch is intentionally absent until the
-raw Java control and its dependency/supply-chain boundary pass strict review.
+The reactor contains two deliberately separate candidates:
 
-## Frozen PR1 contract
+- `raw-jdbc/`: the PR1 raw Java/JDBC control;
+- `spring-batch/`: the PR2 Spring Batch 6.0.5 candidate.
+
+The raw module must remain free of Spring and OxideBatch dependencies. The
+Spring module must remain free of OxideBatch dependencies. Neither candidate
+is a performance claim by itself.
+
+## Frozen JVM-side contract
 
 - Java: 21 LTS. Protected CI fails if the selected runtime is not Java 21 and
   records the concrete `java -version` / `mvn -version` output in the job log.
 - PostgreSQL JDBC: exact `org.postgresql:postgresql:42.7.13`.
-- No Spring or OxideBatch dependency in the raw JDBC module.
+- Spring Batch: exact stable `org.springframework.batch:spring-batch-core:6.0.5`.
+- Spring Batch 6.0.5's published graph reaches `org.jspecify:jspecify` 1.0.0
+  through Spring Framework and 1.0.1 through Micrometer. The Spring module has
+  one scoped `dependencyConvergence` exception for exactly that coordinate and
+  immediately applies `requireUpperBoundDeps` to exactly the same coordinate,
+  so Maven must select the published upper bound rather than silently allowing
+  an arbitrary convergence escape. No other convergence exception is allowed.
 - No Maven `SNAPSHOT`, version range, `LATEST`, `RELEASE`, property-indirected
-  dependency/plugin version, or custom repository.
+  dependency/plugin version, custom repository, profile, or build extension.
 - Source identity is the same ordered streaming SHA-256 used by the Rust
   workload and raw-sqlx control.
 - The source table is held under `LOCK ... IN SHARE MODE` from digest start
@@ -24,18 +36,42 @@ raw Java control and its dependency/supply-chain boundary pass strict review.
 - Cursor mode uses pgjdbc cursor fetching prerequisites: `autoCommit=false`,
   a forward-only result set, ordered query, and positive `fetchSize` (500 by
   default).
-- Paging mode is bounded keyset pagination on unique `customer_id`, 750 rows
-  by default, with no `OFFSET`.
+- Paging mode is bounded PostgreSQL keyset paging on unique `customer_id`, 750
+  rows by default, with no `OFFSET`.
 - Chunk size defaults to 1000.
 - Primary writer parity is ordinary multi-row `INSERT ... VALUES`: 7 bound
   columns, at most 2000 parameters, 285 rows / 1995 binds per full statement,
   and therefore at most four statements for a 1000-row chunk. JDBC
   `executeBatch`, PostgreSQL `COPY`, and `reWriteBatchedInserts` are forbidden.
-- Raw durability metadata lives only in `benchmark_java.raw_checkpoint`.
-  Business rows plus checkpoint advancement commit atomically in one JDBC
-  transaction.
-- `--fail-after-chunk N` is a typed pre-commit failure used only for rollback
-  evidence. External SIGKILL/new-process recovery belongs to PR3.
+
+## Raw JDBC durability
+
+Raw durability metadata lives only in `benchmark_java.raw_checkpoint`.
+Business rows plus checkpoint advancement commit atomically in one JDBC
+transaction. `--fail-after-chunk N` is a typed pre-commit failure used for the
+PR1 rollback/continuation proof.
+
+## Spring Batch durability
+
+Spring Batch owns only `spring_batch.*` metadata, initialized from Spring
+Batch's official PostgreSQL schema script. Migration fails closed on a partial
+metadata schema instead of attempting to repair it implicitly. The candidate
+uses a real JDBC `JobRepository`, `StepExecution`, and reader `ExecutionContext`.
+It never performs direct Spring metadata DML.
+
+Both Spring readers persist restart state. The cursor candidate uses
+`JdbcCursorItemReader`; the paging candidate uses `JdbcPagingItemReader` with a
+`PostgresPagingQueryProvider` and unique `customer_id` sort key. The custom
+`ItemWriter` uses `JdbcTemplate` on the same `DataSource` and transaction
+manager as the Spring step, so business writes and the framework checkpoint
+share the chunk transaction. It never commits or rolls back privately.
+
+For PR2, `--fail-after-chunk N` injects a typed failure after business writes
+but before the chunk commit. Re-running the same identifying job parameters
+uses the public `JobOperator.restart(JobExecution)` path and must resume from
+the durable execution context without duplicates or skips. External SIGKILL,
+non-terminal execution recovery through `JobOperator.recover`, and genuinely
+new-process crash continuation are intentionally deferred to PR3.
 
 ## Local build
 
@@ -46,17 +82,13 @@ mvn -B -ntp -f postgres-postgres/benchmark/java/pom.xml verify
 ```
 
 Runtime database credentials are supplied through environment variables, not
-command-line arguments:
+command-line arguments. Raw JDBC uses `RAW_JDBC_DATABASE_*`; Spring Batch uses
+`SPRING_BATCH_DATABASE_*`.
 
-```text
-RAW_JDBC_DATABASE_URL=jdbc:postgresql://localhost:5434/postgres_postgres_workload
-RAW_JDBC_DATABASE_USER=oxide_batch_workload
-RAW_JDBC_DATABASE_PASSWORD=oxide_batch_workload
-```
-
-`migrate` creates only `benchmark_java.*`; canonical source/business schemas
-remain owned by the existing workload migration. `run` never performs setup or
-migration, keeping setup outside future timed intervals.
+Candidate `migrate` commands only create candidate-owned durability metadata;
+canonical source/business schemas remain owned by the existing workload
+migration. `run` never performs setup or migration, keeping setup outside
+future timed intervals.
 
 The canonical final-state oracle remains `postgres-postgres verify`. Java does
 not implement a second verifier.
@@ -64,14 +96,16 @@ not implement a second verifier.
 ## Supply-chain coverage
 
 The repository-wide Cargo scan remains unchanged for the Rust workload graph.
-Because this directory adds a nested Maven ecosystem, the central
-`supply-chain` validator now fails closed if Maven manifests exist without the
-workload-owned executable `ci/validate-supply-chain` hook. The hook enforces
-this Java manifest boundary. Protected ordinary workload CI additionally
-resolves the Maven runtime dependency tree and builds the reactor on Java 21.
-GitHub `dependency-review` remains the diff-scoped dependency gate, and
-Dependabot has a dedicated Maven entry for this reactor.
+Because this directory contains a nested Maven ecosystem, the central
+`supply-chain` validator fails closed if Maven manifests exist without the
+workload-owned executable `ci/validate-supply-chain` hook. The hook enforces the
+reviewed Maven manifest and Java source inventory and adversarially tests the
+single-coordinate Spring convergence exception. Protected workload CI also
+resolves both Java runtime dependency trees and builds the reactor on Java 21.
+GitHub `dependency-review` remains the diff-scoped dependency gate. Frozen
+comparison subjects such as pgjdbc and Spring Batch are advanced only by an
+explicit validation campaign, not routine dependency churn.
 
-No performance number emitted by PR1 is campaign evidence or a performance
-claim. Four-way measurement starts only in PR4 after raw Java and Spring
-correctness/recovery obligations pass.
+No number emitted by PR1 or PR2 is campaign performance evidence or a
+performance claim. Four-way measurement starts only in PR4 after correctness
+and crash-recovery obligations pass.

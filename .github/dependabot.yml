@@ -37,9 +37,11 @@ updates:
           - minor
           - patch
     ignore:
-      # pgjdbc is a frozen comparison subject for campaign #79. Advancing it
-      # is a deliberate benchmark-contract change, not routine dependency churn.
+      # pgjdbc and Spring Batch are frozen comparison subjects for campaign
+      # #79. Advancing either is a deliberate benchmark-contract change, not
+      # routine dependency churn.
       - dependency-name: "org.postgresql:postgresql"
+      - dependency-name: "org.springframework.batch:spring-batch-core"
     labels:
       - dependencies
 

@@ -53,8 +53,10 @@ class ManifestBoundaryTests(unittest.TestCase):
 
     def write_expected_manifests(self) -> None:
         (self.java_root / "raw-jdbc").mkdir(parents=True)
+        (self.java_root / "spring-batch").mkdir(parents=True)
         (self.java_root / "pom.xml").write_text("<project/>\n", encoding="utf-8")
         (self.java_root / "raw-jdbc" / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+        (self.java_root / "spring-batch" / "pom.xml").write_text("<project/>\n", encoding="utf-8")
 
     def test_accepts_exact_manifest_inventory(self) -> None:
         self.write_expected_manifests()
@@ -149,6 +151,171 @@ class EffectiveModelBoundaryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(validator.ValidationError, "unsupported controls"):
             validator.validate_raw(root)
+
+
+class SpringPomBoundaryTests(unittest.TestCase):
+    def reviewed_spring_pom(self, dependencies: str | None = None) -> ET.Element:
+        dependency_xml = dependencies or (
+            "<dependency><groupId>org.springframework.batch</groupId>"
+            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version></dependency>"
+            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
+            "<version>42.7.13</version></dependency>"
+        )
+        enforcer_xml = (
+            "<build><plugins><plugin>"
+            "<groupId>org.apache.maven.plugins</groupId>"
+            "<artifactId>maven-enforcer-plugin</artifactId><version>3.6.3</version>"
+            "<executions><execution><id>enforce-java-build-contract</id>"
+            "<configuration><rules>"
+            "<dependencyConvergence><excludes>"
+            "<exclude>org.jspecify:jspecify</exclude>"
+            "</excludes></dependencyConvergence>"
+            "<requireUpperBoundDeps><includes>"
+            "<include>org.jspecify:jspecify</include>"
+            "</includes></requireUpperBoundDeps>"
+            "</rules></configuration></execution></executions>"
+            "</plugin></plugins></build>"
+        )
+        return pom(
+            "<parent><groupId>io.oxidebatch.validation</groupId>"
+            "<artifactId>postgres-postgres-java-benchmark</artifactId><version>0.1.0</version>"
+            "<relativePath>../pom.xml</relativePath></parent>"
+            "<artifactId>spring-batch</artifactId><packaging>jar</packaging>"
+            f"<dependencies>{dependency_xml}</dependencies>"
+            f"{enforcer_xml}"
+        )
+
+    def test_accepts_exact_spring_dependency_surface(self) -> None:
+        validator.validate_spring(self.reviewed_spring_pom())
+
+    def test_rejects_wrong_spring_batch_version(self) -> None:
+        dependencies = (
+            "<dependency><groupId>org.springframework.batch</groupId>"
+            "<artifactId>spring-batch-core</artifactId><version>6.0.4</version></dependency>"
+            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
+            "<version>42.7.13</version></dependency>"
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "Spring Batch 6.0.5"):
+            validator.validate_spring(self.reviewed_spring_pom(dependencies))
+
+    def test_rejects_extra_spring_dependency(self) -> None:
+        dependencies = (
+            "<dependency><groupId>org.springframework.batch</groupId>"
+            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version></dependency>"
+            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
+            "<version>42.7.13</version></dependency>"
+            "<dependency><groupId>example</groupId><artifactId>shadow</artifactId>"
+            "<version>1.0.0</version></dependency>"
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "direct dependency surface"):
+            validator.validate_spring(self.reviewed_spring_pom(dependencies))
+
+    def test_rejects_spring_dependency_scope_override(self) -> None:
+        dependencies = (
+            "<dependency><groupId>org.springframework.batch</groupId>"
+            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version><scope>provided</scope></dependency>"
+            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
+            "<version>42.7.13</version></dependency>"
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "unsupported controls"):
+            validator.validate_spring(self.reviewed_spring_pom(dependencies))
+
+
+class SpringSourceBoundaryTests(unittest.TestCase):
+    REQUIRED_LINES = [
+        'SPRING_BATCH_VERSION = "6.0.5"',
+        "LOCK TABLE app_source.source_customer IN SHARE MODE",
+        "new JdbcJobRepositoryFactoryBean()",
+        'factory.setTablePrefix("spring_batch.BATCH_")',
+        "new TaskExecutorJobOperator()",
+        "operator.restart(last)",
+        "new JdbcCursorItemReaderBuilder<SourceRow>()",
+        ".connectionAutoCommit(false)",
+        ".fetchSize(fetchSize)",
+        "new JdbcPagingItemReaderBuilder<SourceRow>()",
+        "new PostgresPagingQueryProvider()",
+        'Map.of("customer_id", Order.ASCENDING)',
+        ".pageSize(pageSize)",
+        ".fetchSize(pageSize)",
+        ".saveState(true)",
+        ".saveState(true)",
+        "implements ItemWriter<ProjectedRow>",
+        "new JdbcTemplate(dataSource)",
+        "COLUMNS_PER_ROW = 7",
+        "MAX_PARAMETERS_PER_STATEMENT = 2_000",
+        "ROWS_PER_STATEMENT = MAX_PARAMETERS_PER_STATEMENT / COLUMNS_PER_ROW",
+        "MAX_BOUND_PARAMETERS = ROWS_PER_STATEMENT * COLUMNS_PER_ROW",
+        'addString("source_digest", sourceDigest)',
+        'addString("reader_mode", config.readerMode().value)',
+        'addString("definition_revision", config.definitionRevision())',
+        "ResourceDatabasePopulator",
+        "schema-postgresql.sql",
+        "EXPECTED_BATCH_TABLES = 6",
+        "EXPECTED_BATCH_SEQUENCES = 3",
+        "partial Spring Batch metadata schema detected",
+        "assertBatchSchemaComplete(jdbc)",
+    ]
+
+    def setUp(self) -> None:
+        self.original_spring_root = validator.SPRING_ROOT
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.spring_root = Path(self.tempdir.name)
+        source = (
+            self.spring_root
+            / "src/main/java/io/oxidebatch/workloads/postgres/benchmark/springbatch/SpringBatchMain.java"
+        )
+        source.parent.mkdir(parents=True)
+        source.write_text("\n".join(self.REQUIRED_LINES), encoding="utf-8")
+        validator.SPRING_ROOT = self.spring_root
+
+    def tearDown(self) -> None:
+        validator.SPRING_ROOT = self.original_spring_root
+        self.tempdir.cleanup()
+
+    def source(self) -> Path:
+        return next(self.spring_root.rglob("SpringBatchMain.java"))
+
+    def test_accepts_required_spring_boundary_markers(self) -> None:
+        validator.validate_spring_source()
+
+    def test_rejects_stock_jdbc_batch_writer(self) -> None:
+        self.source().write_text(self.source().read_text() + "\nJdbcBatchItemWriter\n", encoding="utf-8")
+        with self.assertRaisesRegex(validator.ValidationError, "JdbcBatchItemWriter"):
+            validator.validate_spring_source()
+
+    def test_rejects_private_commit(self) -> None:
+        self.source().write_text(self.source().read_text() + "\nconnection.commit(\n", encoding="utf-8")
+        with self.assertRaisesRegex(validator.ValidationError, "private commit"):
+            validator.validate_spring_source()
+
+    def test_rejects_direct_spring_metadata_dml(self) -> None:
+        self.source().write_text(
+            self.source().read_text() + "\nUPDATE spring_batch.BATCH_STEP_EXECUTION SET x = 1\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "metadata"):
+            validator.validate_spring_source()
+
+    def test_rejects_one_reader_without_restart_state(self) -> None:
+        self.source().write_text(
+            self.source().read_text().replace(".saveState(true)", ".saveState(false)", 1),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "both Spring cursor and paging"):
+            validator.validate_spring_source()
+
+    def test_rejects_case_varied_direct_spring_metadata_dml(self) -> None:
+        self.source().write_text(
+            self.source().read_text() + "\ninsert into SpRiNg_BaTcH.BATCH_STEP_EXECUTION values (...)\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(validator.ValidationError, "metadata"):
+            validator.validate_spring_source()
+
+    def test_rejects_offset_paging(self) -> None:
+        self.source().write_text(self.source().read_text() + "\nOFFSET 10\n", encoding="utf-8")
+        with self.assertRaisesRegex(validator.ValidationError, "never OFFSET"):
+            validator.validate_spring_source()
 
 
 class SourceBoundaryTests(unittest.TestCase):
