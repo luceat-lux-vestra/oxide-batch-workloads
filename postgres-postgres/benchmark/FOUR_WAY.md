@@ -12,8 +12,8 @@ The four candidates are:
 
 1. `raw_rust`: raw Rust/sqlx 0.9.0 control from #73;
 2. `oxide`: exact published OxideBatch 0.6.0 workload;
-3. `raw_java`: Java 21 + exact pgjdbc 42.7.13 direct-JDBC control;
-4. `spring`: Java 21 + exact Spring Batch 6.0.5 + pgjdbc 42.7.13.
+3. `raw_java`: Java 25 + exact pgjdbc 42.7.13 direct-JDBC control;
+4. `spring`: Java 25 + exact Spring Batch 6.0.5 + pgjdbc 42.7.13.
 
 The meaningful attribution pairs are deliberately distinct:
 

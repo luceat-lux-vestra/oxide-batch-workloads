@@ -82,8 +82,8 @@ def validate_enforcer_execution(root: ET.Element) -> None:
         raise ValidationError("missing spring-batch enforcer rules")
     require_child_shape(rules, EXPECTED_RULES, "enforcer rules")
 
-    if text(rules.find("m:requireJavaVersion/m:version", NS), "required Java version") != "[21,22)":
-        raise ValidationError("spring-batch enforcer Java range must remain [21,22)")
+    if text(rules.find("m:requireJavaVersion/m:version", NS), "required Java version") != "[25,26)":
+        raise ValidationError("spring-batch enforcer Java range must remain [25,26)")
     if text(rules.find("m:requireMavenVersion/m:version", NS), "required Maven version") != "[3.9,4.0)":
         raise ValidationError("spring-batch enforcer Maven range must remain [3.9,4.0)")
     if text(rules.find("m:requireReleaseDeps/m:onlyWhenRelease", NS), "requireReleaseDeps onlyWhenRelease") != "true":

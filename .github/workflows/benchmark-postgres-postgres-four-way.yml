@@ -63,16 +63,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Select runner Java 21 and freeze JVM environment
+      - name: Select runner Java 25 and freeze JVM environment
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${JAVA_HOME_21_X64:-}" && -x "$JAVA_HOME_21_X64/bin/java" ]] || { echo "::error::runner Java 21 is unavailable"; exit 1; }
-          export JAVA_HOME="$JAVA_HOME_21_X64"
+          [[ -n "${JAVA_HOME_25_X64:-}" && -x "$JAVA_HOME_25_X64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
+          export JAVA_HOME="$JAVA_HOME_25_X64"
           export PATH="$JAVA_HOME/bin:$PATH"
           [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || { echo "::error::ambient JVM tuning flags are forbidden"; exit 1; }
           java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
-          [[ "$java_major" == "21" ]] || { echo "::error::expected Java 21, got ${java_major:-unknown}"; exit 1; }
+          [[ "$java_major" == "25" ]] || { echo "::error::expected Java 25, got ${java_major:-unknown}"; exit 1; }
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
           java -version

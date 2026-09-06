@@ -153,8 +153,8 @@ def validate_parent(root: ET.Element) -> None:
         )
 
     release = text(root.find("m:properties/m:maven.compiler.release", NS), "maven.compiler.release")
-    if release != "21":
-        raise ValidationError(f"Java benchmark must compile for Java 21, got {release!r}")
+    if release != "25":
+        raise ValidationError(f"Java benchmark must compile for Java 25, got {release!r}")
 
 
 def validate_raw(root: ET.Element) -> None:

@@ -18,7 +18,7 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.release>25</maven.compiler.release>
   </properties>
 
   <build>
@@ -33,7 +33,7 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.16.0</version>
         <configuration>
-          <release>21</release>
+          <release>25</release>
           <compilerArgs>
             <arg>-Xlint:all</arg>
             <arg>-Werror</arg>
@@ -59,7 +59,7 @@
             <configuration>
               <rules>
                 <requireJavaVersion>
-                  <version>[21,22)</version>
+                  <version>[25,26)</version>
                 </requireJavaVersion>
                 <requireMavenVersion>
                   <version>[3.9,4.0)</version>
