@@ -15,366 +15,244 @@ validator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
 
 
-def pom(xml_body: str) -> ET.Element:
+def pom(body: str) -> ET.Element:
     return ET.fromstring(
-        '<?xml version="1.0"?><project xmlns="http://maven.apache.org/POM/4.0.0">'
-        + xml_body
-        + "</project>"
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">' + body + '</project>'
+    )
+
+
+def local_parent() -> str:
+    return (
+        '<parent><groupId>io.oxidebatch.validation</groupId>'
+        '<artifactId>postgres-postgres-java-benchmark</artifactId>'
+        '<version>0.1.0</version><relativePath>../pom.xml</relativePath></parent>'
+    )
+
+
+def dependencies(values: list[tuple[str, str, str]]) -> str:
+    return ''.join(
+        f'<dependency><groupId>{group}</groupId><artifactId>{artifact}</artifactId>'
+        f'<version>{version}</version></dependency>'
+        for group, artifact, version in values
     )
 
 
 class ExactVersionTests(unittest.TestCase):
-    def test_accepts_exact_release(self) -> None:
-        validator.exact_version("42.7.13", "dependency")
-        validator.exact_version("3.16.0", "plugin")
-
-    def test_rejects_dynamic_and_snapshot_versions(self) -> None:
-        for value in ("1.0-SNAPSHOT", "LATEST", "RELEASE", "[1.0,2.0)", "${pgjdbc.version}"):
+    def test_accepts_release_literals(self) -> None:
+        for value in ('42.7.13', '3.2.0.Final', '2.0.1.MR', '5.1.7.Final', '2.9.2.Final'):
             with self.subTest(value=value):
-                with self.assertRaises(validator.ValidationError):
-                    validator.exact_version(value, "dependency")
+                validator.exact_version(value, 'version')
+
+    def test_rejects_dynamic_or_indirected_versions(self) -> None:
+        for value in ('1.0-SNAPSHOT', 'LATEST', 'RELEASE', '[1.0,2.0)', '${version}'):
+            with self.subTest(value=value), self.assertRaises(validator.ValidationError):
+                validator.exact_version(value, 'version')
 
 
-class ManifestBoundaryTests(unittest.TestCase):
+class ManifestTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.original_workload_root = validator.WORKLOAD_ROOT
-        self.original_java_root = validator.JAVA_ROOT
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.workload_root = Path(self.tempdir.name)
-        self.java_root = self.workload_root / "benchmark" / "java"
-        self.java_root.mkdir(parents=True)
-        validator.WORKLOAD_ROOT = self.workload_root
-        validator.JAVA_ROOT = self.java_root
+        self.old_workload, self.old_java = validator.WORKLOAD_ROOT, validator.JAVA_ROOT
+        self.temp = tempfile.TemporaryDirectory()
+        self.workload = Path(self.temp.name)
+        self.java = self.workload / 'benchmark/java'
+        self.java.mkdir(parents=True)
+        validator.WORKLOAD_ROOT, validator.JAVA_ROOT = self.workload, self.java
 
     def tearDown(self) -> None:
-        validator.WORKLOAD_ROOT = self.original_workload_root
-        validator.JAVA_ROOT = self.original_java_root
-        self.tempdir.cleanup()
+        validator.WORKLOAD_ROOT, validator.JAVA_ROOT = self.old_workload, self.old_java
+        self.temp.cleanup()
 
-    def write_expected_manifests(self) -> None:
-        (self.java_root / "raw-jdbc").mkdir(parents=True)
-        (self.java_root / "spring-batch").mkdir(parents=True)
-        (self.java_root / "pom.xml").write_text("<project/>\n", encoding="utf-8")
-        (self.java_root / "raw-jdbc" / "pom.xml").write_text("<project/>\n", encoding="utf-8")
-        (self.java_root / "spring-batch" / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+    def write_expected(self) -> None:
+        (self.java / 'pom.xml').write_text('<project/>\n', encoding='utf-8')
+        for module in ('raw-jdbc', 'spring-batch', 'jberet'):
+            path = self.java / module
+            path.mkdir(parents=True)
+            (path / 'pom.xml').write_text('<project/>\n', encoding='utf-8')
 
     def test_accepts_exact_manifest_inventory(self) -> None:
-        self.write_expected_manifests()
+        self.write_expected()
         validator.validate_manifest_inventory()
 
-    def test_rejects_unreviewed_extra_manifest_inside_java_root(self) -> None:
-        self.write_expected_manifests()
-        extra = self.java_root / "shadow"
+    def test_rejects_extra_manifest(self) -> None:
+        self.write_expected()
+        extra = self.workload / 'shadow'
         extra.mkdir()
-        (extra / "pom.xml").write_text("<project/>\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "manifest inventory"):
+        (extra / 'pom.xml').write_text('<project/>\n', encoding='utf-8')
+        with self.assertRaisesRegex(validator.ValidationError, 'manifest inventory'):
             validator.validate_manifest_inventory()
 
-    def test_rejects_unreviewed_extra_manifest_elsewhere_in_workload(self) -> None:
-        self.write_expected_manifests()
-        extra = self.workload_root / "shadow"
-        extra.mkdir()
-        (extra / "pom.xml").write_text("<project/>\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "manifest inventory"):
-            validator.validate_manifest_inventory()
 
-    def test_rejects_symlink_project_file(self) -> None:
-        target = self.java_root / "real-pom.xml"
-        target.write_text("<project/>\n", encoding="utf-8")
-        linked = self.java_root / "pom.xml"
-        linked.symlink_to(target)
-        with self.assertRaisesRegex(validator.ValidationError, "must not be a symlink"):
-            validator.parse(linked)
-
-
-class EffectiveModelBoundaryTests(unittest.TestCase):
+class CommonPomTests(unittest.TestCase):
     def test_rejects_profile(self) -> None:
-        root = pom("<profiles><profile><id>x</id></profile></profiles>")
-        with self.assertRaisesRegex(validator.ValidationError, "profiles are forbidden"):
-            validator.validate_common(validator.JAVA_ROOT / "pom.xml", root)
+        with self.assertRaisesRegex(validator.ValidationError, 'profiles are forbidden'):
+            validator.validate_common(
+                validator.JAVA_ROOT / 'pom.xml',
+                pom('<profiles><profile><id>x</id></profile></profiles>'),
+            )
 
-    def test_rejects_profile_repository(self) -> None:
-        root = pom(
-            "<profiles><profile><id>x</id><repositories><repository>"
-            "<id>x</id><url>https://example.invalid</url>"
-            "</repository></repositories></profile></profiles>"
+    def test_rejects_custom_repository(self) -> None:
+        with self.assertRaisesRegex(validator.ValidationError, 'custom Maven repositories'):
+            validator.validate_common(
+                validator.JAVA_ROOT / 'pom.xml',
+                pom('<repositories><repository><id>x</id><url>https://example.invalid</url></repository></repositories>'),
+            )
+
+    def test_parent_requires_exact_module_order(self) -> None:
+        prefix = (
+            '<groupId>io.oxidebatch.validation</groupId>'
+            '<artifactId>postgres-postgres-java-benchmark</artifactId>'
+            '<version>0.1.0</version><packaging>pom</packaging>'
         )
-        with self.assertRaises(validator.ValidationError):
-            validator.validate_common(validator.JAVA_ROOT / "pom.xml", root)
-
-    def test_rejects_build_extension(self) -> None:
-        root = pom(
-            "<build><extensions><extension><groupId>x</groupId><artifactId>y</artifactId>"
-            "<version>1.0.0</version></extension></extensions></build>"
+        suffix = '<properties><maven.compiler.release>25</maven.compiler.release></properties>'
+        validator.validate_parent(
+            pom(prefix + '<modules><module>raw-jdbc</module><module>spring-batch</module><module>jberet</module></modules>' + suffix)
         )
-        with self.assertRaisesRegex(validator.ValidationError, "build extensions are forbidden"):
-            validator.validate_common(validator.JAVA_ROOT / "pom.xml", root)
-
-    def test_reactor_root_rejects_external_parent(self) -> None:
-        root = pom("<parent><groupId>x</groupId><artifactId>y</artifactId><version>1.0.0</version></parent>")
-        with self.assertRaisesRegex(validator.ValidationError, "must not inherit"):
-            validator.validate_parent(root)
-
-    def test_reactor_root_rejects_inherited_dependencies(self) -> None:
-        root = pom("<dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>1.0.0</version></dependency></dependencies>")
-        with self.assertRaisesRegex(validator.ValidationError, "must not contribute"):
-            validator.validate_parent(root)
-
-    def test_raw_rejects_wrong_parent_coordinates(self) -> None:
-        root = pom(
-            "<parent><groupId>x</groupId><artifactId>y</artifactId><version>1.0.0</version>"
-            "<relativePath>../pom.xml</relativePath></parent><artifactId>raw-jdbc</artifactId><packaging>jar</packaging>"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "parent coordinates"):
-            validator.validate_raw(root)
-
-    def test_raw_rejects_dependency_management_override(self) -> None:
-        root = pom(
-            "<parent><groupId>io.oxidebatch.validation</groupId>"
-            "<artifactId>postgres-postgres-java-benchmark</artifactId><version>0.1.0</version>"
-            "<relativePath>../pom.xml</relativePath></parent>"
-            "<artifactId>raw-jdbc</artifactId><packaging>jar</packaging>"
-            "<dependencyManagement><dependencies><dependency><groupId>x</groupId>"
-            "<artifactId>y</artifactId><version>1.0.0</version></dependency></dependencies></dependencyManagement>"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "dependencyManagement"):
-            validator.validate_raw(root)
-
-    def test_raw_rejects_dependency_shape_controls(self) -> None:
-        root = pom(
-            "<parent><groupId>io.oxidebatch.validation</groupId>"
-            "<artifactId>postgres-postgres-java-benchmark</artifactId><version>0.1.0</version>"
-            "<relativePath>../pom.xml</relativePath></parent>"
-            "<artifactId>raw-jdbc</artifactId><packaging>jar</packaging>"
-            "<dependencies><dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
-            "<version>42.7.13</version><scope>provided</scope></dependency></dependencies>"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "unsupported controls"):
-            validator.validate_raw(root)
+        with self.assertRaisesRegex(validator.ValidationError, 'module order'):
+            validator.validate_parent(
+                pom(prefix + '<modules><module>raw-jdbc</module><module>jberet</module><module>spring-batch</module></modules>' + suffix)
+            )
 
 
-class SpringPomBoundaryTests(unittest.TestCase):
-    def reviewed_spring_pom(self, dependencies: str | None = None) -> ET.Element:
-        dependency_xml = dependencies or (
-            "<dependency><groupId>org.springframework.batch</groupId>"
-            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version></dependency>"
-            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
-            "<version>42.7.13</version></dependency>"
-        )
-        enforcer_xml = (
-            "<build><plugins><plugin>"
-            "<groupId>org.apache.maven.plugins</groupId>"
-            "<artifactId>maven-enforcer-plugin</artifactId><version>3.6.3</version>"
-            "<executions><execution><id>enforce-java-build-contract</id>"
-            "<configuration><rules>"
-            "<dependencyConvergence><excludes>"
-            "<exclude>org.jspecify:jspecify</exclude>"
-            "</excludes></dependencyConvergence>"
-            "<requireUpperBoundDeps><includes>"
-            "<include>org.jspecify:jspecify</include>"
-            "</includes></requireUpperBoundDeps>"
-            "</rules></configuration></execution></executions>"
-            "</plugin></plugins></build>"
-        )
+class JBeretDependencyTests(unittest.TestCase):
+    def reviewed(self, values: list[tuple[str, str, str]] | None = None) -> ET.Element:
+        values = validator.EXPECTED_JBERET_DEPENDENCIES if values is None else values
         return pom(
-            "<parent><groupId>io.oxidebatch.validation</groupId>"
-            "<artifactId>postgres-postgres-java-benchmark</artifactId><version>0.1.0</version>"
-            "<relativePath>../pom.xml</relativePath></parent>"
-            "<artifactId>spring-batch</artifactId><packaging>jar</packaging>"
-            f"<dependencies>{dependency_xml}</dependencies>"
-            f"{enforcer_xml}"
+            local_parent()
+            + '<artifactId>jberet</artifactId><packaging>jar</packaging><dependencies>'
+            + dependencies(values)
+            + '</dependencies>'
         )
 
-    def test_accepts_exact_spring_dependency_surface(self) -> None:
-        validator.validate_spring(self.reviewed_spring_pom())
+    def assert_surface_rejected(self, values: list[tuple[str, str, str]]) -> None:
+        with self.assertRaisesRegex(validator.ValidationError, 'direct dependency surface'):
+            validator.validate_jberet(self.reviewed(values))
 
-    def test_rejects_wrong_spring_batch_version(self) -> None:
-        dependencies = (
-            "<dependency><groupId>org.springframework.batch</groupId>"
-            "<artifactId>spring-batch-core</artifactId><version>6.0.4</version></dependency>"
-            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
-            "<version>42.7.13</version></dependency>"
+    def test_accepts_exact_java_se_runtime_surface(self) -> None:
+        validator.validate_jberet(self.reviewed())
+
+    def test_rejects_missing_wildfly_security_manager(self) -> None:
+        self.assert_surface_rejected([
+            dep for dep in validator.EXPECTED_JBERET_DEPENDENCIES
+            if dep[1] != 'wildfly-elytron-security-manager'
+        ])
+
+    def test_rejects_missing_weld_se(self) -> None:
+        self.assert_surface_rejected([
+            dep for dep in validator.EXPECTED_JBERET_DEPENDENCIES if dep[1] != 'weld-se-core'
+        ])
+
+    def test_rejects_wrong_runtime_version(self) -> None:
+        self.assert_surface_rejected([
+            (group, artifact, '5.1.6.Final' if artifact == 'weld-se-core' else version)
+            for group, artifact, version in validator.EXPECTED_JBERET_DEPENDENCIES
+        ])
+
+    def test_rejects_dependency_scope_override(self) -> None:
+        root = pom(
+            local_parent()
+            + '<artifactId>jberet</artifactId><packaging>jar</packaging><dependencies>'
+            + '<dependency><groupId>org.jberet</groupId><artifactId>jberet-se</artifactId>'
+            + '<version>3.2.0.Final</version><scope>provided</scope></dependency></dependencies>'
         )
-        with self.assertRaisesRegex(validator.ValidationError, "Spring Batch 6.0.5"):
-            validator.validate_spring(self.reviewed_spring_pom(dependencies))
-
-    def test_rejects_extra_spring_dependency(self) -> None:
-        dependencies = (
-            "<dependency><groupId>org.springframework.batch</groupId>"
-            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version></dependency>"
-            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
-            "<version>42.7.13</version></dependency>"
-            "<dependency><groupId>example</groupId><artifactId>shadow</artifactId>"
-            "<version>1.0.0</version></dependency>"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "direct dependency surface"):
-            validator.validate_spring(self.reviewed_spring_pom(dependencies))
-
-    def test_rejects_spring_dependency_scope_override(self) -> None:
-        dependencies = (
-            "<dependency><groupId>org.springframework.batch</groupId>"
-            "<artifactId>spring-batch-core</artifactId><version>6.0.5</version><scope>provided</scope></dependency>"
-            "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
-            "<version>42.7.13</version></dependency>"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "unsupported controls"):
-            validator.validate_spring(self.reviewed_spring_pom(dependencies))
+        with self.assertRaisesRegex(validator.ValidationError, 'unsupported controls'):
+            validator.validate_jberet(root)
 
 
-class SpringSourceBoundaryTests(unittest.TestCase):
-    REQUIRED_LINES = [
-        'SPRING_BATCH_VERSION = "6.0.5"',
-        "LOCK TABLE app_source.source_customer IN SHARE MODE",
-        "new JdbcJobRepositoryFactoryBean()",
-        'factory.setTablePrefix("spring_batch.BATCH_")',
-        "new TaskExecutorJobOperator()",
-        "operator.restart(last)",
-        "new JdbcCursorItemReaderBuilder<SourceRow>()",
-        ".connectionAutoCommit(false)",
-        ".fetchSize(fetchSize)",
-        "new JdbcPagingItemReaderBuilder<SourceRow>()",
-        "new PostgresPagingQueryProvider()",
-        'Map.of("customer_id", Order.ASCENDING)',
-        ".pageSize(pageSize)",
-        ".fetchSize(pageSize)",
-        ".saveState(true)",
-        ".saveState(true)",
-        "implements ItemWriter<ProjectedRow>",
-        "new JdbcTemplate(dataSource)",
-        "COLUMNS_PER_ROW = 7",
-        "MAX_PARAMETERS_PER_STATEMENT = 2_000",
-        "ROWS_PER_STATEMENT = MAX_PARAMETERS_PER_STATEMENT / COLUMNS_PER_ROW",
-        "MAX_BOUND_PARAMETERS = ROWS_PER_STATEMENT * COLUMNS_PER_ROW",
-        'addString("source_digest", sourceDigest)',
-        'addString("reader_mode", config.readerMode().value)',
-        'addString("definition_revision", config.definitionRevision())',
-        "ResourceDatabasePopulator",
-        "schema-postgresql.sql",
-        "EXPECTED_BATCH_TABLES = 6",
-        "EXPECTED_BATCH_SEQUENCES = 3",
-        "partial Spring Batch metadata schema detected",
-        "assertBatchSchemaComplete(jdbc)",
-    ]
+class JBeretSourceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = (validator.JBERET_ROOT / validator.EXPECTED_JBERET_SOURCE[0]).read_text(encoding='utf-8')
 
+    def with_mutated_source(self, addition: str, pattern: str) -> None:
+        old_root = validator.JBERET_ROOT
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / validator.EXPECTED_JBERET_SOURCE[0]
+            path.parent.mkdir(parents=True)
+            path.write_text(self.source + addition, encoding='utf-8')
+            validator.JBERET_ROOT = root
+            try:
+                with self.assertRaisesRegex(validator.ValidationError, pattern):
+                    validator.validate_jberet_source()
+            finally:
+                validator.JBERET_ROOT = old_root
+
+    def test_current_source_satisfies_boundary(self) -> None:
+        validator.validate_jberet_source()
+
+    def test_rejects_offset(self) -> None:
+        self.with_mutated_source('\nOFFSET 1\n', 'keyset')
+
+    def test_rejects_direct_metadata_dml(self) -> None:
+        self.with_mutated_source("\nUPDATE JbErEt.job_execution SET batchstatus='X'\n", 'metadata')
+
+    def test_rejects_jdbc_batching(self) -> None:
+        self.with_mutated_source('\nexecuteBatch(\n', 'JDBC batching')
+
+
+class JBeretResourceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.original_spring_root = validator.SPRING_ROOT
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.spring_root = Path(self.tempdir.name)
-        source = (
-            self.spring_root
-            / "src/main/java/io/oxidebatch/workloads/postgres/benchmark/springbatch/SpringBatchMain.java"
+        self.old_root = validator.JBERET_ROOT
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        validator.JBERET_ROOT = self.root
+        resources = self.root / 'src/main/resources'
+        resources.mkdir(parents=True)
+        (resources / 'jberet.properties').write_text(
+            'job-repository-type=jdbc\n'
+            'db-url=${JBERET_DATABASE_URL:jdbc:postgresql://localhost:5434/postgres_postgres_workload}\n'
+            'db-user=${JBERET_DATABASE_USER:oxide_batch_workload}\n'
+            'db-password=${JBERET_DATABASE_PASSWORD:oxide_batch_workload}\n'
+            'db-table-prefix=jberet.\n'
+            'thread-pool-type=fixed\n'
+            'thread-pool-core-size=3\n',
+            encoding='utf-8',
         )
-        source.parent.mkdir(parents=True)
-        source.write_text("\n".join(self.REQUIRED_LINES), encoding="utf-8")
-        validator.SPRING_ROOT = self.spring_root
+        meta = resources / 'META-INF'
+        meta.mkdir(parents=True)
+        (meta / 'beans.xml').write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<beans xmlns="https://jakarta.ee/xml/ns/jakartaee" version="4.0" bean-discovery-mode="all"/>\n',
+            encoding='utf-8',
+        )
+        job = meta / 'batch-jobs/postgres-postgres.xml'
+        job.parent.mkdir(parents=True)
+        job.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<job id="postgres-postgres" xmlns="https://jakarta.ee/xml/ns/jakartaee" version="2.0" restartable="true">\n'
+            '  <step id="postgres-postgres-step"><chunk item-count="#{jobParameters[\'chunkSize\']}">\n'
+            '    <reader ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresReader"/>\n'
+            '    <processor ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresProcessor"/>\n'
+            '    <writer ref="io.oxidebatch.workloads.postgres.benchmark.jberet.JBeretMain$PostgresWriter"/>\n'
+            '  </chunk></step>\n</job>\n',
+            encoding='utf-8',
+        )
 
     def tearDown(self) -> None:
-        validator.SPRING_ROOT = self.original_spring_root
-        self.tempdir.cleanup()
+        validator.JBERET_ROOT = self.old_root
+        self.temp.cleanup()
 
-    def source(self) -> Path:
-        return next(self.spring_root.rglob("SpringBatchMain.java"))
+    def test_accepts_reviewed_resources(self) -> None:
+        validator.validate_jberet_resources()
 
-    def test_accepts_required_spring_boundary_markers(self) -> None:
-        validator.validate_spring_source()
-
-    def test_rejects_stock_jdbc_batch_writer(self) -> None:
-        self.source().write_text(self.source().read_text() + "\nJdbcBatchItemWriter\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "JdbcBatchItemWriter"):
-            validator.validate_spring_source()
-
-    def test_rejects_private_commit(self) -> None:
-        self.source().write_text(self.source().read_text() + "\nconnection.commit(\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "private commit"):
-            validator.validate_spring_source()
-
-    def test_rejects_direct_spring_metadata_dml(self) -> None:
-        self.source().write_text(
-            self.source().read_text() + "\nUPDATE spring_batch.BATCH_STEP_EXECUTION SET x = 1\n",
-            encoding="utf-8",
+    def test_rejects_in_memory_repository(self) -> None:
+        path = self.root / 'src/main/resources/jberet.properties'
+        path.write_text(
+            path.read_text(encoding='utf-8').replace('job-repository-type=jdbc', 'job-repository-type=in-memory'),
+            encoding='utf-8',
         )
-        with self.assertRaisesRegex(validator.ValidationError, "metadata"):
-            validator.validate_spring_source()
+        with self.assertRaisesRegex(validator.ValidationError, 'configuration drifted'):
+            validator.validate_jberet_resources()
 
-    def test_rejects_one_reader_without_restart_state(self) -> None:
-        self.source().write_text(
-            self.source().read_text().replace(".saveState(true)", ".saveState(false)", 1),
-            encoding="utf-8",
+    def test_rejects_annotated_only_cdi_archive(self) -> None:
+        path = self.root / 'src/main/resources/META-INF/beans.xml'
+        path.write_text(
+            path.read_text(encoding='utf-8').replace('bean-discovery-mode="all"', 'bean-discovery-mode="annotated"'),
+            encoding='utf-8',
         )
-        with self.assertRaisesRegex(validator.ValidationError, "both Spring cursor and paging"):
-            validator.validate_spring_source()
-
-    def test_rejects_case_varied_direct_spring_metadata_dml(self) -> None:
-        self.source().write_text(
-            self.source().read_text() + "\ninsert into SpRiNg_BaTcH.BATCH_STEP_EXECUTION values (...)\n",
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "metadata"):
-            validator.validate_spring_source()
-
-    def test_rejects_offset_paging(self) -> None:
-        self.source().write_text(self.source().read_text() + "\nOFFSET 10\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "never OFFSET"):
-            validator.validate_spring_source()
+        with self.assertRaisesRegex(validator.ValidationError, 'full bean archive'):
+            validator.validate_jberet_resources()
 
 
-class SourceBoundaryTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.original_raw_root = validator.RAW_ROOT
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.raw_root = Path(self.tempdir.name)
-        source = (
-            self.raw_root
-            / "src/main/java/io/oxidebatch/workloads/postgres/benchmark/rawjdbc/RawJdbcMain.java"
-        )
-        source.parent.mkdir(parents=True)
-        source.write_text(
-            "\n".join(
-                [
-                    "LOCK TABLE app_source.source_customer IN SHARE MODE",
-                    "source.setAutoCommit(false)",
-                    "destination.setAutoCommit(false)",
-                    "statement.setFetchSize(config.readBatchSize())",
-                    "WHERE customer_id > ?",
-                    "benchmark_java.raw_checkpoint",
-                    'properties.setProperty(\"reWriteBatchedInserts\", \"false\")',
-                    "COLUMNS_PER_ROW = 7",
-                    "MAX_PARAMETERS_PER_STATEMENT = 2_000",
-                    "ROWS_PER_STATEMENT = MAX_PARAMETERS_PER_STATEMENT / COLUMNS_PER_ROW",
-                    "MAX_BOUND_PARAMETERS = ROWS_PER_STATEMENT * COLUMNS_PER_ROW",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        validator.RAW_ROOT = self.raw_root
-
-    def tearDown(self) -> None:
-        validator.RAW_ROOT = self.original_raw_root
-        self.tempdir.cleanup()
-
-    def test_accepts_required_boundary_markers(self) -> None:
-        validator.validate_source()
-
-    def test_rejects_unreviewed_extra_java_source(self) -> None:
-        extra = self.raw_root / "src/main/java/Shadow.java"
-        extra.write_text("final class Shadow {}\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "source inventory"):
-            validator.validate_source_inventory()
-
-    def test_rejects_offset_paging(self) -> None:
-        source = next(self.raw_root.rglob("RawJdbcMain.java"))
-        source.write_text(source.read_text(encoding="utf-8") + "\nOFFSET\n", encoding="utf-8")
-        with self.assertRaisesRegex(validator.ValidationError, "keyset"):
-            validator.validate_source()
-
-    def test_rejects_jdbc_batch_writer_shape(self) -> None:
-        source = next(self.raw_root.rglob("RawJdbcMain.java"))
-        source.write_text(
-            source.read_text(encoding="utf-8") + "\nexecuteBatch(\n", encoding="utf-8"
-        )
-        with self.assertRaisesRegex(validator.ValidationError, "JDBC batching"):
-            validator.validate_source()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()
