@@ -51,7 +51,7 @@ Business rows plus checkpoint advancement commit atomically in one JDBC
 transaction. `--fail-after-chunk N` is a typed pre-commit failure used for the
 PR1 rollback/continuation proof.
 
-## Spring Batch durability
+## Spring Batch durability and crash recovery
 
 Spring Batch owns only `spring_batch.*` metadata, initialized from Spring
 Batch's official PostgreSQL schema script. Migration fails closed on a partial
@@ -66,12 +66,28 @@ Both Spring readers persist restart state. The cursor candidate uses
 manager as the Spring step, so business writes and the framework checkpoint
 share the chunk transaction. It never commits or rolls back privately.
 
-For PR2, `--fail-after-chunk N` injects a typed failure after business writes
-but before the chunk commit. Re-running the same identifying job parameters
-uses the public `JobOperator.restart(JobExecution)` path and must resume from
-the durable execution context without duplicates or skips. External SIGKILL,
-non-terminal execution recovery through `JobOperator.recover`, and genuinely
-new-process crash continuation are intentionally deferred to PR3.
+PR2 proves typed rollback and public restart. `--fail-after-chunk N` injects a
+typed failure after business writes but before the chunk commit; re-running the
+same identifying job parameters resumes through
+`JobOperator.restart(JobExecution)` without duplicates or skips.
+
+PR3 adds real external-process death evidence. The candidate never kills,
+aborts, or exits itself. Test-only `--pause-at-chunk`, `--pause-phase`, and
+`--pause-marker` controls only create an exclusive marker containing the live
+JVM PID and then wait passively for the CI parent to send `SIGKILL`. The
+`before-commit` marker is emitted after business SQL while the chunk transaction
+is still open. The `after-commit` marker is emitted from Spring transaction
+`afterCommit`, after the chunk transaction has successfully committed.
+
+An externally killed Spring execution remains non-terminal. A separate JVM uses
+public `JobOperator.recover(JobExecution)` to mark that execution failed; a
+third JVM then uses the normal public restart path. CI proves both crash phases
+for cursor and paging readers, validates the durable 200/300-row prefixes, and
+finishes against the independent Rust verifier. Before either a new run or
+public recovery, the candidate pages existing JobRepository history for the
+same import/reader/definition identity and rejects a changed source digest.
+This prevents a mutated source from silently becoming a new JobInstance after
+a crash.
 
 ## Local build
 
@@ -99,13 +115,15 @@ The repository-wide Cargo scan remains unchanged for the Rust workload graph.
 Because this directory contains a nested Maven ecosystem, the central
 `supply-chain` validator fails closed if Maven manifests exist without the
 workload-owned executable `ci/validate-supply-chain` hook. The hook enforces the
-reviewed Maven manifest and Java source inventory and adversarially tests the
-single-coordinate Spring convergence exception. Protected workload CI also
-resolves both Java runtime dependency trees and builds the reactor on Java 21.
-GitHub `dependency-review` remains the diff-scoped dependency gate. Frozen
-comparison subjects such as pgjdbc and Spring Batch are advanced only by an
-explicit validation campaign, not routine dependency churn.
+reviewed Maven manifest and Java source inventory, adversarially tests the
+single-coordinate Spring convergence exception, and guards the PR3 external
+crash/recovery controls against self-termination or transaction-boundary drift.
+Protected workload CI also resolves both Java runtime dependency trees and
+builds the reactor on Java 21. GitHub `dependency-review` remains the
+diff-scoped dependency gate. Frozen comparison subjects such as pgjdbc and
+Spring Batch are advanced only by an explicit validation campaign, not routine
+dependency churn.
 
-No number emitted by PR1 or PR2 is campaign performance evidence or a
+No number emitted by PR1, PR2, or PR3 is campaign performance evidence or a
 performance claim. Four-way measurement starts only in PR4 after correctness
 and crash-recovery obligations pass.

@@ -668,6 +668,7 @@ run_ci_stage() {
   run_raw_sqlx_database_checks
   run_raw_jdbc_database_checks
   run_spring_batch_database_checks
+  ./ci/validate-spring-crash-recovery
 }
 
 run_msrv_stage() {

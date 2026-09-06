@@ -3,6 +3,9 @@ package io.oxidebatch.workloads.postgres.benchmark.springbatch;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -19,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 
 import javax.sql.DataSource;
 
@@ -51,6 +55,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Spring Batch 6.0.5 semantic-parity candidate for campaign #79.
@@ -76,6 +82,7 @@ public final class SpringBatchMain {
     private static final int MAX_CHUNK_SIZE = 1_000_000;
     private static final int MAX_READ_BATCH_SIZE = 1_000_000;
     private static final int FINGERPRINT_LEN = 16;
+    private static final int HISTORY_PAGE_SIZE = 100;
     private static final long PREMIUM_THRESHOLD_CENTS = 50_000L;
     private static final String BATCH_SCHEMA_RESOURCE = "org/springframework/batch/core/schema-postgresql.sql";
     private static final int EXPECTED_BATCH_TABLES = 6;
@@ -98,6 +105,7 @@ public final class SpringBatchMain {
         switch (cli.command()) {
             case "migrate" -> migrate(cli.database());
             case "run" -> run(cli.database(), RunConfig.parse(cli.options()));
+            case "recover" -> recover(cli.database(), RunConfig.parseForRecover(cli.options()));
             default -> throw new IllegalArgumentException("unknown command: " + cli.command());
         }
     }
@@ -175,6 +183,9 @@ public final class SpringBatchMain {
             DataSource dataSource = springDataSource(database);
             DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
             JobRepository jobRepository = jobRepository(dataSource, transactionManager);
+
+            assertLogicalSourceCompatible(jobRepository, config, sourceDigest);
+
             JobParameters parameters = jobParameters(config, sourceDigest);
             Job job = buildJob(jobRepository, transactionManager, dataSource, config, sourceDigest);
             JobOperator operator = jobOperator(jobRepository, job);
@@ -194,6 +205,113 @@ public final class SpringBatchMain {
                                 + " failures=" + execution.getAllFailureExceptions());
             }
         }
+    }
+
+    private static void recover(DatabaseConfig database, RunConfig config) throws Exception {
+        try (Connection sourceLock = connectBase(database)) {
+            sourceLock.setAutoCommit(false);
+            try (Statement lock = sourceLock.createStatement()) {
+                lock.execute("LOCK TABLE app_source.source_customer IN SHARE MODE");
+            }
+
+            String sourceDigest = sourceDigest(sourceLock);
+            DataSource dataSource = springDataSource(database);
+            DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+            JobRepository jobRepository = jobRepository(dataSource, transactionManager);
+
+            assertLogicalSourceCompatible(jobRepository, config, sourceDigest);
+            JobExecution execution = latestLogicalExecution(jobRepository, config, sourceDigest);
+            if (execution == null) {
+                throw new IllegalStateException("no Spring Batch execution exists for requested logical identity");
+            }
+            if (execution.getStatus() != BatchStatus.STARTED) {
+                throw new IllegalStateException(
+                        "Spring Batch execution is not recoverable: execution_id=" + execution.getId()
+                                + " status=" + execution.getStatus());
+            }
+
+            Job job = buildJob(jobRepository, transactionManager, dataSource, config, sourceDigest);
+            JobOperator operator = jobOperator(jobRepository, job);
+            JobExecution recovered = operator.recover(execution);
+            System.out.printf(
+                    Locale.ROOT,
+                    "source_digest=%s reader_mode=%s execution_id=%d recovered_status=%s%n",
+                    sourceDigest,
+                    config.readerMode().value,
+                    recovered.getId(),
+                    recovered.getStatus());
+            if (recovered.getStatus() != BatchStatus.FAILED) {
+                throw new IllegalStateException(
+                        "Spring Batch recovery did not mark execution FAILED: id=" + recovered.getId()
+                                + " status=" + recovered.getStatus());
+            }
+        }
+    }
+
+    private static void assertLogicalSourceCompatible(
+            JobRepository jobRepository, RunConfig config, String currentSourceDigest) {
+        int start = 0;
+        while (true) {
+            List<JobInstance> instances = jobRepository.getJobInstances(JOB_NAME, start, HISTORY_PAGE_SIZE);
+            if (instances.isEmpty()) {
+                return;
+            }
+            for (JobInstance instance : instances) {
+                JobExecution execution = jobRepository.getLastJobExecution(instance);
+                if (execution == null || !sameLogicalIdentity(execution.getJobParameters(), config)) {
+                    continue;
+                }
+                String priorDigest = execution.getJobParameters().getString("source_digest");
+                if (priorDigest == null) {
+                    throw new IllegalStateException(
+                            "existing logical Spring execution lacks source_digest: instance_id=" + instance.getInstanceId());
+                }
+                if (!priorDigest.equals(currentSourceDigest)) {
+                    throw new IllegalStateException(
+                            "source digest changed for existing logical Spring execution: instance_id="
+                                    + instance.getInstanceId()
+                                    + " prior=" + priorDigest
+                                    + " current=" + currentSourceDigest);
+                }
+            }
+            if (instances.size() < HISTORY_PAGE_SIZE) {
+                return;
+            }
+            start = Math.addExact(start, instances.size());
+        }
+    }
+
+    private static JobExecution latestLogicalExecution(
+            JobRepository jobRepository, RunConfig config, String sourceDigest) {
+        JobExecution latest = null;
+        int start = 0;
+        while (true) {
+            List<JobInstance> instances = jobRepository.getJobInstances(JOB_NAME, start, HISTORY_PAGE_SIZE);
+            if (instances.isEmpty()) {
+                return latest;
+            }
+            for (JobInstance instance : instances) {
+                JobExecution execution = jobRepository.getLastJobExecution(instance);
+                if (execution == null
+                        || !sameLogicalIdentity(execution.getJobParameters(), config)
+                        || !sourceDigest.equals(execution.getJobParameters().getString("source_digest"))) {
+                    continue;
+                }
+                if (latest == null || execution.getId() > latest.getId()) {
+                    latest = execution;
+                }
+            }
+            if (instances.size() < HISTORY_PAGE_SIZE) {
+                return latest;
+            }
+            start = Math.addExact(start, instances.size());
+        }
+    }
+
+    private static boolean sameLogicalIdentity(JobParameters parameters, RunConfig config) {
+        return config.importName().equals(parameters.getString("import_name"))
+                && config.readerMode().value.equals(parameters.getString("reader_mode"))
+                && config.definitionRevision().equals(parameters.getString("definition_revision"));
     }
 
     private static JobExecution launchOrRestart(
@@ -251,7 +369,8 @@ public final class SpringBatchMain {
                 ? cursorReader(dataSource, config.readBatchSize())
                 : pagingReader(dataSource, config.readBatchSize());
         ItemProcessor<SourceRow, ProjectedRow> processor = source -> project(config.importName(), sourceDigest, source);
-        ItemWriter<ProjectedRow> writer = new ParityWriter(dataSource, config.failAfterChunk());
+        ItemWriter<ProjectedRow> writer =
+                new ParityWriter(dataSource, config.failAfterChunk(), config.pauseConfig());
 
         Step step = new StepBuilder(STEP_NAME, jobRepository)
                 .<SourceRow, ProjectedRow>chunk(config.chunkSize())
@@ -367,11 +486,13 @@ public final class SpringBatchMain {
     private static final class ParityWriter implements ItemWriter<ProjectedRow> {
         private final JdbcTemplate jdbcTemplate;
         private final Long failAfterChunk;
+        private final PauseConfig pauseConfig;
         private long writeInvocation;
 
-        ParityWriter(DataSource dataSource, Long failAfterChunk) {
+        ParityWriter(DataSource dataSource, Long failAfterChunk, PauseConfig pauseConfig) {
             this.jdbcTemplate = new JdbcTemplate(dataSource);
             this.failAfterChunk = failAfterChunk;
+            this.pauseConfig = pauseConfig;
         }
 
         @Override
@@ -389,6 +510,27 @@ public final class SpringBatchMain {
                 throw new InjectedFailure(
                         "injected Spring writer failure after business writes before chunk commit at invocation "
                                 + writeInvocation);
+            }
+            if (pauseConfig != null && writeInvocation == pauseConfig.chunk()) {
+                long currentChunk = writeInvocation;
+                if (pauseConfig.phase() == PausePhase.BEFORE_COMMIT) {
+                    pauseAtMarker(pauseConfig, currentChunk);
+                } else {
+                    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+                        throw new IllegalStateException(
+                                "Spring transaction synchronization is not active for after-commit pause");
+                    }
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                pauseAtMarker(pauseConfig, currentChunk);
+                            } catch (Exception error) {
+                                throw new IllegalStateException("failed to enter after-commit pause", error);
+                            }
+                        }
+                    });
+                }
             }
         }
 
@@ -429,6 +571,21 @@ public final class SpringBatchMain {
                         "writer affected " + affected + " rows for expected batch size " + rows.size());
             }
         }
+    }
+
+    private static void pauseAtMarker(PauseConfig pauseConfig, long chunk) throws Exception {
+        long pid = ProcessHandle.current().pid();
+        String marker = "pid=" + pid
+                + " phase=" + pauseConfig.phase().value
+                + " chunk=" + chunk
+                + System.lineSeparator();
+        Files.writeString(
+                pauseConfig.marker(),
+                marker,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
+        new CountDownLatch(1).await();
     }
 
     private static DataSource springDataSource(DatabaseConfig database) {
@@ -507,6 +664,26 @@ public final class SpringBatchMain {
         }
     }
 
+    private enum PausePhase {
+        BEFORE_COMMIT("before-commit"),
+        AFTER_COMMIT("after-commit");
+
+        private final String value;
+
+        PausePhase(String value) {
+            this.value = value;
+        }
+
+        static PausePhase parse(String value) {
+            return switch (value) {
+                case "before-commit" -> BEFORE_COMMIT;
+                case "after-commit" -> AFTER_COMMIT;
+                default -> throw new IllegalArgumentException(
+                        "--pause-phase must be before-commit or after-commit");
+            };
+        }
+    }
+
     private record DatabaseConfig(String url, String user, String password) {}
 
     private record SourceRow(long customerId, String fullName, boolean active, long balanceCents) {}
@@ -520,17 +697,33 @@ public final class SpringBatchMain {
             boolean premium,
             byte[] fingerprint) {}
 
+    private record PauseConfig(long chunk, PausePhase phase, Path marker) {}
+
     private record RunConfig(
             String importName,
             ReaderMode readerMode,
             int chunkSize,
             int readBatchSize,
-            Long failAfterChunk) {
+            Long failAfterChunk,
+            PauseConfig pauseConfig) {
         String definitionRevision() {
             return readerMode == ReaderMode.CURSOR ? CURSOR_DEFINITION_REVISION : PAGING_DEFINITION_REVISION;
         }
 
         static RunConfig parse(Options options) {
+            return parseCommon(options, true);
+        }
+
+        static RunConfig parseForRecover(Options options) {
+            RunConfig config = parseCommon(options, false);
+            if (config.failAfterChunk() != null || config.pauseConfig() != null) {
+                throw new IllegalArgumentException(
+                        "recover does not accept --fail-after-chunk or crash pause options");
+            }
+            return config;
+        }
+
+        private static RunConfig parseCommon(Options options, boolean allowFailureControls) {
             String importName = required(options, "import-name");
             ReaderMode reader = ReaderMode.parse(required(options, "reader"));
             int chunkSize = positiveInt(options, "chunk-size", DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE);
@@ -545,18 +738,44 @@ public final class SpringBatchMain {
             int readBatchSize = reader == ReaderMode.CURSOR
                     ? positiveInt(options, "fetch-size", DEFAULT_FETCH_SIZE, MAX_READ_BATCH_SIZE)
                     : positiveInt(options, "page-size", DEFAULT_PAGE_SIZE, MAX_READ_BATCH_SIZE);
-            return new RunConfig(
-                    importName,
-                    reader,
-                    chunkSize,
-                    readBatchSize,
-                    optionalPositiveLong(options, "fail-after-chunk"));
+
+            Long failAfterChunk = optionalPositiveLong(options, "fail-after-chunk");
+            boolean hasPauseChunk = options.values().containsKey("pause-at-chunk");
+            boolean hasPausePhase = options.values().containsKey("pause-phase");
+            boolean hasPauseMarker = options.values().containsKey("pause-marker");
+            int pauseParts = (hasPauseChunk ? 1 : 0) + (hasPausePhase ? 1 : 0) + (hasPauseMarker ? 1 : 0);
+            if (pauseParts != 0 && pauseParts != 3) {
+                throw new IllegalArgumentException(
+                        "--pause-at-chunk, --pause-phase, and --pause-marker must be supplied together");
+            }
+            PauseConfig pause = null;
+            if (pauseParts == 3) {
+                if (!allowFailureControls) {
+                    throw new IllegalArgumentException("recover does not accept crash pause options");
+                }
+                long pauseChunk = optionalPositiveLong(options, "pause-at-chunk");
+                PausePhase pausePhase = PausePhase.parse(required(options, "pause-phase"));
+                Path marker = Path.of(required(options, "pause-marker"));
+                pause = new PauseConfig(pauseChunk, pausePhase, marker);
+            }
+            if (!allowFailureControls && failAfterChunk != null) {
+                throw new IllegalArgumentException("recover does not accept --fail-after-chunk");
+            }
+            return new RunConfig(importName, reader, chunkSize, readBatchSize, failAfterChunk, pause);
         }
     }
 
     private record Options(Map<String, String> values) {
         private static final java.util.Set<String> ALLOWED = java.util.Set.of(
-                "import-name", "reader", "chunk-size", "fetch-size", "page-size", "fail-after-chunk");
+                "import-name",
+                "reader",
+                "chunk-size",
+                "fetch-size",
+                "page-size",
+                "fail-after-chunk",
+                "pause-at-chunk",
+                "pause-phase",
+                "pause-marker");
 
         static Options parse(String[] args, int start) {
             Map<String, String> values = new LinkedHashMap<>();
@@ -580,7 +799,7 @@ public final class SpringBatchMain {
     private record Cli(String command, Options options, DatabaseConfig database) {
         static Cli parse(String[] args) {
             if (args.length < 1) {
-                throw new IllegalArgumentException("usage: spring-batch <migrate|run> [--key value ...]");
+                throw new IllegalArgumentException("usage: spring-batch <migrate|run|recover> [--key value ...]");
             }
             String command = args[0];
             Options options = Options.parse(args, 1);

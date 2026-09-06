@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+: "${SPRING_BATCH_CLASSPATH:?SPRING_BATCH_CLASSPATH must be set by ci/validate}"
+
+SPRING_MAIN="io.oxidebatch.workloads.postgres.benchmark.springbatch.SpringBatchMain"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+psql_scalar() {
+  compose exec -T postgres psql \
+    -U oxide_batch_workload \
+    -d postgres_postgres_workload \
+    -Atqc "$1"
+}
+
+psql_exec() {
+  compose exec -T postgres psql \
+    -U oxide_batch_workload \
+    -d postgres_postgres_workload \
+    -v ON_ERROR_STOP=1 \
+    -qc "$1"
+}
+
+assert_scalar() {
+  local sql="$1"
+  local expected="$2"
+  local actual
+  actual="$(psql_scalar "$sql")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "::error::Spring crash assertion failed: expected '$expected', got '$actual' for: $sql" >&2
+    exit 1
+  fi
+}
+
+expect_source_mutation_rejection() {
+  local kind="$1"
+  local log="$2"
+  shift 2
+
+  local status=0
+  if timeout --signal=KILL 60s java -cp "$SPRING_BATCH_CLASSPATH" "$SPRING_MAIN" "$@" >"$log" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 0 ]]; then
+    echo "::error::Spring $kind bypassed stale crashed execution after source mutation" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    echo "::error::Spring $kind timed out instead of proving source-mutation rejection (status $status)" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+  if ! grep -Fq 'source digest changed for existing logical Spring execution' "$log"; then
+    echo "::error::Spring $kind failed for an unproven reason; expected source-digest rejection" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+}
+
+wait_for_marker() {
+  local marker="$1"
+  local expected_pid="$2"
+  local expected_phase="$3"
+  local expected_chunk="$4"
+  local attempt
+  local expected="pid=${expected_pid} phase=${expected_phase} chunk=${expected_chunk}"
+
+  for attempt in $(seq 1 300); do
+    if [[ -f "$marker" && ! -L "$marker" ]]; then
+      local actual
+      actual="$(tr -d '\r\n' <"$marker")"
+      if [[ "$actual" != "$expected" ]]; then
+        echo "::error::Spring crash marker mismatch: expected '$expected', got '$actual'" >&2
+        return 1
+      fi
+      if ! kill -0 "$expected_pid" 2>/dev/null; then
+        echo "::error::Spring process died before parent SIGKILL: pid=$expected_pid" >&2
+        return 1
+      fi
+      return 0
+    fi
+    if ! kill -0 "$expected_pid" 2>/dev/null; then
+      echo "::error::Spring process exited before producing crash marker: pid=$expected_pid" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+
+  echo "::error::timed out waiting for Spring external-kill marker $marker" >&2
+  return 1
+}
+
+kill_and_reap_at_marker() {
+  local marker="$1"
+  local log="$2"
+  local phase="$3"
+  local chunk="$4"
+  shift 4
+
+  java -cp "$SPRING_BATCH_CLASSPATH" "$SPRING_MAIN" run "$@" \
+    --pause-at-chunk "$chunk" \
+    --pause-phase "$phase" \
+    --pause-marker "$marker" >"$log" 2>&1 &
+  local pid=$!
+
+  if ! wait_for_marker "$marker" "$pid" "$phase" "$chunk"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    cat "$log" >&2 || true
+    return 1
+  fi
+
+  kill -KILL "$pid"
+  local status=0
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 137 ]]; then
+    echo "::error::Spring crash process exited with status $status, expected SIGKILL status 137" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+  CRASHED_PID="$pid"
+}
+
+run_new_process() {
+  local kind="$1"
+  local log="$2"
+  shift 2
+
+  java -cp "$SPRING_BATCH_CLASSPATH" "$SPRING_MAIN" "$@" >"$log" 2>&1 &
+  local pid=$!
+
+  if [[ "$pid" == "$CRASHED_PID" ]]; then
+    echo "::error::$kind reused crashed PID $CRASHED_PID; genuinely-new-process proof fails closed" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  fi
+  if [[ -n "${RECOVERY_PID:-}" && "$pid" == "$RECOVERY_PID" ]]; then
+    echo "::error::$kind reused recovery PID $RECOVERY_PID; process-identity proof fails closed" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  fi
+
+  local timed_out="$log.timeout"
+  rm -f "$timed_out"
+  (
+    sleep 120
+    if kill -0 "$pid" 2>/dev/null; then
+      : >"$timed_out"
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  ) &
+  local watchdog=$!
+
+  local status=0
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+
+  if [[ -e "$timed_out" ]]; then
+    echo "::error::$kind process timed out and was killed: pid=$pid" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    echo "::error::$kind process failed with status $status: pid=$pid" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+
+  NEW_PROCESS_PID="$pid"
+}
+
+logical_instance_count_sql() {
+  local import_name="$1"
+  printf "%s" \
+    "SELECT count(DISTINCT ji.job_instance_id) FROM spring_batch.batch_job_instance ji " \
+    "JOIN spring_batch.batch_job_execution je ON je.job_instance_id = ji.job_instance_id " \
+    "JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id " \
+    "WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'"
+}
+
+durable_write_count_sql() {
+  local import_name="$1"
+  printf "%s" \
+    "SELECT COALESCE(sum(se.write_count), 0) FROM spring_batch.batch_step_execution se " \
+    "JOIN spring_batch.batch_job_execution je ON je.job_execution_id = se.job_execution_id " \
+    "JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id " \
+    "WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'"
+}
+
+execution_status_sql() {
+  local import_name="$1"
+  printf "%s" \
+    "SELECT je.status FROM spring_batch.batch_job_execution je " \
+    "JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id " \
+    "WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name' " \
+    "ORDER BY je.job_execution_id DESC LIMIT 1"
+}
+
+assert_mutation_fail_closed() {
+  local reader="$1"
+  local size_flag="$2"
+  local reader_size="$3"
+  local import_name="$4"
+  local expected_rows="$5"
+  local expected_write_count="$6"
+  local instance_count_before
+
+  instance_count_before="$(psql_scalar "$(logical_instance_count_sql "$import_name")")"
+  psql_exec \
+    "UPDATE app_source.source_customer SET balance_cents = balance_cents + 1
+     WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+
+  local mutation_run_log mutation_recover_log
+  mutation_run_log="$(mktemp)"
+  mutation_recover_log="$(mktemp)"
+
+  expect_source_mutation_rejection \
+    "run" \
+    "$mutation_run_log" \
+    run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+
+  expect_source_mutation_rejection \
+    "recover" \
+    "$mutation_recover_log" \
+    recover \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+
+  rm -f "$mutation_run_log" "$mutation_recover_log"
+
+  assert_scalar "$(logical_instance_count_sql "$import_name")" "$instance_count_before"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "$expected_rows"
+  assert_scalar "$(durable_write_count_sql "$import_name")" "$expected_write_count"
+  assert_scalar "$(execution_status_sql "$import_name")" "STARTED"
+
+  psql_exec \
+    "UPDATE app_source.source_customer SET balance_cents = balance_cents - 1
+     WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+}
+
+CRASHED_PID=""
+RECOVERY_PID=""
+NEW_PROCESS_PID=""
+
+crash_recovery_case() {
+  local reader="$1"
+  local reader_size="$2"
+  local phase="$3"
+  local expected_rows="$4"
+  local import_name="$5"
+  local mutation_check="$6"
+  local size_flag
+
+  case "$reader" in
+    cursor) size_flag="--fetch-size" ;;
+    paging) size_flag="--page-size" ;;
+    *)
+      echo "::error::unknown Spring reader mode '$reader'" >&2
+      exit 1
+      ;;
+  esac
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 550 --seed 42
+
+  local tmpdir marker crash_log recover_log restart_log
+  tmpdir="$(mktemp -d)"
+  marker="$tmpdir/marker"
+  crash_log="$tmpdir/crash.log"
+  recover_log="$tmpdir/recover.log"
+  restart_log="$tmpdir/restart.log"
+
+  CRASHED_PID=""
+  RECOVERY_PID=""
+  NEW_PROCESS_PID=""
+
+  kill_and_reap_at_marker \
+    "$marker" \
+    "$crash_log" \
+    "$phase" \
+    3 \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "$expected_rows"
+  assert_scalar "$(durable_write_count_sql "$import_name")" "$expected_rows"
+  assert_scalar "$(execution_status_sql "$import_name")" "STARTED"
+  assert_scalar "$(logical_instance_count_sql "$import_name")" "1"
+
+  if [[ "$mutation_check" == "true" ]]; then
+    assert_mutation_fail_closed \
+      "$reader" "$size_flag" "$reader_size" "$import_name" "$expected_rows" "$expected_rows"
+  fi
+
+  run_new_process \
+    "Spring recovery" \
+    "$recover_log" \
+    recover \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+  RECOVERY_PID="$NEW_PROCESS_PID"
+  assert_scalar "$(execution_status_sql "$import_name")" "FAILED"
+  assert_scalar "$(logical_instance_count_sql "$import_name")" "1"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "$expected_rows"
+  assert_scalar "$(durable_write_count_sql "$import_name")" "$expected_rows"
+
+  run_new_process \
+    "Spring restart" \
+    "$restart_log" \
+    run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 100 \
+    "$size_flag" "$reader_size"
+
+  cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "550"
+  assert_scalar "$(execution_status_sql "$import_name")" "COMPLETED"
+  assert_scalar "$(logical_instance_count_sql "$import_name")" "1"
+  assert_scalar \
+    "SELECT count(*) FROM spring_batch.batch_job_execution je
+     JOIN spring_batch.batch_job_execution_params p ON p.job_execution_id = je.job_execution_id
+     WHERE p.parameter_name = 'import_name' AND p.parameter_value = '$import_name'" \
+    "2"
+  assert_scalar "$(durable_write_count_sql "$import_name")" "550"
+
+  rm -rf "$tmpdir"
+}
+
+python3 benchmark/java/ci/test-validate-spring-crash.py
+python3 benchmark/java/ci/validate-spring-crash.py
+
+echo "Spring Batch external SIGKILL: cursor before commit -> durable prefix 200"
+crash_recovery_case cursor 50 before-commit 200 spring_ci_cursor_crash_before true
+
+echo "Spring Batch external SIGKILL: cursor after commit -> durable prefix 300"
+crash_recovery_case cursor 50 after-commit 300 spring_ci_cursor_crash_after false
+
+echo "Spring Batch external SIGKILL: paging before commit -> durable prefix 200"
+crash_recovery_case paging 60 before-commit 200 spring_ci_paging_crash_before true
+
+echo "Spring Batch external SIGKILL: paging after commit -> durable prefix 300"
+crash_recovery_case paging 60 after-commit 300 spring_ci_paging_crash_after false
+
+echo "spring-crash-recovery ok"

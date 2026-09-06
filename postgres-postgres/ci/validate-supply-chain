@@ -9,3 +9,5 @@ python3 benchmark/java/ci/test-spring-enforcer-execution.py
 python3 benchmark/java/ci/validate-spring-enforcer-execution.py
 python3 benchmark/java/ci/test-spring-enforcer-policy.py
 python3 benchmark/java/ci/validate-poms.py
+python3 benchmark/java/ci/test-validate-spring-crash.py
+python3 benchmark/java/ci/validate-spring-crash.py
