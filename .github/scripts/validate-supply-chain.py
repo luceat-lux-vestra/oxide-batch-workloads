@@ -2,22 +2,12 @@
 """Repository-owned supply-chain policy runner (#32).
 
 This is the one place that knows how to turn a *canonical registry name*
-into an actual `cargo-deny` invocation against that workload's own committed,
-locked dependency graph and the root `deny.toml` policy. The GitHub workflow
-(.github/workflows/ci.yml) is a thin caller of this script, not a second
-implementation of these semantics -- and #33's scheduled audit is expected to
-call this exact same script rather than reimplementing the scan.
-
-Identity is always resolved from the already fail-closed-validated
-`workloads.json` registry (via validate-workload-registry.py), never from an
-arbitrary path a caller supplies: callers pass a `--workload` *name*, and
-this script rejects any name that is not a registered real workload --
-including a name registered only as a `fixture`, which is never treated as
-a supply-chain scanning subject. There is no workload-name special case
-anywhere below; every workload is handled by the exact same code path.
+into repository-wide Cargo policy plus any workload-owned additional-ecosystem
+policy. The GitHub workflow remains a thin registry-driven caller.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +23,7 @@ SPEC.loader.exec_module(validator)
 
 DEFAULT_CARGO_DENY_BIN = "cargo-deny"
 POLICY_CLASSES = ("advisories", "licenses", "bans", "sources")
+ADDITIONAL_SUPPLY_CHAIN_HOOK = Path("ci/validate-supply-chain")
 
 
 class SupplyChainError(ValueError):
@@ -40,13 +31,7 @@ class SupplyChainError(ValueError):
 
 
 def resolve_workload(root: Path, name: str) -> dict:
-    """Resolve `name` to its registry entry, restricted to `workloads`.
-
-    Never accepts or trusts a path from the caller -- only a canonical
-    registry name -- and structurally cannot resolve a `fixtures` entry: a
-    name that only exists there is rejected with a specific diagnostic
-    rather than silently falling through to "not found".
-    """
+    """Resolve `name` to its registry entry, restricted to `workloads`."""
     try:
         result = validator.validate_repository(root)
     except validator.RegistryError as exc:
@@ -66,13 +51,7 @@ def resolve_workload(root: Path, name: str) -> dict:
 
 
 def verify_locked_graph(root: Path, entry: dict) -> Path:
-    """Verify the workload ships a committed manifest and lockfile.
-
-    Returns the manifest path; `cargo-deny --locked` itself is what actually
-    enforces the lockfile is up to date with the manifest, but a plainly
-    missing file should fail with a clear diagnostic rather than whatever
-    cargo's own error text produces.
-    """
+    """Verify the workload ships a committed Cargo manifest and lockfile."""
     workload_dir = root / entry["path"]
     manifest = workload_dir / "Cargo.toml"
     lockfile = workload_dir / "Cargo.lock"
@@ -97,6 +76,49 @@ def build_cargo_deny_command(cargo_deny_bin: str, deny_config: Path, manifest: P
     ]
 
 
+def discover_nested_maven_manifests(workload_dir: Path) -> list[Path]:
+    """Return every Maven manifest visible in a fresh workload checkout."""
+    return sorted(workload_dir.rglob("pom.xml"))
+
+
+def resolve_additional_hook(workload_dir: Path) -> Path | None:
+    """Fail closed when Maven exists without a workload-owned policy hook.
+
+    The central validator does not learn Java/Maven policy details. It only
+    detects the additional ecosystem and requires the stable workload-local
+    hook. The hook itself owns exact versions, repository/source restrictions,
+    and any ecosystem-specific invariants.
+    """
+    hook = workload_dir / ADDITIONAL_SUPPLY_CHAIN_HOOK
+    maven_manifests = discover_nested_maven_manifests(workload_dir)
+
+    if hook.is_symlink():
+        raise SupplyChainError(f"additional supply-chain hook must not be a symlink: {hook}")
+    if maven_manifests and not hook.is_file():
+        rendered = ", ".join(str(path.relative_to(workload_dir)) for path in maven_manifests)
+        raise SupplyChainError(
+            "nested Maven manifests require executable ci/validate-supply-chain; found: "
+            + rendered
+        )
+    if hook.exists() and not hook.is_file():
+        raise SupplyChainError(f"additional supply-chain hook is not a regular file: {hook}")
+    if hook.is_file() and not os.access(hook, os.X_OK):
+        raise SupplyChainError(f"additional supply-chain hook is not executable: {hook}")
+    return hook if hook.is_file() else None
+
+
+def run_additional_hook(workload_dir: Path, hook: Path | None) -> int:
+    if hook is None:
+        return 0
+    print(f"running additional supply-chain hook: {hook.relative_to(workload_dir)}")
+    completed = subprocess.run([str(hook.resolve())], cwd=workload_dir)
+    if completed.returncode == 0:
+        print("additional-ecosystem ok")
+    else:
+        print("additional-ecosystem FAILED")
+    return completed.returncode
+
+
 def run_supply_chain_scan(
     root: Path,
     name: str,
@@ -104,14 +126,11 @@ def run_supply_chain_scan(
     deny_config: Path | None = None,
     cargo_deny_bin: str = DEFAULT_CARGO_DENY_BIN,
 ) -> int:
-    """Resolve, verify, and scan `name`. Returns cargo-deny's own exit code.
-
-    The caller (main(), and ultimately the GitHub workflow) propagates this
-    exit code verbatim as the shard's pass/fail signal -- this function never
-    reinterprets a nonzero cargo-deny exit as anything other than failure.
-    """
+    """Run Cargo policy and any required nested-ecosystem hook for one workload."""
     entry = resolve_workload(root, name)
+    workload_dir = root / entry["path"]
     manifest = verify_locked_graph(root, entry)
+    additional_hook = resolve_additional_hook(workload_dir)
 
     config = deny_config if deny_config is not None else root / "deny.toml"
     if not config.is_file():
@@ -119,8 +138,11 @@ def run_supply_chain_scan(
 
     command = build_cargo_deny_command(cargo_deny_bin, config, manifest)
     print(f"running: {' '.join(command)}")
-    completed = subprocess.run(command)
-    return completed.returncode
+    cargo_result = subprocess.run(command)
+    if cargo_result.returncode != 0:
+        return cargo_result.returncode
+
+    return run_additional_hook(workload_dir, additional_hook)
 
 
 def main() -> None:
@@ -154,7 +176,10 @@ def main() -> None:
     if exit_code == 0:
         print(f"supply-chain policy check passed for workload {args.workload!r}")
     else:
-        print(f"::error::supply-chain policy check failed for workload {args.workload!r} (cargo-deny exit code {exit_code})")
+        print(
+            f"::error::supply-chain policy check failed for workload {args.workload!r} "
+            f"(exit code {exit_code})"
+        )
     raise SystemExit(exit_code)
 
 

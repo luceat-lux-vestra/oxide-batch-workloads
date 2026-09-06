@@ -11,7 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 DISCOVER = ROOT / ".github" / "scripts" / "discover-supply-chain-workloads.py"
 VALIDATE = ROOT / ".github" / "scripts" / "validate-supply-chain.py"
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-POLICY_FAILURE = re.compile(r"\b(advisories|licenses|bans|sources)\s+FAILED\b")
+POLICY_FAILURE = re.compile(r"\b(advisories|licenses|bans|sources|additional-ecosystem)\s+FAILED\b")
 
 
 def result(classification, details, workloads=None):
@@ -62,7 +62,7 @@ def run_live_audit():
             policy_findings.append({"workload": name, "checks": failed_checks, "output": normalized_output})
         else:
             infrastructure_failures.append(
-                f"workload {name!r} scan failed without a confirmed cargo-deny policy verdict "
+                f"workload {name!r} scan failed without a confirmed supply-chain policy verdict "
                 f"(exit {completed.returncode}):\n{normalized_output}"
             )
 

@@ -70,7 +70,9 @@ The central workflow knows only:
 4. how to resolve each entry's MSRV from that entry's own `Cargo.toml`;
 5. how to collect normalized shard results and compute fail-closed aggregate
    verdicts; and
-6. for real workloads, how to invoke the canonical supply-chain validator.
+6. for real workloads, how to invoke the canonical supply-chain validator, which may
+   dispatch a workload-owned additional-ecosystem hook without teaching the central
+   workflow that ecosystem's policy.
 
 It does **not** know PostgreSQL, `DATABASE_URL`, migrations, broker/object-store
 configuration, workload smoke commands, or workload-name-specific branches.
@@ -169,10 +171,22 @@ The validator:
 
 - resolves workload names through the canonical registry;
 - accepts `workloads` entries only, never fixtures or arbitrary paths;
-- requires the workload manifest and lockfile;
+- requires the workload Cargo manifest and lockfile;
 - invokes cargo-deny with `--locked --all-features` against the canonical root
-  policy; and
-- propagates the real scan result into the aggregate gate.
+  policy;
+- detects nested Maven `pom.xml` manifests and fails closed unless that workload
+  exposes an executable `ci/validate-supply-chain` hook;
+- invokes that workload-owned hook only after the Cargo policy succeeds; and
+- propagates either Cargo-policy or additional-hook failure into the same stable
+  aggregate gate.
+
+The additional hook is intentionally a narrow extension point, not a second central
+implementation of Maven/Gradle/npm policy. Central CI detects that Maven exists and
+requires a hook; the workload owns the Maven-specific exact-version, repository/source,
+and dependency-boundary checks. Ordinary `ci/validate ci` remains responsible for
+actually resolving/building/testing the nested ecosystem when its semantic contract
+requires that. A future additional ecosystem must receive an explicit fail-closed
+detection rule before relying on this hook rather than silently assuming it is covered.
 
 The source policy is fail-closed: only the approved crates.io source is trusted;
 unknown registries and unapproved git sources are denied. Policy exceptions are
@@ -183,8 +197,9 @@ not workload-level opt-outs. Any future exception must be narrowly scoped in
 
 - `dependency-review` is diff-scoped and evaluates newly introduced dependency
   changes on a PR;
-- `supply-chain` re-evaluates each real workload's entire committed dependency
-  graph under the canonical policy on every PR.
+- `supply-chain` re-evaluates each real workload's complete Cargo graph under
+  `deny.toml` and any detected nested-ecosystem manifest policy through its required
+  workload-owned hook on every PR.
 
 Neither replaces the other.
 

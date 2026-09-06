@@ -12,6 +12,9 @@ stage="${1:?usage: ci/validate <ci|msrv>}"
 
 export DATABASE_URL="postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload"
 export POSTGRES_POSTGRES_TEST_DATABASE_URL="$DATABASE_URL"
+export RAW_JDBC_DATABASE_URL="jdbc:postgresql://localhost:5434/postgres_postgres_workload"
+export RAW_JDBC_DATABASE_USER="oxide_batch_workload"
+export RAW_JDBC_DATABASE_PASSWORD="oxide_batch_workload"
 
 if docker compose version >/dev/null 2>&1; then
   compose() { docker compose "$@"; }
@@ -51,6 +54,156 @@ assert_scalar() {
     echo "::error::SQL assertion failed: expected '$expected', got '$actual' for: $sql" >&2
     exit 1
   fi
+}
+
+select_java21() {
+  if [[ -n "${JAVA_HOME_21_X64:-}" && -x "${JAVA_HOME_21_X64}/bin/java" ]]; then
+    export JAVA_HOME="$JAVA_HOME_21_X64"
+    export PATH="$JAVA_HOME/bin:$PATH"
+  fi
+
+  local java_major
+  java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
+  if [[ "$java_major" != "21" ]]; then
+    echo "::error::campaign #79 Java controls require Java 21, got major '${java_major:-unknown}'" >&2
+    java -version >&2 || true
+    exit 1
+  fi
+
+  java -version
+  javac -version
+  mvn -version
+}
+
+run_raw_jdbc_static_guards() {
+  echo "raw-jdbc guard: Maven manifest and source boundary policy"
+  python3 benchmark/java/ci/test-validate-poms.py
+  python3 benchmark/java/ci/validate-poms.py
+
+  select_java21
+
+  echo "raw-jdbc build: Java 21 reactor with exact release dependencies/plugins"
+  mvn -B -ntp -f benchmark/java/pom.xml verify
+
+  echo "raw-jdbc guard: resolve and inspect runtime Maven dependency graph"
+  local dependency_tree
+  dependency_tree="$(mktemp)"
+  mvn -B -ntp -f benchmark/java/raw-jdbc/pom.xml \
+    org.apache.maven.plugins:maven-dependency-plugin:3.11.0:tree \
+    -Dscope=runtime \
+    -DoutputFile="$dependency_tree"
+  cat "$dependency_tree"
+  if ! grep -qF 'org.postgresql:postgresql:jar:42.7.13' "$dependency_tree"; then
+    echo "::error::raw-jdbc resolved graph does not contain exact pgjdbc 42.7.13" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  if grep -Ei 'org\.springframework|oxide[-_]batch' "$dependency_tree"; then
+    echo "::error::raw-jdbc resolved graph must contain neither Spring nor OxideBatch" >&2
+    rm -f "$dependency_tree"
+    exit 1
+  fi
+  rm -f "$dependency_tree"
+
+  RAW_JDBC_CLASSPATH="benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar:benchmark/java/raw-jdbc/target/dependency/*"
+  export RAW_JDBC_CLASSPATH
+  if [[ ! -f benchmark/java/raw-jdbc/target/raw-jdbc-0.1.0.jar ]]; then
+    echo "::error::raw-jdbc Maven build did not produce the expected candidate JAR" >&2
+    exit 1
+  fi
+}
+
+run_raw_jdbc() {
+  java -cp "$RAW_JDBC_CLASSPATH" \
+    io.oxidebatch.workloads.postgres.benchmark.rawjdbc.RawJdbcMain "$@"
+}
+
+raw_jdbc_rollback_case() {
+  local reader="$1"
+  local size_flag="$2"
+  local reader_size="$3"
+  local import_name="$4"
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 451 --seed 42
+
+  if run_raw_jdbc run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 200 \
+    "$size_flag" "$reader_size" \
+    --fail-after-chunk 2; then
+    echo "::error::raw-jdbc injected rollback run unexpectedly succeeded ($reader)" >&2
+    exit 1
+  fi
+
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "200"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "200"
+  assert_scalar \
+    "SELECT committed_chunks FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "1"
+
+  echo "raw-jdbc typed-failure continuation ($reader): resume from durable prefix"
+  run_raw_jdbc run \
+    --import-name "$import_name" \
+    --reader "$reader" \
+    --chunk-size 200 \
+    "$size_flag" "$reader_size"
+  cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" \
+    "451"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "451"
+  assert_scalar \
+    "SELECT committed_chunks FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" \
+    "3"
+}
+
+run_raw_jdbc_database_checks() {
+  echo "raw-jdbc smoke: explicit benchmark_java migration remains outside run execution"
+  run_raw_jdbc migrate
+
+  echo "raw-jdbc paging smoke: keyset pages cross chunk boundaries -> independent Rust verifier"
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 2051 --seed 42
+  run_raw_jdbc run \
+    --import-name raw_java_ci_paging_clean \
+    --reader paging \
+    --chunk-size 200 \
+    --page-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_java_ci_paging_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_java_ci_paging_clean'" \
+    "2051"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = 'raw_java_ci_paging_clean' AND reader_mode = 'paging'" \
+    "2051"
+
+  echo "raw-jdbc cursor smoke: pgjdbc autoCommit=false + bounded fetch -> independent Rust verifier"
+  run_raw_jdbc run \
+    --import-name raw_java_ci_cursor_clean \
+    --reader cursor \
+    --chunk-size 200 \
+    --fetch-size 128
+  cargo run --locked -q -p postgres-postgres -- verify --import-name raw_java_ci_cursor_clean
+  assert_scalar \
+    "SELECT count(*) FROM app_business.customer_projection WHERE import_name = 'raw_java_ci_cursor_clean'" \
+    "2051"
+  assert_scalar \
+    "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = 'raw_java_ci_cursor_clean' AND reader_mode = 'cursor'" \
+    "2051"
+
+  echo "raw-jdbc typed rollback: paging business writes/checkpoint remain atomic"
+  raw_jdbc_rollback_case paging --page-size 128 raw_java_ci_paging_rollback
+
+  echo "raw-jdbc typed rollback: cursor business writes/checkpoint remain atomic"
+  raw_jdbc_rollback_case cursor --fetch-size 128 raw_java_ci_cursor_rollback
 }
 
 run_raw_sqlx_static_guards() {
@@ -347,6 +500,7 @@ run_ci_stage() {
   fi
 
   run_raw_sqlx_static_guards
+  run_raw_jdbc_static_guards
 
   echo "retained-evidence verifier adversarial tests"
   python3 validation/test_verify_retained_evidence.py
@@ -368,6 +522,7 @@ run_ci_stage() {
   cargo run --locked -q -p postgres-postgres -- verify --import-name ci_smoke_paging
 
   run_raw_sqlx_database_checks
+  run_raw_jdbc_database_checks
 }
 
 run_msrv_stage() {

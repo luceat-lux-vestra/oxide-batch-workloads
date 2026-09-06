@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import contextlib
+import io
 import json
 import shutil
 import stat
@@ -42,6 +44,20 @@ class RegistryFixtureTestCase(unittest.TestCase):
         entrypoint.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         mode = entrypoint.stat().st_mode
         entrypoint.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def add_maven_manifest(self, name: str) -> Path:
+        path = self.root / name / "benchmark" / "java"
+        path.mkdir(parents=True, exist_ok=True)
+        pom = path / "pom.xml"
+        pom.write_text("<project/>\n", encoding="utf-8")
+        return pom
+
+    def add_supply_chain_hook(self, name: str, exit_code: int) -> Path:
+        hook = self.root / name / "ci" / "validate-supply-chain"
+        hook.write_text(f"#!/usr/bin/env bash\nexit {exit_code}\n", encoding="utf-8")
+        mode = hook.stat().st_mode
+        hook.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return hook
 
     def write_registry(self, workloads: list[dict], fixtures: list[dict] | None = None) -> None:
         (self.root / "workloads.json").write_text(
@@ -107,6 +123,46 @@ class VerifyLockedGraphTests(RegistryFixtureTestCase):
             sc.verify_locked_graph(self.root, entry)
 
 
+class AdditionalEcosystemTests(RegistryFixtureTestCase):
+    def test_no_nested_maven_requires_no_hook(self) -> None:
+        self.cargo_project("alpha")
+        self.assertIsNone(sc.resolve_additional_hook(self.root / "alpha"))
+
+    def test_nested_maven_without_hook_fails_closed(self) -> None:
+        self.cargo_project("alpha")
+        self.add_maven_manifest("alpha")
+        with self.assertRaisesRegex(sc.SupplyChainError, "nested Maven manifests require"):
+            sc.resolve_additional_hook(self.root / "alpha")
+
+    def test_target_named_maven_manifest_still_requires_hook(self) -> None:
+        self.cargo_project("alpha")
+        target = self.root / "alpha" / "target"
+        target.mkdir()
+        (target / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+        with self.assertRaisesRegex(sc.SupplyChainError, "nested Maven manifests require"):
+            sc.resolve_additional_hook(self.root / "alpha")
+
+    def test_non_executable_hook_fails_closed(self) -> None:
+        self.cargo_project("alpha")
+        self.add_maven_manifest("alpha")
+        hook = self.root / "alpha" / "ci" / "validate-supply-chain"
+        hook.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        with self.assertRaisesRegex(sc.SupplyChainError, "not executable"):
+            sc.resolve_additional_hook(self.root / "alpha")
+
+    def test_symlink_hook_fails_closed(self) -> None:
+        self.cargo_project("alpha")
+        self.add_maven_manifest("alpha")
+        target = self.root / "real-hook"
+        target.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        mode = target.stat().st_mode
+        target.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        hook = self.root / "alpha" / "ci" / "validate-supply-chain"
+        hook.symlink_to(target)
+        with self.assertRaisesRegex(sc.SupplyChainError, "must not be a symlink"):
+            sc.resolve_additional_hook(self.root / "alpha")
+
+
 class BuildCargoDenyCommandTests(unittest.TestCase):
     def test_preserves_required_semantics(self) -> None:
         command = sc.build_cargo_deny_command("cargo-deny", Path("/repo/deny.toml"), Path("/repo/alpha/Cargo.toml"))
@@ -130,9 +186,7 @@ class BuildCargoDenyCommandTests(unittest.TestCase):
 
 
 class RunSupplyChainScanTests(RegistryFixtureTestCase):
-    """Exercises run_supply_chain_scan end-to-end against a fake cargo-deny
-    stand-in, proving exit-code propagation without depending on network
-    access or a real cargo-deny install for this fast unit-test path."""
+    """Exercises orchestration against fake cargo-deny and hook stand-ins."""
 
     def install_fake_cargo_deny(self, exit_code: int) -> Path:
         fake = self.root / "fake-cargo-deny"
@@ -141,21 +195,47 @@ class RunSupplyChainScanTests(RegistryFixtureTestCase):
         fake.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         return fake
 
-    def test_propagates_success_exit_code(self) -> None:
+    def ready(self) -> Path:
         self.cargo_project("alpha")
         self.write_registry([self.entry("alpha")])
         (self.root / "deny.toml").write_text("", encoding="utf-8")
-        fake_bin = self.install_fake_cargo_deny(0)
+        return self.install_fake_cargo_deny(0)
+
+    def test_propagates_success_exit_code(self) -> None:
+        fake_bin = self.ready()
         exit_code = sc.run_supply_chain_scan(self.root, "alpha", cargo_deny_bin=str(fake_bin))
         self.assertEqual(exit_code, 0)
 
-    def test_propagates_failure_exit_code(self) -> None:
+    def test_propagates_cargo_failure_exit_code(self) -> None:
         self.cargo_project("alpha")
         self.write_registry([self.entry("alpha")])
         (self.root / "deny.toml").write_text("", encoding="utf-8")
         fake_bin = self.install_fake_cargo_deny(1)
         exit_code = sc.run_supply_chain_scan(self.root, "alpha", cargo_deny_bin=str(fake_bin))
         self.assertEqual(exit_code, 1)
+
+    def test_propagates_additional_hook_failure(self) -> None:
+        fake_bin = self.ready()
+        self.add_maven_manifest("alpha")
+        self.add_supply_chain_hook("alpha", 7)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exit_code = sc.run_supply_chain_scan(self.root, "alpha", cargo_deny_bin=str(fake_bin))
+        self.assertEqual(exit_code, 7)
+        self.assertIn("additional-ecosystem FAILED", output.getvalue())
+
+    def test_runs_successful_additional_hook(self) -> None:
+        fake_bin = self.ready()
+        self.add_maven_manifest("alpha")
+        self.add_supply_chain_hook("alpha", 0)
+        exit_code = sc.run_supply_chain_scan(self.root, "alpha", cargo_deny_bin=str(fake_bin))
+        self.assertEqual(exit_code, 0)
+
+    def test_nested_maven_without_hook_fails_before_scan(self) -> None:
+        fake_bin = self.ready()
+        self.add_maven_manifest("alpha")
+        with self.assertRaisesRegex(sc.SupplyChainError, "nested Maven manifests require"):
+            sc.run_supply_chain_scan(self.root, "alpha", cargo_deny_bin=str(fake_bin))
 
     def test_missing_deny_config_fails_closed(self) -> None:
         self.cargo_project("alpha")
@@ -176,16 +256,8 @@ class RunSupplyChainScanTests(RegistryFixtureTestCase):
 
 @unittest.skipUnless(shutil.which("cargo-deny"), "cargo-deny is not installed in this environment")
 class RealCargoDenyAgainstRealRepositoryTests(unittest.TestCase):
-    """The one test in this file that is deliberately NOT hermetic: proves
-    the actual repository-owned validator, against the actual root
-    deny.toml, actually passes for the actual currently-registered real
-    workload(s) -- not merely that the script's internal wiring is correct.
-    """
-
     def test_every_registered_real_workload_passes_production_policy(self) -> None:
-        import json as _json
-
-        registry = _json.loads((REPO_ROOT / "workloads.json").read_text(encoding="utf-8"))
+        registry = json.loads((REPO_ROOT / "workloads.json").read_text(encoding="utf-8"))
         for entry in registry["workloads"]:
             with self.subTest(workload=entry["name"]):
                 exit_code = sc.run_supply_chain_scan(REPO_ROOT, entry["name"])

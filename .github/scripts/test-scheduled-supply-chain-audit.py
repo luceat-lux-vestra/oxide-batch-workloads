@@ -50,6 +50,14 @@ class AuditRunnerTests(unittest.TestCase):
         self.assertIn('"licenses"', audit["details"])
         self.assertNotIn("\x1b", audit["details"])
 
+    def test_additional_ecosystem_policy_failure_is_distinct(self):
+        audit = self.run_with([
+            self.completed(0, '{"include":[{"name":"a"}]}'),
+            self.completed(7, "advisories ok, bans ok, licenses ok, sources ok\nadditional-ecosystem FAILED"),
+        ])
+        self.assertEqual(audit["classification"], "policy-finding")
+        self.assertIn('"additional-ecosystem"', audit["details"])
+
     def test_non_policy_failure_is_infrastructure(self):
         audit = self.run_with([
             self.completed(0, '{"include":[{"name":"a"}]}'),
