@@ -3,6 +3,9 @@ package io.oxidebatch.workloads.postgres.benchmark.rawjdbc;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -18,6 +21,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Raw Java/JDBC semantic-parity control for campaign #79.
@@ -344,6 +348,7 @@ public final class RawJdbcMain {
                         + checkpoint.committedChunks());
             }
             upsertCheckpoint(destination, identity, checkpoint);
+            pauseIfRequested(config, checkpoint.committedChunks(), "before-commit");
             destination.commit();
         } catch (Exception failure) {
             try {
@@ -353,6 +358,23 @@ public final class RawJdbcMain {
             }
             throw failure;
         }
+        pauseIfRequested(config, checkpoint.committedChunks(), "after-commit");
+    }
+
+    private static void pauseIfRequested(RunConfig config, long chunk, String phase) throws Exception {
+        if (config.pauseAtChunk() == null
+                || config.pauseAtChunk().longValue() != chunk
+                || !phase.equals(config.pausePhase())) {
+            return;
+        }
+        String marker = "pid=" + ProcessHandle.current().pid() + " phase=" + phase + " chunk=" + chunk + System.lineSeparator();
+        Files.writeString(
+                Objects.requireNonNull(config.pauseMarker()),
+                marker,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
+        new CountDownLatch(1).await();
     }
 
     private static void insertBatch(Connection destination, List<ProjectedRow> batch) throws SQLException {
@@ -530,13 +552,25 @@ public final class RawJdbcMain {
             ReaderMode readerMode,
             int chunkSize,
             int readBatchSize,
-            Long failAfterChunk) {
+            Long failAfterChunk,
+            Long pauseAtChunk,
+            String pausePhase,
+            Path pauseMarker) {
         String definitionRevision() {
             return readerMode == ReaderMode.CURSOR ? CURSOR_DEFINITION_REVISION : PAGING_DEFINITION_REVISION;
         }
 
         static RunConfig parse(Options options) {
-            options.requireOnly("import-name", "reader", "chunk-size", "fetch-size", "page-size", "fail-after-chunk");
+            options.requireOnly(
+                    "import-name",
+                    "reader",
+                    "chunk-size",
+                    "fetch-size",
+                    "page-size",
+                    "fail-after-chunk",
+                    "pause-at-chunk",
+                    "pause-phase",
+                    "pause-marker");
             String importName = required(options, "import-name");
             ReaderMode reader = ReaderMode.parse(required(options, "reader"));
             int chunkSize = positiveInt(options, "chunk-size", DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE);
@@ -551,7 +585,33 @@ public final class RawJdbcMain {
             int readBatchSize = reader == ReaderMode.CURSOR
                     ? positiveInt(options, "fetch-size", DEFAULT_FETCH_SIZE, MAX_READ_BATCH_SIZE)
                     : positiveInt(options, "page-size", DEFAULT_PAGE_SIZE, MAX_READ_BATCH_SIZE);
-            return new RunConfig(importName, reader, chunkSize, readBatchSize, optionalPositiveLong(options, "fail-after-chunk"));
+            Long failAfterChunk = optionalPositiveLong(options, "fail-after-chunk");
+            Long pauseAtChunk = optionalPositiveLong(options, "pause-at-chunk");
+            String pausePhase = options.values().get("pause-phase");
+            String pauseMarkerRaw = options.values().get("pause-marker");
+            int pauseOptions = (pauseAtChunk == null ? 0 : 1)
+                    + (pausePhase == null ? 0 : 1)
+                    + (pauseMarkerRaw == null ? 0 : 1);
+            if (pauseOptions != 0 && pauseOptions != 3) {
+                throw new IllegalArgumentException(
+                        "--pause-at-chunk, --pause-phase, and --pause-marker must be supplied together");
+            }
+            if (failAfterChunk != null && pauseAtChunk != null) {
+                throw new IllegalArgumentException("--fail-after-chunk cannot be combined with external-kill pause controls");
+            }
+            if (pausePhase != null && !Set.of("before-commit", "after-commit").contains(pausePhase)) {
+                throw new IllegalArgumentException("--pause-phase must be before-commit or after-commit");
+            }
+            Path pauseMarker = pauseMarkerRaw == null ? null : Path.of(pauseMarkerRaw);
+            return new RunConfig(
+                    importName,
+                    reader,
+                    chunkSize,
+                    readBatchSize,
+                    failAfterChunk,
+                    pauseAtChunk,
+                    pausePhase,
+                    pauseMarker);
         }
     }
 

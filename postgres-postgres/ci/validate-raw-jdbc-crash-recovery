@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+: "${RAW_JDBC_CLASSPATH:?RAW_JDBC_CLASSPATH must be set}"
+RAW_MAIN="io.oxidebatch.workloads.postgres.benchmark.rawjdbc.RawJdbcMain"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+psql_scalar() {
+  compose exec -T postgres psql -U oxide_batch_workload -d postgres_postgres_workload -Atqc "$1"
+}
+
+psql_exec() {
+  compose exec -T postgres psql -U oxide_batch_workload -d postgres_postgres_workload -v ON_ERROR_STOP=1 -qc "$1"
+}
+
+assert_scalar() {
+  local sql="$1" expected="$2" actual
+  actual="$(psql_scalar "$sql")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "::error::raw JDBC crash assertion failed: expected '$expected', got '$actual' for: $sql" >&2
+    exit 1
+  fi
+}
+
+run_raw() {
+  java -cp "$RAW_JDBC_CLASSPATH" "$RAW_MAIN" "$@"
+}
+
+wait_for_marker() {
+  local marker="$1" expected_pid="$2" phase="$3" chunk="$4"
+  local expected="pid=${expected_pid} phase=${phase} chunk=${chunk}"
+  for _ in $(seq 1 300); do
+    if [[ -f "$marker" && ! -L "$marker" ]]; then
+      local actual
+      actual="$(tr -d '\r\n' <"$marker")"
+      [[ "$actual" == "$expected" ]] || { echo "::error::raw JDBC marker mismatch: expected '$expected', got '$actual'" >&2; return 1; }
+      kill -0 "$expected_pid" 2>/dev/null || { echo "::error::raw JDBC process died before parent SIGKILL" >&2; return 1; }
+      return 0
+    fi
+    kill -0 "$expected_pid" 2>/dev/null || { echo "::error::raw JDBC process exited before marker" >&2; return 1; }
+    sleep 0.1
+  done
+  echo "::error::timed out waiting for raw JDBC marker" >&2
+  return 1
+}
+
+CRASHED_PID=""
+kill_at_marker() {
+  local marker="$1" log="$2" phase="$3" chunk="$4"
+  shift 4
+  java -cp "$RAW_JDBC_CLASSPATH" "$RAW_MAIN" run "$@" \
+    --pause-at-chunk "$chunk" --pause-phase "$phase" --pause-marker "$marker" >"$log" 2>&1 &
+  local pid=$!
+  if ! wait_for_marker "$marker" "$pid" "$phase" "$chunk"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    cat "$log" >&2 || true
+    return 1
+  fi
+  kill -KILL "$pid"
+  local status=0
+  if wait "$pid"; then status=0; else status=$?; fi
+  if [[ "$status" -ne 137 ]]; then
+    echo "::error::raw JDBC crash exited $status, expected 137" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+  CRASHED_PID="$pid"
+}
+
+run_new_process() {
+  local log="$1"; shift
+  java -cp "$RAW_JDBC_CLASSPATH" "$RAW_MAIN" "$@" >"$log" 2>&1 &
+  local pid=$!
+  if [[ "$pid" == "$CRASHED_PID" ]]; then
+    echo "::error::raw JDBC continuation reused crashed PID $CRASHED_PID" >&2
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  fi
+  if ! wait "$pid"; then
+    echo "::error::raw JDBC continuation failed" >&2
+    cat "$log" >&2 || true
+    return 1
+  fi
+}
+
+expect_source_mutation_rejection() {
+  local log="$1"; shift
+  local status=0
+  if timeout --signal=KILL 60s java -cp "$RAW_JDBC_CLASSPATH" "$RAW_MAIN" "$@" >"$log" 2>&1; then status=0; else status=$?; fi
+  [[ "$status" -ne 0 ]] || { echo "::error::raw JDBC accepted changed source against stale checkpoint" >&2; return 1; }
+  [[ "$status" -ne 124 && "$status" -ne 137 ]] || { echo "::error::raw JDBC mutation check timed out" >&2; cat "$log" >&2; return 1; }
+  grep -Fq 'source digest changed for existing raw Java execution identity' "$log" || {
+    echo "::error::raw JDBC mutation failure was not semantic source-digest rejection" >&2
+    cat "$log" >&2
+    return 1
+  }
+}
+
+crash_recovery_case() {
+  local reader="$1" reader_size="$2" phase="$3" expected_rows="$4" expected_chunks="$5" import_name="$6" mutation_check="${7:-false}"
+  local size_flag
+  case "$reader" in cursor) size_flag="--fetch-size" ;; paging) size_flag="--page-size" ;; *) exit 2 ;; esac
+
+  cargo run --locked -q -p postgres-postgres -- reset
+  cargo run --locked -q -p postgres-postgres -- seed --rows 550 --seed 42
+  run_raw migrate
+
+  local tmpdir marker crash_log continuation_log mutation_log
+  tmpdir="$(mktemp -d)"; marker="$tmpdir/marker"; crash_log="$tmpdir/crash.log"; continuation_log="$tmpdir/continuation.log"; mutation_log="$tmpdir/mutation.log"
+  CRASHED_PID=""
+
+  kill_at_marker "$marker" "$crash_log" "$phase" 3 \
+    --import-name "$import_name" --reader "$reader" --chunk-size 100 "$size_flag" "$reader_size"
+
+  assert_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" "$expected_rows"
+  assert_scalar "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "$expected_rows"
+  assert_scalar "SELECT committed_chunks FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "$expected_chunks"
+  assert_scalar "SELECT last_customer_id FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "$expected_rows"
+
+  if [[ "$mutation_check" == "true" ]]; then
+    psql_exec "UPDATE app_source.source_customer SET balance_cents = balance_cents + 1 WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+    expect_source_mutation_rejection "$mutation_log" run \
+      --import-name "$import_name" --reader "$reader" --chunk-size 100 "$size_flag" "$reader_size"
+    assert_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" "$expected_rows"
+    assert_scalar "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "$expected_rows"
+    psql_exec "UPDATE app_source.source_customer SET balance_cents = balance_cents - 1 WHERE customer_id = (SELECT min(customer_id) FROM app_source.source_customer)"
+  fi
+
+  run_new_process "$continuation_log" run \
+    --import-name "$import_name" --reader "$reader" --chunk-size 100 "$size_flag" "$reader_size"
+  cargo run --locked -q -p postgres-postgres -- verify --import-name "$import_name"
+  assert_scalar "SELECT count(*) FROM app_business.customer_projection WHERE import_name = '$import_name'" "550"
+  assert_scalar "SELECT committed_rows FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "550"
+  assert_scalar "SELECT committed_chunks FROM benchmark_java.raw_checkpoint WHERE import_name = '$import_name' AND reader_mode = '$reader'" "6"
+  rm -rf "$tmpdir"
+}
+
+python3 benchmark/java/ci/test-validate-raw-jdbc-crash.py
+python3 benchmark/java/ci/validate-raw-jdbc-crash.py
+
+echo "raw JDBC external SIGKILL: cursor before commit"
+crash_recovery_case cursor 50 before-commit 200 2 raw_java_ci_cursor_before true
+echo "raw JDBC external SIGKILL: cursor after commit"
+crash_recovery_case cursor 50 after-commit 300 3 raw_java_ci_cursor_after
+echo "raw JDBC external SIGKILL: paging before commit"
+crash_recovery_case paging 60 before-commit 200 2 raw_java_ci_paging_before true
+echo "raw JDBC external SIGKILL: paging after commit"
+crash_recovery_case paging 60 after-commit 300 3 raw_java_ci_paging_after
+
+echo "raw-jdbc-crash-recovery ok"

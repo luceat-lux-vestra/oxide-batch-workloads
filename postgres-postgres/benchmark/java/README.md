@@ -44,12 +44,28 @@ is a performance claim by itself.
   and therefore at most four statements for a 1000-row chunk. JDBC
   `executeBatch`, PostgreSQL `COPY`, and `reWriteBatchedInserts` are forbidden.
 
-## Raw JDBC durability
+## Raw JDBC durability and hard-death recovery
 
 Raw durability metadata lives only in `benchmark_java.raw_checkpoint`.
 Business rows plus checkpoint advancement commit atomically in one JDBC
 transaction. `--fail-after-chunk N` is a typed pre-commit failure used for the
 PR1 rollback/continuation proof.
+
+PR4 closes the remaining raw-Java hard-death obligation before any four-way
+performance evidence is accepted. Test-only `--pause-at-chunk`, `--pause-phase`
+and `--pause-marker` are all-or-none controls. They create an exclusive marker
+containing the live JVM PID and wait passively; the candidate never exits,
+aborts, or signals itself. `before-commit` fires after business INSERTs and the
+raw checkpoint UPSERT while the JDBC transaction is still open. `after-commit`
+fires only after `Connection.commit()` returns successfully. The CI parent
+sends `SIGKILL` to the exact marker PID and requires status 137.
+
+Protected real-PostgreSQL coverage proves cursor and paging before/after-commit
+prefixes (200/300 rows on the 550-row semantic fixture), continuation in a
+genuinely new JVM, source-mutation rejection without checkpoint/business drift,
+and final equivalence through the independent Rust verifier. Raw JDBC has no
+separate operator-recovery phase: continuation reloads its benchmark-owned
+durable checkpoint in the new JVM.
 
 ## Spring Batch durability and crash recovery
 
@@ -116,14 +132,20 @@ Because this directory contains a nested Maven ecosystem, the central
 `supply-chain` validator fails closed if Maven manifests exist without the
 workload-owned executable `ci/validate-supply-chain` hook. The hook enforces the
 reviewed Maven manifest and Java source inventory, adversarially tests the
-single-coordinate Spring convergence exception, and guards the PR3 external
-crash/recovery controls against self-termination or transaction-boundary drift.
+single-coordinate Spring convergence exception, guards Spring and raw-JDBC
+external crash/recovery controls against self-termination or transaction-
+boundary drift, and executes the four-way report/order/parser policy tests.
 Protected workload CI also resolves both Java runtime dependency trees and
 builds the reactor on Java 21. GitHub `dependency-review` remains the
 diff-scoped dependency gate. Frozen comparison subjects such as pgjdbc and
 Spring Batch are advanced only by an explicit validation campaign, not routine
 dependency churn.
 
-No number emitted by PR1, PR2, or PR3 is campaign performance evidence or a
-performance claim. Four-way measurement starts only in PR4 after correctness
-and crash-recovery obligations pass.
+Four-way measurement starts only in PR4; PR1, PR2, and PR3 remain correctness,
+recovery, and parity evidence rather than performance evidence.
+
+No number emitted by PR1, PR2, PR3, PR4 branch CI, or the bounded PR4 semantic
+smoke is campaign performance evidence. The four-way methodology and manual
+canonical workflow are documented in `../FOUR_WAY.md`; accepted numbers can
+come only from a fresh canonical run on authoritative `main` after PR4 is
+merged and its post-merge gates are green.
