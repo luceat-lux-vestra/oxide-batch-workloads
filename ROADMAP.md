@@ -122,12 +122,20 @@ Each campaign should cover bind/type behavior, decimals/timestamps/time zones, U
 
 ## Track D — Benchmark program
 
-Benchmarking starts only after comparable correctness/recovery passes.
+Benchmarking starts only after comparable correctness/recovery passes. The detailed candidate lifecycle and current comparison classification are owned by Track D issue #13; this roadmap records the durable high-level roles.
 
-Comparison layers:
-1. raw Rust + direct driver baseline;
-2. OxideBatch with equivalent semantics;
-3. comparable Spring Batch reference implementation.
+Comparison roles:
+1. raw Rust + direct driver — Rust runtime/driver attribution baseline;
+2. OxideBatch — framework subject under equivalent durability/verification semantics;
+3. raw Java + direct JDBC — JVM/driver attribution baseline where a JVM framework is compared;
+4. Spring Batch 6 — primary direct semantic/product baseline;
+5. JBeret / Jakarta Batch — secondary direct batch-framework reference, promoted only after workload-specific semantic qualification.
+
+Conditional Rust ecosystem watch/reference:
+- `spring-batch-rs` is actively developed but is **not a current direct competitor** for enterprise restart/repository semantics.
+- Promote it only when a concrete workload proves comparable durability, checkpoint, repository, and crash/restart behavior without weakening the accepted comparison class.
+
+Execution/performance references such as DataFusion, Flink, Spark, and Beam are not feature-parity competitors. Use them only for explicitly comparable execution or scaling slices as classified by #13.
 
 Controlled variables: identical logical input/final state, same DB/schema/indexes/durability, same chunk/page/fetch sizes where possible, same host/container limits and DB placement, release builds/production-equivalent JVM settings, recorded runtime/driver/framework versions, startup/warm-up separated from steady state, verification cost equalized or reported separately.
 
@@ -306,14 +314,16 @@ No single workload proves the entire framework.
 2. Build `postgres-postgres` and drive DB reader/writer/same-resource requirements from real usage.
 3. Establish a small reusable measurement harness and raw Rust/sqlx baseline.
 4. Add comparable Spring Batch implementation and publish methodology/distributions, not marketing claims.
-5. Exercise external launch/control: process scheduler first, then thin control-plane wrapper.
-6. Add event-driven file/object/message launch plus completion feedback.
-7. Add real observability exporter integration and container lifecycle scenarios.
-8. Add multi-resource/structured input coverage.
-9. Add Kafka item I/O/cross-resource delivery only after DB transaction/restart semantics are stable.
-10. Add Oracle portability before broad enterprise-database claims.
-11. Exercise upgrade/migration/retention/DR across the next published release transition.
-12. Add distributed execution only after released protocol/fencing/resource contracts exist.
+5. Qualify JBeret against the same PostgreSQL workload and add it only if the accepted durability/restart comparison class holds.
+6. Keep `spring-batch-rs` as a conditional ecosystem watch/reference until workload-specific enterprise restart/repository comparability is proven.
+7. Exercise external launch/control: process scheduler first, then thin control-plane wrapper.
+8. Add event-driven file/object/message launch plus completion feedback.
+9. Add real observability exporter integration and container lifecycle scenarios.
+10. Add multi-resource/structured input coverage.
+11. Add Kafka item I/O/cross-resource delivery only after DB transaction/restart semantics are stable.
+12. Add Oracle portability before broad enterprise-database claims.
+13. Exercise upgrade/migration/retention/DR across the next published release transition.
+14. Add distributed execution only after released protocol/fencing/resource contracts exist.
 
 ## Spring Batch as comparison baseline
 
