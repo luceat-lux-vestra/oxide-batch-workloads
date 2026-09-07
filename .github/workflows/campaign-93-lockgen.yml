@@ -1,0 +1,34 @@
+name: Campaign 93 lock generation
+
+on:
+  push:
+    branches: [campaign-93-lockgen]
+    paths:
+      - postgres-local-partition/Cargo.toml
+      - .github/workflows/campaign-93-lockgen.yml
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out scratch branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Generate exact lockfile
+        run: cargo generate-lockfile --manifest-path postgres-local-partition/Cargo.toml
+
+      - name: Commit generated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add postgres-local-partition/Cargo.lock
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: generate campaign 93 lockfile"
+          git push
