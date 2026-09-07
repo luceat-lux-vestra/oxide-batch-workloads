@@ -1,0 +1,31 @@
+name: Campaign 93 scratch MSRV
+
+on:
+  push:
+    branches: [campaign-93-lockgen]
+    paths:
+      - postgres-local-partition/**
+      - .github/workflows/campaign-93-msrv.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: campaign-93-scratch-msrv
+  cancel-in-progress: true
+
+jobs:
+  msrv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out scratch branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.95.0
+        run: rustup toolchain install 1.95.0 --profile minimal
+
+      - name: Build locked workload at declared MSRV
+        run: cargo +1.95.0 build --locked --all-targets --manifest-path postgres-local-partition/Cargo.toml
