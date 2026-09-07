@@ -819,6 +819,10 @@ async fn prove_pool_ceiling(url: &str, prefix: &str, rows: u64) -> Result<PoolCe
     })
 }
 
+// This construction boundary intentionally keeps every restart-relevant and
+// resource-relevant input explicit; hiding them in an unvalidated options bag
+// would make the workload contract harder to audit.
+#[allow(clippy::too_many_arguments)]
 fn build_job(
     name: JobName,
     run_name: &str,
@@ -935,7 +939,7 @@ fn validate_shape(rows: u64, partitions: u16, workers: u8) -> Result<u64> {
     if u16::from(workers) > partitions {
         bail!("workers cannot exceed partitions");
     }
-    if rows % u64::from(partitions) != 0 {
+    if !rows.is_multiple_of(u64::from(partitions)) {
         bail!("rows must be exactly divisible by partitions");
     }
     let rows_per_partition = rows / u64::from(partitions);
