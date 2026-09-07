@@ -87,3 +87,5 @@ jobs:
           git add postgres-local-partition/src/main.rs
           git commit -m "fix: pin source identity across dense points"
           git push
+
+# retrigger after workflow registration
