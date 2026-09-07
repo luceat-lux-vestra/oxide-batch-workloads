@@ -393,7 +393,10 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Migrate => migrate(&cli.database_url).await?,
-        Command::Seed { rows, seed } => seed(&cli.database_url, rows, seed).await?,
+        Command::Seed {
+            rows,
+            seed: seed_value,
+        } => seed(&cli.database_url, rows, seed_value).await?,
         Command::Run {
             run_name,
             rows,
