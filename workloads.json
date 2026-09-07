@@ -7,6 +7,11 @@
       "msrv": { "declared": true }
     },
     {
+      "name": "postgres-local-partition",
+      "path": "postgres-local-partition",
+      "msrv": { "declared": true }
+    },
+    {
       "name": "postgres-postgres",
       "path": "postgres-postgres",
       "msrv": { "declared": true }

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Workload-owned CI contract entrypoint for postgres-local-partition.
+# The central workflow knows only this <ci|msrv> interface.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+stage="${1:?usage: ci/validate <ci|msrv>}"
+
+export DATABASE_URL="postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5435/postgres_local_partition_workload"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+start_postgres() {
+  compose up -d --wait --wait-timeout 60
+}
+
+stop_postgres() {
+  compose down --volumes
+}
+
+run_ci_stage() {
+  cargo fmt --check
+  cargo clippy --locked --all-targets -- -D warnings
+  cargo build --locked --all-targets
+
+  echo "guard: production path has no panic-style unwrap/expect"
+  if grep -rnE '\.(unwrap|expect)\(' src/; then
+    echo "::error::found .unwrap()/.expect() in src/" >&2
+    exit 1
+  fi
+
+  trap stop_postgres EXIT
+  start_postgres
+
+  cargo run --locked -q -- migrate
+  cargo test --locked -- --test-threads=1
+
+  echo "dense correctness qualification: 1/2/4/8/16/32/64 workers"
+  cargo run --locked -q -- seed --rows 512 --seed 20260907
+  local prefix="ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+  cargo run --locked -q -- qualify --prefix "$prefix" --rows 512 --partitions 64
+
+  echo "negative control: independent verifier must reject deliberate corruption"
+  cargo run --locked -q -- corrupt --run-name "${prefix}-w8"
+  if cargo run --locked -q -- verify --run-name "${prefix}-w8" --rows 512 --partitions 64; then
+    echo "::error::verifier accepted a deliberately corrupted destination row" >&2
+    exit 1
+  fi
+}
+
+run_msrv_stage() {
+  cargo build --locked --all-targets
+}
+
+case "$stage" in
+  ci)
+    run_ci_stage
+    ;;
+  msrv)
+    run_msrv_stage
+    ;;
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 1
+    ;;
+esac
