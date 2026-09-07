@@ -19,30 +19,35 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Apply clippy fixes
+      - name: Pin source identity across dense worker points
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path('postgres-local-partition/src/main.rs')
           text = path.read_text()
-          marker = 'fn build_job(\n'
-          replacement = (
-              '// This construction boundary intentionally keeps every restart-relevant and\\n'
-              '// resource-relevant input explicit; hiding them in an unvalidated options bag\\n'
-              '// would make the workload contract harder to audit.\\n'
-              '#[allow(clippy::too_many_arguments)]\\n'
-              'fn build_job(\\n'
-          ).replace('\\n', '\n')
-          if '#[allow(clippy::too_many_arguments)]\nfn build_job(' not in text:
-              if marker not in text:
-                  raise SystemExit('build_job marker not found')
-              text = text.replace(marker, replacement, 1)
-          old = 'if rows % u64::from(partitions) != 0 {'
-          new = 'if !rows.is_multiple_of(u64::from(partitions)) {'
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit('divisibility expression not found')
+          anchor = '    let mut baseline: Option<NormalizedDurableState> = None;\n'
+          prefix = (
+              '    let identity_pool = app_pool(url, 1).await?;\n'
+              '    let (baseline_source_rows, baseline_source_digest) = source_identity(&identity_pool).await?;\n'
+              '    identity_pool.close().await;\n'
+              '    if baseline_source_rows != rows {\n'
+              '        bail!("source contains {baseline_source_rows} rows, expected {rows}");\n'
+              '    }\n\n'
+          )
+          if 'baseline_source_digest' not in text:
+              if anchor not in text:
+                  raise SystemExit('baseline anchor not found')
+              text = text.replace(anchor, prefix + anchor, 1)
+          check_anchor = '        if let Some(expected) = &baseline {\n'
+          check = (
+              '        if verification.business.source_digest != baseline_source_digest {\n'
+              '            bail!("source identity changed before or during the {workers}-worker point");\n'
+              '        }\n'
+          )
+          if 'source identity changed before or during' not in text:
+              if check_anchor not in text:
+                  raise SystemExit('per-point baseline anchor not found')
+              text = text.replace(check_anchor, check + check_anchor, 1)
           path.write_text(text)
           PY
 
@@ -57,5 +62,5 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "fix: satisfy strict clippy validation"
+          git commit -m "fix: pin source identity across dense points"
           git push
