@@ -33,6 +33,77 @@ missing framework-neutral contract.
 | [`csv-postgres/`](csv-postgres/) | `oxide-batch` `0.6.0` | Streaming CSV → PostgreSQL restartable batch import: transaction/checkpoint/restart semantics, crash recovery, application-level idempotency, resource bounds. |
 | [`postgres-postgres/`](postgres-postgres/) | `oxide-batch` `0.6.0` | PostgreSQL → PostgreSQL cursor + keyset/paging restartable transform (campaign #63): deterministic source identity, released enlisted batch writer, independent streaming verification, and rollback + real hard-crash/new-process recovery for both reader modes. Retained larger-dataset resource evidence is the final campaign slice. |
 
+## Accepted comparative benchmark evidence
+
+**Correctness gates performance claims.** A candidate enters a primary
+performance comparison only after its clean execution, transaction/checkpoint
+boundary, hard-death recovery, and final-state equivalence satisfy the selected
+semantic comparison class. A faster run with weaker durability is not accepted
+as a comparable result.
+
+Campaign [#79](https://github.com/luceat-lux-vestra/oxide-batch-workloads/issues/79)
+produced the accepted four-way PostgreSQL → PostgreSQL same-runner observation.
+The retained canonical run is
+[workflow run 34045256715](https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/34045256715),
+at exact `main` SHA `e7b7e31bd12890ebb5a13f32acb22bb66019ccde`.
+
+Canonical configuration and runtime provenance:
+
+- runner: `ubuntu-24.04`;
+- PostgreSQL: `18.6`;
+- rows: `1,000,000`, seed `20260904`;
+- chunk size: `1000`;
+- cursor fetch size: `500`;
+- paging page size: `750`;
+- warmups: `2` per candidate/mode;
+- measured rounds: `8` per candidate/mode;
+- raw Rust: sqlx `0.9.0`;
+- OxideBatch: exact published `0.6.0`;
+- raw Java: pgjdbc `42.7.13`;
+- Spring Batch: `6.0.5`;
+- Java: Temurin/OpenJDK `25.0.4.1` LTS;
+- Rust: `rustc` / `cargo` `1.98.1`.
+
+The table below reports **paired median elapsed ratios (`B/A`)** from the
+retained report. These are not ratios of aggregate medians and not a
+single-run winner.
+
+| Comparison | Cursor | Paging | Interpretation |
+|---|---:|---:|---|
+| raw Rust → OxideBatch | `1.2455×` | `1.4052×` | Rust-side framework/lifecycle attribution |
+| raw Java → Spring Batch | `2.2815×` | `1.9718×` | JVM-side framework/lifecycle attribution |
+| raw Rust → raw Java | `1.0343×` | `1.0373×` | Runtime/driver/system observation only |
+| OxideBatch → Spring Batch | `1.8692×` | `1.4669×` | Product-level same-host observation; language/runtime effects remain |
+
+Artifact and report integrity for that accepted run:
+
+- artifact: `postgres-postgres-four-way-34045256715-1`;
+- artifact ID: `9993337888`;
+- artifact SHA-256: `57044dc37ae29794d3f81c5eb9641a4bc4d4d532f80e5cde85a8721673d35f4b`;
+- report SHA-256: `9210f56606ea99e3d25d4f0fe8174247bdf9b8acad60ddbd75c1d09fc5dd30a2`.
+
+These hosted-runner numbers are **observational evidence**, not a protected
+numeric threshold and not an unqualified “X% faster/slower” marketing claim.
+Retained limitations include hosted-runner variability, non-isolated Spring
+bootstrap cost beyond the recorded launcher/bootstrap boundary, cross-language
+startup/runtime effects, and the absence of symmetric transaction-count
+instrumentation where that instrumentation would perturb the measurement.
+
+### Semantic qualification can exclude a candidate before benchmarking
+
+Campaign [#86](https://github.com/luceat-lux-vestra/oxide-batch-workloads/issues/86)
+qualified JBeret `3.2.0.Final` on Java 25 / PostgreSQL 18 before allowing a
+performance stage. Clean cursor and paging execution passed, but external
+SIGKILL after the workload writer's business commit exposed a durable-boundary
+mismatch in both modes: business rows had advanced to `300` while JBeret's
+durable reader/write checkpoint remained at `200`. Public
+`JobOperator.restart(...)` then replayed from customer `201` and failed on the
+already-committed destination primary key.
+
+Result: JBeret `3.2.0.Final` **fails `semantic-parity-minimal-durability` for
+this workload and is reference-only**. No primary JBeret performance comparison
+was run, and no numeric JBeret performance claim is made.
+
 Each workload is a standalone Cargo project with its own `Cargo.lock`
 pinned to a published `oxide-batch = "=X.Y.Z"` (registry source, verifiable
 in the lockfile — never a path/git dependency), its own CI, and its own
