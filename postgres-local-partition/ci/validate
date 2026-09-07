@@ -26,6 +26,7 @@ run_ci_stage() {
   cargo fmt --check
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
+  python3 -m py_compile ci/validate-recovery.py
 
   echo "guard: production path has no panic-style unwrap/expect"
   if grep -rnE '\.(unwrap|expect)\(' src/; then
@@ -50,6 +51,9 @@ run_ci_stage() {
     echo "::error::verifier accepted a deliberately corrupted destination row" >&2
     exit 1
   fi
+
+  echo "recovery/cancellation qualification: external SIGKILL + public recovery + cooperative stop"
+  python3 ci/validate-recovery.py
 }
 
 run_msrv_stage() {

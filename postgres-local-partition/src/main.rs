@@ -26,6 +26,8 @@ use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{PgPool, Row};
 
+mod qualification;
+
 const JOB_PREFIX: &str = "postgres-local-partition";
 const APP_APPLICATION_NAME: &str = "oxide-batch-workload-local-partition";
 const BUSINESS_POOL_CONNECTIONS: u32 = 64;
@@ -210,13 +212,19 @@ struct PartitionWorker {
 impl Tasklet for PartitionWorker {
     fn execute<'a>(
         &'a self,
-        _context: TaskletContext<'a>,
+        context: TaskletContext<'a>,
     ) -> BoxFuture<'a, std::result::Result<TaskletOutcome, TaskletError>> {
         Box::pin(async move {
             let started = Instant::now();
             self.occupancy.enter();
             let result = async {
                 self.gate.admit().await.map_err(TaskletError::from_error)?;
+                qualification::emit_ready_marker(
+                    &self.key,
+                    self.occupancy.active(),
+                    self.occupancy.peak(),
+                )
+                .map_err(TaskletError::from_error)?;
 
                 let context_json = self.context_json.as_deref().ok_or_else(|| {
                     TaskletError::from_error(WorkerFailure(
@@ -258,6 +266,16 @@ impl Tasklet for PartitionWorker {
                     )));
                 }
 
+                if qualification::hold_if_configured(context.stop_token())
+                    .await
+                    .map_err(TaskletError::from_error)?
+                {
+                    return Ok(TaskletOutcome::Stopped);
+                }
+                qualification::pause_if_configured(&self.key, "before-write")
+                    .await
+                    .map_err(TaskletError::from_error)?;
+
                 let start = i64::try_from(payload.range_start).map_err(|_| {
                     TaskletError::from_error(WorkerFailure(
                         "partition range start exceeded PostgreSQL bigint".to_owned(),
@@ -296,6 +314,9 @@ impl Tasklet for PartitionWorker {
                         written.rows_affected()
                     ))));
                 }
+                qualification::pause_if_configured(&self.key, "after-business-write")
+                    .await
+                    .map_err(TaskletError::from_error)?;
                 Ok(TaskletOutcome::Completed)
             }
             .await;
@@ -556,6 +577,7 @@ async fn run_once(
     partitions: u16,
     workers: u8,
 ) -> Result<RunVerification> {
+    qualification::validate_runtime_controls()?;
     let rows_per_partition = validate_shape(rows, partitions, workers)?;
     let identity_pool = app_pool(url, 1).await?;
     let (source_rows, source_digest) = source_identity(&identity_pool).await?;
@@ -585,10 +607,16 @@ async fn run_once(
         Arc::clone(&gate),
     )?;
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
-    let (_source, stop) = StopSource::new();
-    let report = FlowLauncher::new(&repository, &SystemClock, &ids)
+    let (source, stop) = StopSource::new();
+    let stop_watcher = qualification::spawn_stop_watcher(source)?;
+    let launched = FlowLauncher::new(&repository, &SystemClock, &ids)
         .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+        .await;
+    if let Some(watcher) = stop_watcher {
+        watcher.abort();
+        let _ = watcher.await;
+    }
+    let report = launched?;
     let launch_completed = report.outcome() == &FlowExecutionOutcome::Completed;
     business.close().await;
     repository.close().await?;

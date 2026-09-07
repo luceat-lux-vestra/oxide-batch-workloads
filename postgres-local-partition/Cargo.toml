@@ -6,10 +6,15 @@ rust-version = "1.95"
 publish = false
 license = "Apache-2.0"
 description = "OxideBatch 0.6.0 external validation: PostgreSQL local-partition correctness and dense scaling"
+default-run = "postgres-local-partition"
 
 [[bin]]
 name = "postgres-local-partition"
 path = "src/main.rs"
+
+[[bin]]
+name = "postgres-local-partition-recoveryctl"
+path = "src/bin/postgres-local-partition-recoveryctl.rs"
 
 [dependencies]
 oxide-batch = { version = "=0.6.0", features = ["postgres"] }
