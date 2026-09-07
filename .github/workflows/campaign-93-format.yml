@@ -19,17 +19,31 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Apply compile fix
+      - name: Apply clippy fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path('postgres-local-partition/src/main.rs')
           text = path.read_text()
-          old = 'Command::Seed { rows, seed } => seed(&cli.database_url, rows, seed).await?,'
-          new = 'Command::Seed { rows, seed: seed_value } => seed(&cli.database_url, rows, seed_value).await?,'
-          if old not in text:
-              raise SystemExit('expected seed shadowing expression not found')
-          path.write_text(text.replace(old, new, 1))
+          marker = 'fn build_job(\n'
+          replacement = (
+              '// This construction boundary intentionally keeps every restart-relevant and\\n'
+              '// resource-relevant input explicit; hiding them in an unvalidated options bag\\n'
+              '// would make the workload contract harder to audit.\\n'
+              '#[allow(clippy::too_many_arguments)]\\n'
+              'fn build_job(\\n'
+          ).replace('\\n', '\n')
+          if '#[allow(clippy::too_many_arguments)]\nfn build_job(' not in text:
+              if marker not in text:
+                  raise SystemExit('build_job marker not found')
+              text = text.replace(marker, replacement, 1)
+          old = 'if rows % u64::from(partitions) != 0 {'
+          new = 'if !rows.is_multiple_of(u64::from(partitions)) {'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('divisibility expression not found')
+          path.write_text(text)
           PY
 
       - name: Apply rustfmt
@@ -43,5 +57,5 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "fix: avoid seed command shadowing"
+          git commit -m "fix: satisfy strict clippy validation"
           git push
