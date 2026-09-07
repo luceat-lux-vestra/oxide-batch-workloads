@@ -216,21 +216,19 @@ impl Tasklet for PartitionWorker {
             let started = Instant::now();
             self.occupancy.enter();
             let result = async {
-                self.gate
-                    .admit()
-                    .await
-                    .map_err(TaskletError::from_error)?;
+                self.gate.admit().await.map_err(TaskletError::from_error)?;
 
                 let context_json = self.context_json.as_deref().ok_or_else(|| {
                     TaskletError::from_error(WorkerFailure(
                         "partition context could not be serialized".to_owned(),
                     ))
                 })?;
-                let envelope: ContextEnvelope = serde_json::from_slice(context_json).map_err(|error| {
-                    TaskletError::from_error(WorkerFailure(format!(
-                        "partition context could not be decoded: {error}"
-                    )))
-                })?;
+                let envelope: ContextEnvelope =
+                    serde_json::from_slice(context_json).map_err(|error| {
+                        TaskletError::from_error(WorkerFailure(format!(
+                            "partition context could not be decoded: {error}"
+                        )))
+                    })?;
                 let payload = envelope.payload;
                 let expected_key = partition_key(payload.partition_index);
                 let expected_start = u64::from(payload.partition_index)
@@ -402,7 +400,8 @@ async fn main() -> Result<()> {
             partitions,
             workers,
         } => {
-            let verification = run_once(&cli.database_url, &run_name, rows, partitions, workers).await?;
+            let verification =
+                run_once(&cli.database_url, &run_name, rows, partitions, workers).await?;
             println!("{}", serde_json::to_string_pretty(&verification)?);
             if !verification.passed(rows) {
                 bail!("run verification failed");
@@ -413,7 +412,8 @@ async fn main() -> Result<()> {
             rows,
             partitions,
         } => {
-            let verification = verify_existing(&cli.database_url, &run_name, rows, partitions).await?;
+            let verification =
+                verify_existing(&cli.database_url, &run_name, rows, partitions).await?;
             println!("{}", serde_json::to_string_pretty(&verification)?);
             if !verification.framework.passed() || !verification.business.passed(rows) {
                 bail!("verification failed");
@@ -625,7 +625,8 @@ async fn verify_framework(
     partitions: u16,
     source_digest: &str,
 ) -> Result<FrameworkVerification> {
-    let repository = PostgresJobRepository::connect(framework_config(url, 2)?, Arc::new(SystemClock)).await?;
+    let repository =
+        PostgresJobRepository::connect(framework_config(url, 2)?, Arc::new(SystemClock)).await?;
     let parameters = JobParameters::new();
     let key = JobInstanceKey::new(job_name.clone(), &parameters);
     let mut unit = repository.begin().await?;
@@ -732,16 +733,19 @@ async fn verify_business(
     pool.close().await;
 
     let range_ownership_complete = expected_rows == rows
-        && assignments(rows, partitions)?.iter().enumerate().all(|(index, assignment)| {
-            assignment.index == u16::try_from(index).unwrap_or(u16::MAX)
-                && assignment.start
-                    == u64::try_from(index)
-                        .ok()
-                        .and_then(|value| value.checked_mul(rows_per_partition))
-                        .and_then(|value| value.checked_add(1))
-                        .unwrap_or(0)
-                && assignment.end == assignment.start + rows_per_partition - 1
-        });
+        && assignments(rows, partitions)?
+            .iter()
+            .enumerate()
+            .all(|(index, assignment)| {
+                assignment.index == u16::try_from(index).unwrap_or(u16::MAX)
+                    && assignment.start
+                        == u64::try_from(index)
+                            .ok()
+                            .and_then(|value| value.checked_mul(rows_per_partition))
+                            .and_then(|value| value.checked_add(1))
+                            .unwrap_or(0)
+                    && assignment.end == assignment.start + rows_per_partition - 1
+            });
 
     Ok(BusinessVerification {
         source_rows,
@@ -841,7 +845,10 @@ fn build_job(
             PartitionCount::new(partitions)?,
             PartitionBudget::new(workers, pool_budget(workers))?,
         )))
-        .with_sequence(manager.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .with_sequence(
+            manager.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
         .compile(&name, DefinitionRevision::new("campaign93-v1")?)?;
 
     let entries = assignments(rows, partitions)?
@@ -1028,10 +1035,12 @@ async fn destination_identity(pool: &PgPool, run_name: &str) -> Result<(u64, Str
 
 fn finish_digest(hasher: Sha256) -> String {
     let bytes = hasher.finalize();
-    bytes.iter().fold(String::with_capacity(64), |mut output, byte| {
-        let _ = write!(&mut output, "{byte:02x}");
-        output
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            let _ = write!(&mut output, "{byte:02x}");
+            output
+        })
 }
 
 async fn corrupt(url: &str, run_name: &str) -> Result<()> {
@@ -1078,10 +1087,14 @@ mod tests {
     #[test]
     fn partition_keys_are_stable_and_sorted() -> Result<()> {
         let ranges = assignments(512, 64)?;
-        let mut keys = ranges.iter().map(|range| range.key.clone()).collect::<Vec<_>>();
+        let mut keys = ranges
+            .iter()
+            .map(|range| range.key.clone())
+            .collect::<Vec<_>>();
         let original = keys.clone();
         keys.sort();
-        if keys != original || keys.first().map(String::as_str) != Some("partition-0000")
+        if keys != original
+            || keys.first().map(String::as_str) != Some("partition-0000")
             || keys.last().map(String::as_str) != Some("partition-0063")
         {
             bail!("partition keys are not canonical");
