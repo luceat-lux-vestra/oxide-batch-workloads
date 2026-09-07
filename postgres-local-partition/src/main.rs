@@ -491,6 +491,13 @@ async fn seed(url: &str, rows: u64, seed: i64) -> Result<()> {
 
 async fn qualify(url: &str, prefix: &str, rows: u64, partitions: u16) -> Result<()> {
     validate_shape(rows, partitions, 64)?;
+    let identity_pool = app_pool(url, 1).await?;
+    let (baseline_source_rows, baseline_source_digest) = source_identity(&identity_pool).await?;
+    identity_pool.close().await;
+    if baseline_source_rows != rows {
+        bail!("source contains {baseline_source_rows} rows, expected {rows}");
+    }
+
     let mut baseline: Option<NormalizedDurableState> = None;
     let mut points = Vec::new();
 
@@ -500,6 +507,9 @@ async fn qualify(url: &str, prefix: &str, rows: u64, partitions: u16) -> Result<
         if !verification.passed(rows) {
             println!("{}", serde_json::to_string_pretty(&verification)?);
             bail!("dense qualification failed at {workers} workers");
+        }
+        if verification.business.source_digest != baseline_source_digest {
+            bail!("source identity changed before or during the {workers}-worker point");
         }
         if let Some(expected) = &baseline {
             if &verification.framework.normalized != expected {
