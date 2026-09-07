@@ -19,10 +19,23 @@ jobs:
         with:
           persist-credentials: true
 
+      - name: Apply compile fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('postgres-local-partition/src/main.rs')
+          text = path.read_text()
+          old = 'Command::Seed { rows, seed } => seed(&cli.database_url, rows, seed).await?,'
+          new = 'Command::Seed { rows, seed: seed_value } => seed(&cli.database_url, rows, seed_value).await?,'
+          if old not in text:
+              raise SystemExit('expected seed shadowing expression not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Apply rustfmt
         run: cargo fmt --manifest-path postgres-local-partition/Cargo.toml
 
-      - name: Commit formatting if needed
+      - name: Commit patch if needed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -30,5 +43,5 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "style: format campaign 93 scratch code"
+          git commit -m "fix: avoid seed command shadowing"
           git push
