@@ -1,0 +1,89 @@
+name: Campaign 93 scratch source-identity fix
+
+on:
+  push:
+    branches: [campaign-93-lockgen]
+    paths:
+      - .github/workflows/campaign-93-fix-source-identity.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out scratch branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Enforce one fixed source identity across worker points
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('postgres-local-partition/src/main.rs')
+          text = path.read_text()
+          old = '''async fn qualify(url: &str, prefix: &str, rows: u64, partitions: u16) -> Result<()> {
+              validate_shape(rows, partitions, 64)?;
+              let mut baseline: Option<NormalizedDurableState> = None;
+              let mut points = Vec::new();
+
+              for workers in DENSE_WORKER_POINTS {
+                  let run_name = format!("{prefix}-w{workers}");
+                  let verification = run_once(url, &run_name, rows, partitions, workers).await?;
+                  if !verification.passed(rows) {
+                      println!("{}", serde_json::to_string_pretty(&verification)?);
+                      bail!("dense qualification failed at {workers} workers");
+                  }
+                  if let Some(expected) = &baseline {
+                      if &verification.framework.normalized != expected {
+                          bail!("normalized durable state diverged at {workers} workers");
+                      }
+                  } else {
+                      baseline = Some(verification.framework.normalized.clone());
+                  }
+'''
+          new = '''async fn qualify(url: &str, prefix: &str, rows: u64, partitions: u16) -> Result<()> {
+              validate_shape(rows, partitions, 64)?;
+              let identity_pool = app_pool(url, 1).await?;
+              let (baseline_source_rows, baseline_source_digest) = source_identity(&identity_pool).await?;
+              identity_pool.close().await;
+              if baseline_source_rows != rows {
+                  bail!("source contains {baseline_source_rows} rows, expected {rows}");
+              }
+
+              let mut baseline: Option<NormalizedDurableState> = None;
+              let mut points = Vec::new();
+
+              for workers in DENSE_WORKER_POINTS {
+                  let run_name = format!("{prefix}-w{workers}");
+                  let verification = run_once(url, &run_name, rows, partitions, workers).await?;
+                  if !verification.passed(rows) {
+                      println!("{}", serde_json::to_string_pretty(&verification)?);
+                      bail!("dense qualification failed at {workers} workers");
+                  }
+                  if verification.business.source_digest != baseline_source_digest {
+                      bail!("source identity changed before or during the {workers}-worker point");
+                  }
+                  if let Some(expected) = &baseline {
+                      if &verification.framework.normalized != expected {
+                          bail!("normalized durable state diverged at {workers} workers");
+                      }
+                  } else {
+                      baseline = Some(verification.framework.normalized.clone());
+                  }
+'''
+          if old not in text:
+              raise SystemExit('expected qualify block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --manifest-path postgres-local-partition/Cargo.toml
+
+      - name: Commit scratch fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add postgres-local-partition/src/main.rs
+          git commit -m "fix: pin source identity across dense points"
+          git push
