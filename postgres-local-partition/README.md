@@ -8,7 +8,7 @@ A deterministic PostgreSQL source is divided into contiguous, non-overlapping ra
 
 The partition tasklet's business transaction and OxideBatch's durable partition-result commit are separate durable boundaries. This workload therefore does **not** claim `AtomicSameResource` or framework exactly-once for partition business work. The destination primary key plus deterministic upsert makes the final business state replay-safe at the application layer. PR2 explicitly qualifies the replay window rather than inferring exactly-once from the duplicate-free final table.
 
-No PR in this workload publishes a throughput or scaling-performance claim until correctness and recovery gates are accepted.
+Performance observations below are limited to the accepted campaign #93 canonical run. They are not a cross-host SLA, a protected regression threshold, or proof of a framework-owned bottleneck.
 
 ## PR1: dense correctness qualification
 
@@ -79,15 +79,41 @@ Qualification controls are disabled unless their explicit environment variables 
 
 ## PR3: measurement and ownership instrumentation
 
-PR3 adds a measurement harness without changing the already-qualified `run` path. The canonical intended campaign uses 262,144 rows, 1,024 durable partitions, worker budgets `1 -> 2 -> 4 -> 8 -> 16 -> 32 -> 64`, one warm-up round, and seven cyclic measured rounds.
+PR3 adds a measurement harness without changing the already-qualified `run` path. The canonical campaign uses 262,144 rows, 1,024 durable partitions, worker budgets `1 -> 2 -> 4 -> 8 -> 16 -> 32 -> 64`, one warm-up round, and seven cyclic measured rounds.
 
 Each sample is a fresh PostgreSQL database cloned from the same migrated/seeded deterministic template, so framework metadata and business rows do not accumulate across worker points. Scaling ratios use the durable job-execution `created_at -> ended_at` interval read through the published `JobRepository` API; clone, seed, verifier, statistics snapshot, and cleanup are outside that interval.
 
-The harness records paired speedup/efficiency, durable worker-step durations, parent aggregation tail, process-window CPU/RSS, sampled framework/business PostgreSQL session occupancy and lock waits by distinct `application_name`, and `pg_stat_statements` evidence when the manual workflow enables it. Raw artifacts are retained by Actions and are not promoted into canonical repository evidence by this PR.
+The harness records paired speedup/efficiency, durable worker-step durations, parent aggregation tail, process-window CPU/RSS, sampled framework/business PostgreSQL session occupancy and lock waits by distinct `application_name`, and `pg_stat_statements` evidence. The raw producer report remains identified by its GitHub Actions artifact and content digests; PR4 retains a compact canonical projection used for repository-level verification and public claims.
 
 Measurement limitations are explicit rather than inferred away: process CPU/RSS and `pg_stat_statements` include the workload-owned post-launch verifier; PostgreSQL session values are sampled maxima rather than exact instantaneous peaks and may also include post-launch verifier activity; and business-pool acquire wait is not directly visible without modifying the accepted external-consumer execution path.
 
-Most importantly, PR3 does **not** infer bottleneck ownership from a curve. Generated reports remain `ownership.status = UNKNOWN` and `optimization_issue_allowed = false`; a framework optimization issue requires later profiling/minimal reproduction that isolates framework-owned cost.
+Most importantly, the evidence does **not** infer bottleneck ownership from the curve. Retained evidence remains `ownership.status = UNKNOWN` and `optimization_issue_allowed = false`; a framework optimization issue requires later profiling/minimal reproduction that isolates framework-owned cost.
+
+## PR4: accepted canonical observational baseline
+
+Campaign acceptance reviewed the exact PR3 producer checkout `d5ed675859780b3403b3afdf6bc0393c998f77bb` and canonical GitHub Actions run `34183558594`. The run used PostgreSQL 18.6, Rust 1.98.1, four logical CPUs, the exact published `oxide-batch 0.6.0` crates.io artifact, 262,144 deterministic source rows, and 1,024 partitions.
+
+The retained evidence contains 7 warm-up samples plus 49 measured samples. The canonical verifier recomputes the public medians and paired scaling metrics from those retained measured samples:
+
+| workers | median durable time (s) | median rows/s | median paired speedup | median scaling efficiency |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 26.161 | 10,020 | 1.000 | 1.000 |
+| 2 | 18.242 | 14,370 | 1.393 | 0.697 |
+| 4 | 12.345 | 21,235 | 2.093 | 0.523 |
+| 8 | 11.467 | 22,861 | 2.468 | 0.309 |
+| 16 | 12.602 | 20,802 | 2.052 | 0.128 |
+| 32 | 11.054 | 23,715 | 2.214 | 0.069 |
+| 64 | 11.740 | 22,329 | 2.245 | 0.035 |
+
+On this four-logical-CPU hosted runner, additional workers stop producing near-linear scaling at the higher points. The curve alone does **not** isolate OxideBatch core as the owner of the saturation.
+
+Canonical repository evidence:
+
+- [`validation/dense-scaling-run.json`](validation/dense-scaling-run.json) — compact retained projection of all 56 durable timing/throughput samples, correctness digests, occupancy observations, and recomputable scaling inputs;
+- [`validation/evidence-manifest.json`](validation/evidence-manifest.json) — manifest v2 binding the evidence to the exact producer semantic closure and published OxideBatch subject;
+- [`validation/verify-retained-evidence.py`](validation/verify-retained-evidence.py) — fail-closed verifier that recomputes the table above and rejects ownership/identity/schedule/correctness drift.
+
+The original raw Actions ZIP is separately identified in the manifest by SHA-256 and its actual finite GitHub retention window. Detailed CPU/RSS, PostgreSQL session, `pg_stat_statements`, per-sample database, and individual partition-duration telemetry remains in that raw producer artifact rather than the committed projection. Public scaling claims above depend only on values the committed verifier recomputes from retained durable sample timings.
 
 ## Local reproduction
 
@@ -114,15 +140,16 @@ The PR2 harness expects the debug binaries produced by `cargo build --locked --a
 python3 ci/validate-recovery.py
 ```
 
-The bounded PR3 smoke is documented in `benchmark/README.md`. The full scaling workflow is manual-only and retains its JSON report as an Actions artifact before any result is considered for promotion.
+The bounded PR3 smoke is documented in `benchmark/README.md`. The full canonical scaling workflow is manual-only; repository evidence is promoted only after separate campaign acceptance.
 
-## Scope not yet qualified
+## Scope not established
 
-This workload still does not establish:
+This workload does not establish:
 
 - a framework-owned scaling bottleneck or optimizer issue;
 - a performance regression budget or SLA;
+- cross-host or cross-platform performance generalization;
 - distributed execution or remote-worker semantics;
-- a public performance claim from unreviewed/unretained benchmark output.
+- framework exactly-once for partition tasklet business work.
 
-Campaign #93 therefore remains open after the measurement harness lands. Numeric output must be reviewed together with ownership evidence before any core optimization issue or README performance claim is justified.
+The accepted baseline is therefore evidence of correctness-qualified single-host scaling behavior for this exact workload/environment, not a general OxideBatch performance guarantee.

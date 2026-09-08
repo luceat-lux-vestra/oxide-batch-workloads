@@ -1,0 +1,221 @@
+{
+  "environment": {
+    "limitations": [
+      "The committed canonical projection retains all 56 durable timing/throughput samples plus worker-count/occupancy and run-level correctness identities needed to independently recompute the public scaling baseline; detailed CPU/RSS/session/pg_stat_statements/partition-duration telemetry remains only in the separately digested finite-retention raw GitHub Actions artifact.",
+      "Process CPU/RSS in the raw producer report includes workload-owned post-launch verification, so it is not framework-only cost.",
+      "Business-pool acquisition wait is not directly observable from the unchanged external-consumer run path.",
+      "The raw pg_stat_statements process window includes built-in final verification SQL.",
+      "This is one seven-round campaign on one four-logical-CPU hosted runner; no cross-host SLA, regression budget, or framework-owned bottleneck is established.",
+      "The GitHub Actions run identity is recorded metadata, not a trusted-producer-bound attestation; manifest v2 has no external attestation trust anchor."
+    ],
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "source": "producer Cargo.toml in semantic closure",
+        "trust": "recorded-metadata",
+        "value": "1.95"
+      },
+      {
+        "name": "rustc-version",
+        "source": "canonical retained Actions report",
+        "trust": "recorded-metadata",
+        "value": "rustc 1.98.1 (48a229cea 2026-09-01)"
+      },
+      {
+        "name": "cargo-version",
+        "source": "canonical retained Actions report",
+        "trust": "recorded-metadata",
+        "value": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+      },
+      {
+        "name": "postgres-version",
+        "source": "canonical retained Actions report",
+        "trust": "recorded-metadata",
+        "value": "postgres (PostgreSQL) 18.6 (Debian 18.6-1.pgdg13+2)"
+      },
+      {
+        "name": "logical-cpu-count",
+        "source": "canonical retained Actions report",
+        "trust": "recorded-metadata",
+        "value": 4
+      },
+      {
+        "name": "runner-platform",
+        "source": "canonical retained Actions report",
+        "trust": "recorded-metadata",
+        "value": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+      },
+      {
+        "name": "github-actions-run",
+        "source": "canonical producer metadata and workflow run",
+        "trust": "recorded-metadata",
+        "value": "34183558594/attempt-1"
+      },
+      {
+        "name": "raw-report-sha256",
+        "source": "canonical Actions artifact inner report digest",
+        "trust": "recorded-metadata",
+        "value": "05ad4cdb6afbf0c546dc5ec9a544b104c0cc0b768c2835e2d8799fb63d7dd141"
+      }
+    ]
+  },
+  "external_artifacts": [
+    {
+      "name": "canonical-pr3-raw-actions-artifact-zip",
+      "reference": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/34183558594/artifacts/10040083979",
+      "retention_guarantee": "Configured retention-days=30; GitHub reports expiry at 2026-10-08T03:46:39Z.",
+      "sha256": "4132b27cffe2f4bfbfcdb33605af3e2519fb32388e65eb01304d0aac5c93e46b",
+      "storage": "GitHub Actions artifact"
+    }
+  ],
+  "producer": {
+    "base_revision": "d5ed675859780b3403b3afdf6bc0393c998f77bb",
+    "revision_role": "producer-checkout",
+    "run": {
+      "binding": "recorded-metadata",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/34183558594",
+      "kind": "github-actions-workflow-dispatch"
+    }
+  },
+  "records": [
+    {
+      "artifact": {
+        "path": "validation/dense-scaling-run.json",
+        "sha256": "e112be006a51c7996b4350775ca9449385e8a8c8101661c5519aa466e97d4d40",
+        "size_bytes": 6275
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "generated-postgres-source",
+          "sha256": "4c40f627ed306157b0a1734ff7d03f5d94e45eb28b76d7158d5ec27c65a81518"
+        },
+        "reproduction": {
+          "partitions": 1024,
+          "rows": 262144,
+          "rows_per_partition": 256,
+          "seed": 20260908
+        }
+      },
+      "parameters": {
+        "measured_rounds": 7,
+        "pg_stat_statements_required": true,
+        "sample_isolation": "fresh PostgreSQL clone from one migrated/seeded deterministic template per sample",
+        "timed_metric": "durable job execution created_at -> ended_at",
+        "warmups": 1,
+        "worker_points": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64
+        ]
+      },
+      "scenario": "canonical_dense_single_host_scaling"
+    }
+  ],
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 1,
+      "max_total_bytes": 16384,
+      "supersession": "One accepted canonical dense single-host scaling projection; replacement requires an atomic manifest, verifier, artifact, and public-claim update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "schema_version": 2,
+  "semantic_closure": {
+    "algorithm": "sha256-git-tree-entries-v1",
+    "digest_sha256": "d0358d88e522915587b150fb4e5e05603aa35d18da454a0b553d1c059b55ec21",
+    "entries": [
+      {
+        "git_blob_oid": "f72a6fedb894a1453231e71d0da2f7af11ba4b0f",
+        "mode": "100644",
+        "path": "Cargo.lock"
+      },
+      {
+        "git_blob_oid": "b1596a1427a14e84e83f8ad921b36a3345ba1ece",
+        "mode": "100644",
+        "path": "Cargo.toml"
+      },
+      {
+        "git_blob_oid": "18463ec65daff6e6f58e0cff64ae28b54e1aeca1",
+        "mode": "100644",
+        "path": "benchmark/docker-compose.scale.yml"
+      },
+      {
+        "git_blob_oid": "cc1adb6fd644b467b877a20e4c57c59a58329258",
+        "mode": "100644",
+        "path": "benchmark/scale.py"
+      },
+      {
+        "git_blob_oid": "f74f5c1a575d6df8ef6427101db83be18f7f75ac",
+        "mode": "100644",
+        "path": "src/bin/postgres-local-partition-measurementctl.rs"
+      },
+      {
+        "git_blob_oid": "596eee43a55826495bcfb49f49de86e4055358c7",
+        "mode": "100644",
+        "path": "src/bin/postgres-local-partition-recoveryctl.rs"
+      },
+      {
+        "git_blob_oid": "2ef9fe571bbe0d8e4d66dbf77a9694f901f9bff4",
+        "mode": "100644",
+        "path": "src/main.rs"
+      },
+      {
+        "git_blob_oid": "cf8a409eb1b6856461ea3460275ccd357285e60c",
+        "mode": "100644",
+        "path": "src/measurement_sessions.rs"
+      },
+      {
+        "git_blob_oid": "32d5985339078ab9141d21d517fac09112d42d5d",
+        "mode": "100644",
+        "path": "src/measurement_timings.rs"
+      },
+      {
+        "git_blob_oid": "2c1e1de239b8f869a4e59fa45a78196af4eb36a7",
+        "mode": "100644",
+        "path": "src/qualification.rs"
+      }
+    ],
+    "excluded_generated_paths": [
+      "validation/dense-scaling-run.json"
+    ],
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "benchmark/docker-compose.scale.yml",
+      "benchmark/scale.py",
+      "src"
+    ]
+  },
+  "validation_subject": {
+    "crates": [
+      {
+        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b",
+        "name": "oxide-batch",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.6.0"
+      }
+    ],
+    "lockfile": {
+      "git_blob_oid": "f72a6fedb894a1453231e71d0da2f7af11ba4b0f",
+      "path": "Cargo.lock"
+    }
+  },
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-retained-evidence.py",
+      "result_model": "violations-v1",
+      "sha256": "b07efaffb14124b34aaa0eccfaccb5faac7ea6e8c439eec13eedc807a5697afd"
+    },
+    "producer": {
+      "git_blob_oid": "cc1adb6fd644b467b877a20e4c57c59a58329258",
+      "path": "benchmark/scale.py"
+    }
+  },
+  "workload": "postgres-local-partition"
+}
