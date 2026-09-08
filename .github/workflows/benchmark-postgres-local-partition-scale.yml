@@ -1,0 +1,133 @@
+name: Benchmark PostgreSQL local-partition scaling
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Deterministic source row count
+        required: true
+        default: "262144"
+      partitions:
+        description: Durable local partitions
+        required: true
+        default: "1024"
+      seed:
+        description: Deterministic source seed
+        required: true
+        default: "20260908"
+      warmups:
+        description: Warm-up rounds
+        required: true
+        default: "1"
+      measured_runs:
+        description: Measured cyclic rounds; canonical value is 7
+        required: true
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-postgres-local-partition-scale-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scale:
+    name: postgres-local-partition-scale
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5435/postgres_local_partition_workload
+      RUST_LOG: error
+      BENCH_ROWS: ${{ inputs.rows }}
+      BENCH_PARTITIONS: ${{ inputs.partitions }}
+      BENCH_SEED: ${{ inputs.seed }}
+      BENCH_WARMUPS: ${{ inputs.warmups }}
+      BENCH_MEASURED_RUNS: ${{ inputs.measured_runs }}
+    defaults:
+      run:
+        working-directory: postgres-local-partition
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: postgres-local-partition
+
+      - name: Validate harness and bounded inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile benchmark/scale.py benchmark/test_scale.py
+          python3 benchmark/test_scale.py
+          for value in "$BENCH_ROWS" "$BENCH_PARTITIONS" "$BENCH_SEED" "$BENCH_WARMUPS" "$BENCH_MEASURED_RUNS"; do
+            [[ "$value" =~ ^[0-9]+$ ]] || { echo "::error::benchmark inputs must be non-negative integers"; exit 1; }
+          done
+          (( BENCH_ROWS >= 1 && BENCH_ROWS <= 10000000 )) || { echo "::error::rows out of range"; exit 1; }
+          (( BENCH_PARTITIONS >= 64 && BENCH_PARTITIONS <= 1024 )) || { echo "::error::partitions out of range"; exit 1; }
+          (( BENCH_ROWS % BENCH_PARTITIONS == 0 )) || { echo "::error::rows must be divisible by partitions"; exit 1; }
+          (( BENCH_WARMUPS <= 3 )) || { echo "::error::warmups out of range"; exit 1; }
+          (( BENCH_MEASURED_RUNS >= 1 && BENCH_MEASURED_RUNS <= 14 )) || { echo "::error::measured runs out of range"; exit 1; }
+
+      - name: Build measurement subject once
+        run: cargo build --locked --release --all-targets
+
+      - name: Start PostgreSQL 18 with measurement extensions
+        run: docker compose -f docker-compose.yml -f benchmark/docker-compose.scale.yml up -d --wait --wait-timeout 60
+
+      - name: Run dense scaling campaign
+        id: campaign
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python3 benchmark/scale.py \
+            --binary "$(pwd)/target/release/postgres-local-partition" \
+            --measurementctl "$(pwd)/target/release/postgres-local-partition-measurementctl" \
+            --base-database-url "$DATABASE_URL" \
+            --rows "$BENCH_ROWS" \
+            --partitions "$BENCH_PARTITIONS" \
+            --seed "$BENCH_SEED" \
+            --warmups "$BENCH_WARMUPS" \
+            --measured-runs "$BENCH_MEASURED_RUNS" \
+            --worker-points 1,2,4,8,16,32,64 \
+            --compose-file docker-compose.yml \
+            --compose-file benchmark/docker-compose.scale.yml \
+            --require-pg-stat-statements \
+            --output "$RUNNER_TEMP/postgres-local-partition-scale.json"
+          status=$?
+          if [[ -f "$RUNNER_TEMP/postgres-local-partition-scale.json" ]]; then
+            sha256sum "$RUNNER_TEMP/postgres-local-partition-scale.json" | tee "$RUNNER_TEMP/postgres-local-partition-scale.sha256"
+          fi
+          exit "$status"
+
+      - name: Upload raw scaling evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: postgres-local-partition-scale-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/postgres-local-partition-scale.json
+            ${{ runner.temp }}/postgres-local-partition-scale.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose -f docker-compose.yml -f benchmark/docker-compose.scale.yml down --volumes
+
+      - name: Fail if campaign failed
+        if: steps.campaign.outcome != 'success'
+        run: |
+          echo "::error::local-partition scaling campaign failed; inspect retained artifact/logs"
+          exit 1

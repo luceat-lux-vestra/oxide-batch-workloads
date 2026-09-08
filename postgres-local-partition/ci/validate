@@ -26,7 +26,8 @@ run_ci_stage() {
   cargo fmt --check
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
-  python3 -m py_compile ci/validate-recovery.py
+  python3 -m py_compile ci/validate-recovery.py benchmark/scale.py benchmark/test_scale.py
+  python3 benchmark/test_scale.py
 
   echo "guard: production path has no panic-style unwrap/expect"
   if grep -rnE '\.(unwrap|expect)\(' src/; then
@@ -54,6 +55,36 @@ run_ci_stage() {
 
   echo "recovery/cancellation qualification: external SIGKILL + public recovery + cooperative stop"
   python3 ci/validate-recovery.py
+
+  echo "measurement smoke: isolated sample databases + durable timing/session observer"
+  local smoke_output="${RUNNER_TEMP:-/tmp}/postgres-local-partition-scale-smoke.json"
+  python3 benchmark/scale.py \
+    --binary "$(pwd)/target/debug/postgres-local-partition" \
+    --measurementctl "$(pwd)/target/debug/postgres-local-partition-measurementctl" \
+    --base-database-url "$DATABASE_URL" \
+    --rows 64 \
+    --partitions 8 \
+    --seed 20260908 \
+    --warmups 0 \
+    --measured-runs 1 \
+    --worker-points 1,2,4,8 \
+    --output "$smoke_output"
+  python3 - "$smoke_output" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if report.get("ownership", {}).get("status") != "UNKNOWN":
+    raise SystemExit("measurement smoke must not auto-classify bottleneck ownership")
+if report.get("ownership", {}).get("optimization_issue_allowed") is not False:
+    raise SystemExit("measurement smoke must fail closed for optimizer issue creation")
+points = report.get("configuration", {}).get("worker_points")
+if points != [1, 2, 4, 8]:
+    raise SystemExit(f"unexpected smoke worker points: {points}")
+if len(report.get("samples", [])) != 4:
+    raise SystemExit("measurement smoke must emit exactly four measured samples")
+PY
 }
 
 run_msrv_stage() {

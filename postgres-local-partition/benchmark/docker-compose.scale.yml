@@ -1,0 +1,10 @@
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - max_connections=160
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
