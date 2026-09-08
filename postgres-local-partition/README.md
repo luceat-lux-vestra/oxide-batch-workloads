@@ -77,10 +77,22 @@ The merge gate requires:
 
 Qualification controls are disabled unless their explicit environment variables are set; ordinary `run` / `qualify` execution retains the PR1 path.
 
+## PR3: measurement and ownership instrumentation
+
+PR3 adds a measurement harness without changing the already-qualified `run` path. The canonical intended campaign uses 262,144 rows, 1,024 durable partitions, worker budgets `1 -> 2 -> 4 -> 8 -> 16 -> 32 -> 64`, one warm-up round, and seven cyclic measured rounds.
+
+Each sample is a fresh PostgreSQL database cloned from the same migrated/seeded deterministic template, so framework metadata and business rows do not accumulate across worker points. Scaling ratios use the durable job-execution `created_at -> ended_at` interval read through the published `JobRepository` API; clone, seed, verifier, statistics snapshot, and cleanup are outside that interval.
+
+The harness records paired speedup/efficiency, durable worker-step durations, parent aggregation tail, process-window CPU/RSS, sampled framework/business PostgreSQL session occupancy and lock waits by distinct `application_name`, and `pg_stat_statements` evidence when the manual workflow enables it. Raw artifacts are retained by Actions and are not promoted into canonical repository evidence by this PR.
+
+Measurement limitations are explicit rather than inferred away: process CPU/RSS and `pg_stat_statements` include the workload-owned post-launch verifier; PostgreSQL session values are sampled maxima rather than exact instantaneous peaks and may also include post-launch verifier activity; and business-pool acquire wait is not directly visible without modifying the accepted external-consumer execution path.
+
+Most importantly, PR3 does **not** infer bottleneck ownership from a curve. Generated reports remain `ownership.status = UNKNOWN` and `optimization_issue_allowed = false`; a framework optimization issue requires later profiling/minimal reproduction that isolates framework-owned cost.
+
 ## Local reproduction
 
 ```bash
-# starts PostgreSQL 18 on localhost:5435 and runs PR1 + PR2 semantic gates
+# starts PostgreSQL 18 and runs PR1 + PR2 semantic gates plus a bounded PR3 measurement smoke
 bash ci/validate ci
 ```
 
@@ -102,13 +114,15 @@ The PR2 harness expects the debug binaries produced by `cargo build --locked --a
 python3 ci/validate-recovery.py
 ```
 
+The bounded PR3 smoke is documented in `benchmark/README.md`. The full scaling workflow is manual-only and retains its JSON report as an Actions artifact before any result is considered for promotion.
+
 ## Scope not yet qualified
 
 This workload still does not establish:
 
-- throughput, speedup, scaling efficiency, CPU, RSS, connection-wait, or PostgreSQL bottleneck ownership;
+- a framework-owned scaling bottleneck or optimizer issue;
 - a performance regression budget or SLA;
 - distributed execution or remote-worker semantics;
-- a public performance claim.
+- a public performance claim from unreviewed/unretained benchmark output.
 
-Those remain later gates in campaign #93. Correctness and recovery qualification precede retained numeric measurement, and any later slowdown requires bottleneck ownership evidence before a framework optimization issue is justified.
+Campaign #93 therefore remains open after the measurement harness lands. Numeric output must be reviewed together with ownership evidence before any core optimization issue or README performance claim is justified.
