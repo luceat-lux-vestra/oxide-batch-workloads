@@ -1,0 +1,83 @@
+name: Track F evidence one-shot
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  producer:
+    name: producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      POSTGRES_POSTGRES_TEST_DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      PRODUCER_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact producer head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PRODUCER_SHA }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Prove exact producer checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PRODUCER_SHA"
+          printf 'producer_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$PRODUCER_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | tee /tmp/track-f-producer.txt
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Start fresh PostgreSQL
+        working-directory: postgres-postgres
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Produce cursor and paging retained evidence
+        working-directory: postgres-postgres
+        run: ./validation/generate-evidence.sh
+
+      - name: Produce Track F process interoperability observation
+        working-directory: postgres-postgres
+        run: GITHUB_SHA="$PRODUCER_SHA" cargo test --locked --test process_interop -- --nocapture
+
+      - name: Produce Track F lifecycle closure observation
+        working-directory: postgres-postgres
+        run: GITHUB_SHA="$PRODUCER_SHA" cargo test --locked --test process_interop_closure -- --nocapture
+
+      - name: Produce Track F identity observation
+        working-directory: postgres-postgres
+        run: GITHUB_SHA="$PRODUCER_SHA" cargo test --locked --test process_interop_identity -- --nocapture
+
+      - name: Collect exact retained evidence bytes
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/track-f-evidence
+          cp postgres-postgres/validation/cursor-run.json /tmp/track-f-evidence/
+          cp postgres-postgres/validation/paging-run.json /tmp/track-f-evidence/
+          cp postgres-postgres/target/process-interop-campaign-98.json /tmp/track-f-evidence/process-interop-run.json
+          cp postgres-postgres/target/process-interop-closure-campaign-98.json /tmp/track-f-evidence/process-interop-closure-run.json
+          cp postgres-postgres/target/process-interop-identity-campaign-98.json /tmp/track-f-evidence/process-interop-identity-run.json
+          cp /tmp/track-f-producer.txt /tmp/track-f-evidence/producer.txt
+          sha256sum /tmp/track-f-evidence/*
+          wc -c /tmp/track-f-evidence/*
+
+      - name: Upload producer evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: track-f-evidence-${{ env.PRODUCER_SHA }}
+          path: /tmp/track-f-evidence
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Stop PostgreSQL
+        if: always()
+        working-directory: postgres-postgres
+        run: docker compose down --volumes
