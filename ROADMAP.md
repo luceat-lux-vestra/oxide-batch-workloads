@@ -239,7 +239,6 @@ The wrapper is API-usability evidence, not an embedded control-plane commitment.
 - [ ] bounded cardinality and exporter queues
 - [ ] exporter outage cannot corrupt or indefinitely block batch work
 - [ ] redaction tests for credentials, raw payloads, SQL values, sensitive parameters
-
 - [ ] diagnostic/root-cause provenance sufficient to explain failed/recovered runs
 
 ## Track J — Deployment and process lifecycle
