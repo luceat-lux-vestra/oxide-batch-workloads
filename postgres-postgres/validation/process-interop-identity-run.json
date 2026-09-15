@@ -1,0 +1,26 @@
+{
+  "campaign_issue": 98,
+  "initial_execution": {
+    "attempt": "1",
+    "durable_status_after_kill": "STARTED",
+    "durable_status_before_kill": "STARTED",
+    "job_execution_id": "12",
+    "job_instance_id": "16",
+    "termination_signal": 9,
+    "workload_pid": 13028
+  },
+  "launcher": {
+    "pid": 13004
+  },
+  "producer_checkout": "3df532e66cc28a1ed350901f06cf80b9de6c92f5",
+  "recovery_continuation": {
+    "attempt": "2",
+    "durable_status": "COMPLETED",
+    "job_execution_id": "13",
+    "job_instance_id": "16",
+    "process_exit_code": 0,
+    "workload_pid": 13050
+  },
+  "schema": "oxide-batch-workloads.process-interop-identity-observation",
+  "schema_version": 1
+}

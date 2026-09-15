@@ -1,0 +1,58 @@
+{
+  "campaign_issue": 98,
+  "capability_gaps": {
+    "recovery_step_lifecycle_closure": "UNSUPPORTED/GAP: exact published 0.6.0 recovers the JobExecution but leaves the crashed child StepExecution STARTED; tracked by oxide-batch#269"
+  },
+  "continuation": {
+    "active_job_executions_final": 0,
+    "active_step_executions_final": 1,
+    "attempt": "2",
+    "job_execution_id": "11",
+    "process_exit_code": 0,
+    "status": "COMPLETED",
+    "stderr_bytes": 583,
+    "stdout_bytes": 0,
+    "workload_pid": 12940
+  },
+  "launcher_pid": 12892,
+  "producer_checkout": "3df532e66cc28a1ed350901f06cf80b9de6c92f5",
+  "public_recovery": {
+    "active_job_executions_after_recovery": 0,
+    "active_step_executions_after_recovery": 1,
+    "process_exit_code": 0,
+    "recovered_job_execution_id": "10",
+    "recovered_status": "FAILED",
+    "stderr_bytes": 139,
+    "stdout_bytes": 0,
+    "step_lifecycle_closure": "UNSUPPORTED/GAP",
+    "upstream_issue": "luceat-lux-vestra/oxide-batch#269"
+  },
+  "schema": "oxide-batch-workloads.process-interop-closure-observation",
+  "schema_version": 1,
+  "sigterm": {
+    "checkpoint_position_before_recovery": 100,
+    "committed_chunks_before_recovery": 1,
+    "durable_status_before_recovery": "STARTED",
+    "launcher_is_direct_parent": true,
+    "numeric_exit_code": null,
+    "shutdown_latency_micros": 1701,
+    "signal": 15,
+    "stderr_bytes": 575,
+    "stdout_bytes": 0,
+    "workload_pid": 12916
+  },
+  "step_execution_history": [
+    [
+      "10",
+      "STARTED",
+      1,
+      100
+    ],
+    [
+      "11",
+      "COMPLETED",
+      4,
+      350
+    ]
+  ]
+}

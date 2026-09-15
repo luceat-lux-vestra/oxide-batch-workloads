@@ -1,0 +1,71 @@
+{
+  "active_duplicate_lost_response_retry": {
+    "different_identity_completed": true,
+    "different_identity_pid": 12682,
+    "duplicate_process_exit_code": 1,
+    "durable_business_rows_after_retry": 200,
+    "job_executions_after_retry": 1,
+    "job_instances_after_retry": 1,
+    "primary_pid": 12664
+  },
+  "campaign_issue": 98,
+  "capability_gaps": {
+    "dedicated_external_correlation_identity": "NOT_PROVEN: this workload binds only import_name/source_digest/reader_mode as identifying parameters",
+    "graceful_sigterm": "UNSUPPORTED/GAP: raw SIGTERM is abrupt without a consumer signal bridge",
+    "machine_readable_launch_result": "NOT_PROVEN: run emits no machine-readable result envelope; durable repository state remains authoritative",
+    "stop_cancel_process_contract": "UNSUPPORTED/GAP: no Track-F process stop/cancel command is exposed by this workload"
+  },
+  "completed_redelivery": {
+    "new_execution_created": false,
+    "process_exit_code": 1
+  },
+  "infrastructure_failure": {
+    "durable_execution_observable_in_target_repository": false,
+    "process_exit_code": 1
+  },
+  "producer_checkout": "3df532e66cc28a1ed350901f06cf80b9de6c92f5",
+  "schema": "oxide-batch-workloads.process-interop-observation",
+  "schema_version": 1,
+  "sigkill": {
+    "clean_recovered_content_digest_equal": true,
+    "durable_commits_before_recovery": 2,
+    "durable_position_before_recovery": 200,
+    "durable_status_before_recovery": "STARTED",
+    "final_exit_code": "COMPLETED",
+    "final_status": "COMPLETED",
+    "new_process_pid": 12738,
+    "old_pid": 12664,
+    "signal": 9
+  },
+  "sigterm": {
+    "durable_commits_before_recovery": 2,
+    "durable_position_before_recovery": 200,
+    "durable_status_before_recovery": "STARTED",
+    "final_exit_code": "COMPLETED",
+    "final_status": "COMPLETED",
+    "graceful_signal_contract_observed": false,
+    "new_process_pid": 12823,
+    "old_pid": 12795,
+    "signal": 15
+  },
+  "typed_failure": {
+    "durable_commits": 2,
+    "durable_position": 200,
+    "durable_status": "FAILED",
+    "plain_restart_supported": true,
+    "process_exit_code": 1
+  },
+  "validation_rejection": {
+    "durable_execution_created": false,
+    "process_exit_code": 2
+  },
+  "validation_subject": {
+    "crate": "oxide-batch",
+    "source": "crates.io",
+    "version": "0.6.0"
+  },
+  "verifier_negative_control": {
+    "deliberate_corruption_detected": true,
+    "restored_state_verified": true
+  }
+}
