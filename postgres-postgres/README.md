@@ -184,10 +184,12 @@ Relevant tests: `tests/rollback.rs`, `tests/crash_before_commit.rs`,
   environment observations, and deterministic retention bounds;
 - `generate-evidence.sh` is the deterministic producer and is part of the
   semantic closure;
-- `cursor-run.json` and `paging-run.json` are the committed retained records;
-- `verify-retained-evidence.py` is the canonical verifier and returns the
-  `violations-v1` model;
-- `test_verify_retained_evidence.py` contains positive/negative controls.
+- `cursor-run.json` and `paging-run.json` are the retained bounded-resource records;
+- `process-interop-run.json`, `process-interop-closure-run.json`, and
+  `process-interop-identity-run.json` retain Track F external-process observations;
+- `verify-track-f-retained-evidence.py` is the canonical wrapper verifier; it
+  pins and reuses the prior bounded-resource verifier before checking Track F;
+- both verifier test modules contain positive/negative controls.
 
 The canonical verifier derives row-count and digest relationships from
 retained primitive values. Producer-authored booleans are not authoritative
@@ -226,10 +228,10 @@ are observational measurements, not merge thresholds:
 
 | Process | Peak RSS | Runtime |
 |---|---:|---:|
-| cursor `run` | 10,896 KiB | 2.524 s |
-| cursor `verify` | 7,720 KiB | 0.518 s |
-| paging `run` | 10,892 KiB | 2.353 s |
-| paging `verify` | 7,752 KiB | 0.563 s |
+| cursor `run` | 11,040 KiB | 2.421 s |
+| cursor `verify` | 7,892 KiB | 0.558 s |
+| paging `run` | 11,152 KiB | 2.503 s |
+| paging `verify` | 7,868 KiB | 0.728 s |
 
 The producer ran on a GitHub Actions `ubuntu-24.04` hosted runner
 (`Linux 6.17.0-1022-azure x86_64`) against the workload's PostgreSQL 18
@@ -260,16 +262,17 @@ DATABASE_URL=postgresql://oxide_batch_workload:oxide_batch_workload@localhost:54
 To verify retained evidence:
 
 ```bash
-python3 validation/verify-retained-evidence.py --manifest validation/evidence-manifest.json
+python3 validation/verify-track-f-retained-evidence.py --manifest validation/evidence-manifest.json
 python3 ../.github/scripts/validate-evidence.py
 python3 validation/test_verify_retained_evidence.py
+python3 validation/test_verify_track_f_retained_evidence.py
 ```
 
 The manifest's current producer base revision is
-`4df4a8426689a2a91fcc68a1c6132577d30cf5ec`, with semantic-closure digest
-`1174985a8a2bc7556081551b936af2f97c67a361e97fecbdc20cf29e7da376e7`.
-The producer execution is recorded as GitHub Actions run `33916280736` with
-`recorded-metadata` trust. Manifest v1 does not implement an external
+`3df532e66cc28a1ed350901f06cf80b9de6c92f5`, with semantic-closure digest
+`118391e9cb8ce87e6b7e467a22cd7e22f886eb4575bac5b7f74fa01799267f79`.
+The producer execution is recorded as GitHub Actions run `34394363154` with
+`recorded-metadata` trust. Evidence Contract v2 does not implement an external
 attestation verifier, so the evidence does **not** claim
 `trusted-producer-bound` authenticity.
 
@@ -320,7 +323,7 @@ attestation verifier, so the evidence does **not** claim
 | Hard crash immediately after commit | PROVEN | `tests/crash_after_commit.rs` |
 | Genuine new-process recovery | PROVEN | crash/recovery tests |
 | Source-mutation stale-checkpoint isolation | PROVEN | `tests/source_mutation_recovery.rs` |
-| Canonical retained evidence contract | PROVEN | manifest v1 + repository auto-discovery validator |
+| Canonical retained evidence contract | PROVEN | manifest v2 + repository auto-discovery validator |
 | Materially larger retained dataset | PROVEN | 200,000 rows vs CI's 2,000 rows |
 | Cursor/paging resource observations | PROVEN | retained JSON + process-level VmHWM measurements |
 | Producer never directly resets framework metadata | PROVEN | fresh-database fail-closed producer + GitHub Actions reproduction |
@@ -358,3 +361,51 @@ cargo run -- verify --import-name demo_paging
 formatting, clippy, build, production-path guards, canonical retained-evidence
 checks, real PostgreSQL tests, and golden-path smoke execution. Repository
 GitHub Actions remains the authoritative merge gate.
+
+## Track F — external process interoperability (campaign #98)
+
+Campaign [#98](https://github.com/luceat-lux-vestra/oxide-batch-workloads/issues/98)
+qualifies this workload as a scheduler-neutral external OS-process consumer of
+the exact published crates.io `oxide-batch = 0.6.0`. It does not add a
+scheduler/control plane, use unreleased core APIs, or directly repair
+`oxide_batch.*` metadata.
+
+The retained producer checkout is
+`3df532e66cc28a1ed350901f06cf80b9de6c92f5`, GitHub Actions run
+`34394363154`. The five committed JSON records are the long-lived evidence
+authority; the producer Actions artifact had seven-day retention and is kept
+only as provenance metadata.
+
+### Track F findings
+
+| Obligation | Result | Retained observation |
+|---|---|---|
+| Real external launch / ownership | PROVEN | launcher/workload PIDs and direct-parent observation |
+| Validation vs infrastructure failure | PROVEN | distinct nonzero exits and durable-state observations |
+| Job identity across restart | PROVEN | same JobInstance, new JobExecution and new PID |
+| Duplicate / overlap / lost-response retry | PROVEN | active duplicate does not create another execution; distinct identity completes independently |
+| Real external SIGKILL | PROVEN | signal 9, durable committed prefix, new continuation PID, final business equivalence |
+| Raw SIGTERM graceful contract | **UNSUPPORTED / GAP** | signal 15 is observable, but published 0.6.0 exposes no consumer signal bridge/graceful terminal transition |
+| Public recovery closes crashed JobExecution | PROVEN | recovered execution becomes `FAILED`; active JobExecution count is 0 |
+| Public recovery closes crashed StepExecution | **UNSUPPORTED / GAP** | crashed child remains `STARTED`; tracked by [oxide-batch#269](https://github.com/luceat-lux-vestra/oxide-batch/issues/269) |
+| Machine-readable launch-result envelope | NOT PROVEN | durable repository state remains authoritative |
+| Dedicated external correlation identity | NOT PROVEN | only released identifying parameters are used |
+| Stop/cancel process command | **UNSUPPORTED / GAP** | no Track F process stop/cancel command is exposed |
+| Independent verifier / negative control | PROVEN | final equivalence plus deliberate corruption detection/restoration |
+
+The stale StepExecution is deliberately preserved in retained evidence. The
+campaign does not rewrite framework metadata, hide the row, or relabel the
+observation as lifecycle closure. Successful continuation therefore proves
+business recovery and JobExecution recovery while still reporting the
+StepExecution lifecycle gap.
+
+The canonical `verify-track-f-retained-evidence.py` pins and reuses the prior
+bounded-resource verifier, then recomputes Track F relationships from retained
+primitive fields. Adversarial tests reject attempts to convert known gaps into
+supported claims, hide the stale step, reuse a PID, create a second execution
+on duplicate retry, drift JobInstance identity, or drift the producer checkout.
+
+This completes only the #98 process-oriented interoperability campaign for
+exact published OxideBatch 0.6.0. It is not a scheduler-product integration, a
+general exactly-once claim, or evidence that the known StepExecution recovery
+gap is fixed.

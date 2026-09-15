@@ -2,56 +2,368 @@
   "schema_version": 2,
   "workload": "postgres-postgres",
   "producer": {
-    "base_revision": "4df4a8426689a2a91fcc68a1c6132577d30cf5ec",
+    "base_revision": "3df532e66cc28a1ed350901f06cf80b9de6c92f5",
     "revision_role": "producer-checkout",
     "run": {
       "kind": "github-actions-one-shot",
-      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/33916280736",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/34394363154",
       "binding": "recorded-metadata"
     }
   },
   "semantic_closure": {
     "algorithm": "sha256-git-tree-entries-v1",
-    "includes": ["Cargo.toml","Cargo.lock","docker-compose.yml","migrations","src","validation/generate-evidence.sh"],
-    "excluded_generated_paths": ["validation/cursor-run.json","validation/paging-run.json"],
-    "entries": [
-      {"path":"Cargo.lock","mode":"100644","git_blob_oid":"01437f671f4e97c0501e4a0d9997840e38e128b4"},
-      {"path":"Cargo.toml","mode":"100644","git_blob_oid":"9389575e2508f3e84ecd7c4bed093dfcf48d6a39"},
-      {"path":"docker-compose.yml","mode":"100644","git_blob_oid":"b7704be301810cb35c4543e0d9a01b96fb168a4e"},
-      {"path":"migrations/001_init.sql","mode":"100644","git_blob_oid":"aca417c806339fb6c926a95fb06beb30872d9242"},
-      {"path":"src/failpoint.rs","mode":"100644","git_blob_oid":"5ce837362c2fe7736fef7cb05b55ee5b224ff61b"},
-      {"path":"src/generator.rs","mode":"100644","git_blob_oid":"8308b3051cdc7f15cf9def815a026ec1fb91aa8a"},
-      {"path":"src/hex.rs","mode":"100644","git_blob_oid":"b25993dc1ee6e30bcdb7eaf185ae9c833b2d59e7"},
-      {"path":"src/job.rs","mode":"100644","git_blob_oid":"f04d9fe9ff07b1a33746a1cf9cca8b8ea7761a6a"},
-      {"path":"src/lib.rs","mode":"100644","git_blob_oid":"227ac83a04acffed75f9ccfe37920dadd58f0233"},
-      {"path":"src/main.rs","mode":"100644","git_blob_oid":"26e58a8057d4593753f8669199413f36dece721f"},
-      {"path":"src/processor.rs","mode":"100644","git_blob_oid":"f0547463258a8135822c157e4bc633b342b5973d"},
-      {"path":"src/source_digest.rs","mode":"100644","git_blob_oid":"8d6590d214de60676d9473b58de67c08e30ec5ac"},
-      {"path":"src/verify.rs","mode":"100644","git_blob_oid":"019bda616237a7c50c74ead47651b7fe63e24060"},
-      {"path":"src/writer.rs","mode":"100644","git_blob_oid":"8131f6a4dd2713f70fdb2957dea1f1f5c7d9c5e2"},
-      {"path":"validation/generate-evidence.sh","mode":"100755","git_blob_oid":"af7d50d89a85b0a5044fb6d22cdef3115a0568ce"}
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "docker-compose.yml",
+      "migrations",
+      "src",
+      "tests/process_interop.rs",
+      "tests/process_interop_closure.rs",
+      "tests/process_interop_identity.rs",
+      "tests/support",
+      "validation/generate-evidence.sh"
     ],
-    "digest_sha256": "1174985a8a2bc7556081551b936af2f97c67a361e97fecbdc20cf29e7da376e7"
+    "excluded_generated_paths": [
+      "validation/cursor-run.json",
+      "validation/paging-run.json",
+      "validation/process-interop-run.json",
+      "validation/process-interop-closure-run.json",
+      "validation/process-interop-identity-run.json"
+    ],
+    "entries": [
+      {
+        "path": "Cargo.lock",
+        "mode": "100644",
+        "git_blob_oid": "457e606d2b79323ed261e09ea61c5197c01c917c"
+      },
+      {
+        "path": "Cargo.toml",
+        "mode": "100644",
+        "git_blob_oid": "5c6441f324dbe46d646ae70097d10afdff932231"
+      },
+      {
+        "path": "docker-compose.yml",
+        "mode": "100644",
+        "git_blob_oid": "b7704be301810cb35c4543e0d9a01b96fb168a4e"
+      },
+      {
+        "path": "migrations/001_init.sql",
+        "mode": "100644",
+        "git_blob_oid": "aca417c806339fb6c926a95fb06beb30872d9242"
+      },
+      {
+        "path": "src/failpoint.rs",
+        "mode": "100644",
+        "git_blob_oid": "5ce837362c2fe7736fef7cb05b55ee5b224ff61b"
+      },
+      {
+        "path": "src/generator.rs",
+        "mode": "100644",
+        "git_blob_oid": "8308b3051cdc7f15cf9def815a026ec1fb91aa8a"
+      },
+      {
+        "path": "src/hex.rs",
+        "mode": "100644",
+        "git_blob_oid": "b25993dc1ee6e30bcdb7eaf185ae9c833b2d59e7"
+      },
+      {
+        "path": "src/job.rs",
+        "mode": "100644",
+        "git_blob_oid": "f04d9fe9ff07b1a33746a1cf9cca8b8ea7761a6a"
+      },
+      {
+        "path": "src/lib.rs",
+        "mode": "100644",
+        "git_blob_oid": "227ac83a04acffed75f9ccfe37920dadd58f0233"
+      },
+      {
+        "path": "src/main.rs",
+        "mode": "100644",
+        "git_blob_oid": "26e58a8057d4593753f8669199413f36dece721f"
+      },
+      {
+        "path": "src/processor.rs",
+        "mode": "100644",
+        "git_blob_oid": "f0547463258a8135822c157e4bc633b342b5973d"
+      },
+      {
+        "path": "src/source_digest.rs",
+        "mode": "100644",
+        "git_blob_oid": "8d6590d214de60676d9473b58de67c08e30ec5ac"
+      },
+      {
+        "path": "src/verify.rs",
+        "mode": "100644",
+        "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"
+      },
+      {
+        "path": "src/writer.rs",
+        "mode": "100644",
+        "git_blob_oid": "8131f6a4dd2713f70fdb2957dea1f1f5c7d9c5e2"
+      },
+      {
+        "path": "tests/process_interop.rs",
+        "mode": "100644",
+        "git_blob_oid": "52780679c37b56127ab788ebef8965200bc354ef"
+      },
+      {
+        "path": "tests/process_interop_closure.rs",
+        "mode": "100644",
+        "git_blob_oid": "e0a50e690942435d328a0fbaf4e7c05a9e68a991"
+      },
+      {
+        "path": "tests/process_interop_identity.rs",
+        "mode": "100644",
+        "git_blob_oid": "c0dcc1bac9c88f3d681c2293fcdb68a75cb0469d"
+      },
+      {
+        "path": "tests/support/mod.rs",
+        "mode": "100644",
+        "git_blob_oid": "d4b8d569900b3efe2f801175c7ba0849d19a45e9"
+      },
+      {
+        "path": "validation/generate-evidence.sh",
+        "mode": "100755",
+        "git_blob_oid": "af7d50d89a85b0a5044fb6d22cdef3115a0568ce"
+      }
+    ],
+    "digest_sha256": "118391e9cb8ce87e6b7e467a22cd7e22f886eb4575bac5b7f74fa01799267f79"
   },
   "validation_subject": {
-    "lockfile": {"path":"Cargo.lock","git_blob_oid":"01437f671f4e97c0501e4a0d9997840e38e128b4"},
-    "crates": [{"name":"oxide-batch","version":"0.6.0","source":"registry+https://github.com/rust-lang/crates.io-index","checksum":"eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"}]
+    "lockfile": {
+      "path": "Cargo.lock",
+      "git_blob_oid": "457e606d2b79323ed261e09ea61c5197c01c917c"
+    },
+    "crates": [
+      {
+        "name": "oxide-batch",
+        "version": "0.6.0",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
+      }
+    ]
   },
   "records": [
-    {"scenario":"cursor_bounded_resource_run","artifact":{"path":"validation/cursor-run.json","sha256":"66ad9b252afeb8e47e1a0bac3fa2ae07ba4f27ec5c317b219fab954c0fa971e4","size_bytes":2233},"input":{"identity":{"kind":"generated-postgres-rows","sha256":"55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"},"reproduction":{"generator":"src/generator.rs","rows":200000,"seed":20260904,"id_offset":0}},"parameters":{"chunk_size":1000,"fetch_size":500,"import_name":"evidence_cursor_run"},"failure_point":null},
-    {"scenario":"paging_bounded_resource_run","artifact":{"path":"validation/paging-run.json","sha256":"2af272f20802812c0c8a9d0bb7a4e0cdfca624175ad65a75ef0210fb630231d1","size_bytes":2232},"input":{"identity":{"kind":"generated-postgres-rows","sha256":"55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"},"reproduction":{"generator":"src/generator.rs","rows":200000,"seed":20260904,"id_offset":0}},"parameters":{"chunk_size":1000,"page_size":750,"import_name":"evidence_paging_run"},"failure_point":null}
+    {
+      "scenario": "cursor_bounded_resource_run",
+      "artifact": {
+        "path": "validation/cursor-run.json",
+        "sha256": "0e9be7953ee7dd0a6e4f87359e2e8a83e57cebe855dced8101242d4482b1fd1e",
+        "size_bytes": 2233
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-postgres-rows",
+          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 200000,
+          "seed": 20260904,
+          "id_offset": 0
+        }
+      },
+      "parameters": {
+        "chunk_size": 1000,
+        "fetch_size": 500,
+        "import_name": "evidence_cursor_run"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "paging_bounded_resource_run",
+      "artifact": {
+        "path": "validation/paging-run.json",
+        "sha256": "da6d61da1c568065986b726a5c5e7da74da3ae592a7778ad75f34077c61aeb4c",
+        "size_bytes": 2232
+      },
+      "input": {
+        "identity": {
+          "kind": "generated-postgres-rows",
+          "sha256": "55f651a1eff2c4cd7e1da1bb67fb1e04bcc8672e713defebcd724cdededaf79c"
+        },
+        "reproduction": {
+          "generator": "src/generator.rs",
+          "rows": 200000,
+          "seed": 20260904,
+          "id_offset": 0
+        }
+      },
+      "parameters": {
+        "chunk_size": 1000,
+        "page_size": 750,
+        "import_name": "evidence_paging_run"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "track_f_process_interop",
+      "artifact": {
+        "path": "validation/process-interop-run.json",
+        "sha256": "9b493f63a85bbbf7ef8d1c41f144ee665bed70a2c5ec68e1e0140c47a83bdd77",
+        "size_bytes": 2449
+      },
+      "input": {
+        "identity": {
+          "kind": "producer-checkout",
+          "reference": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/commit/3df532e66cc28a1ed350901f06cf80b9de6c92f5"
+        },
+        "reproduction": {
+          "test_target": "process_interop",
+          "command": "cargo test --locked --test process_interop -- --nocapture"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 98,
+        "github_actions_run_id": 34394363154,
+        "boundary": "external-process",
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "track_f_process_interop_closure",
+      "artifact": {
+        "path": "validation/process-interop-closure-run.json",
+        "sha256": "ffa47f69f07a259574d25f04155b48d2dfe3a4c0594deb38d2acd0df5fe2b8e7",
+        "size_bytes": 1605
+      },
+      "input": {
+        "identity": {
+          "kind": "producer-checkout",
+          "reference": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/commit/3df532e66cc28a1ed350901f06cf80b9de6c92f5"
+        },
+        "reproduction": {
+          "test_target": "process_interop_closure",
+          "command": "cargo test --locked --test process_interop_closure -- --nocapture"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 98,
+        "github_actions_run_id": 34394363154,
+        "boundary": "external-process",
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "failure_point": null
+    },
+    {
+      "scenario": "track_f_process_identity",
+      "artifact": {
+        "path": "validation/process-interop-identity-run.json",
+        "sha256": "1d3f61940a875f2d2f47c3a4bcfc95c5b19e29de69dae4302b6f808b63d988ec",
+        "size_bytes": 683
+      },
+      "input": {
+        "identity": {
+          "kind": "producer-checkout",
+          "reference": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/commit/3df532e66cc28a1ed350901f06cf80b9de6c92f5"
+        },
+        "reproduction": {
+          "test_target": "process_interop_identity",
+          "command": "cargo test --locked --test process_interop_identity -- --nocapture"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 98,
+        "github_actions_run_id": 34394363154,
+        "boundary": "external-process",
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "failure_point": null
+    }
   ],
-  "verifier": {"canonical":{"path":"validation/verify-retained-evidence.py","sha256":"810131c062905a20d806b3038278881d508477e0b47c1ee7d3408c1c600afcd0","result_model":"violations-v1"},"producer":{"path":"src/verify.rs","git_blob_oid":"019bda616237a7c50c74ead47651b7fe63e24060"}},
-  "environment": {"observations":[
-    {"name":"declared-rust-msrv","value":"1.95","trust":"recorded-metadata","source":"producer Cargo.toml in semantic closure"},
-    {"name":"database-server-version","value":"18.6 (Debian 18.6-1.pgdg13+2)","trust":"recorded-metadata","source":"SHOW server_version; observed against the fresh dedicated PostgreSQL database used for this producer run"},
-    {"name":"database-image-declared","value":"postgres:18","trust":"recorded-metadata","source":"producer docker-compose.yml in semantic closure; the evidence run used the same postgres:18 image through the workload CI environment"},
-    {"name":"os-kernel","value":"Linux 6.17.0-1022-azure x86_64","trust":"recorded-metadata","source":"uname -srm on the GitHub Actions producer runner"},
-    {"name":"rustc-version","value":"rustc 1.98.1 (48a229cea 2026-09-01)","trust":"recorded-metadata","source":"rustc --version on the GitHub Actions producer runner"},
-    {"name":"cargo-version","value":"cargo 1.98.1 (797e8a9bc 2026-08-05)","trust":"recorded-metadata","source":"cargo --version on the GitHub Actions producer runner"},
-    {"name":"build-profile","value":"release","trust":"recorded-metadata","source":"generate-evidence.sh's own `cargo build --locked --release` invocation"},
-    {"name":"container-runtime","value":"GitHub Actions ubuntu-24.04 runner with workload docker-compose postgres:18 service","trust":"recorded-metadata","source":"PR #71 CI run 33916280736; the one-shot harness created a fresh dedicated database inside the workload PostgreSQL 18 service before invoking the exact producer script"}
-  ],"limitations":["One dataset size, one hosted runner, and one retained run per reader mode; no statistical distribution, repeated-trial variance, soak, or longevity claim is made.","No CPU core-count, memory-limit, or disk-throughput observation was retained beyond the peak RSS figures themselves; no cross-host or cross-platform comparability claim is made.","Peak RSS was measured by polling /proc/<pid>/status's VmHWM every 20ms for each process's whole lifetime; a peak reached and released entirely between two consecutive polls could in principle be missed.","The producer execution has a durable GitHub Actions run identifier, but evidence manifest v2 still classifies the binding as recorded-metadata rather than trusted-producer-bound because no external attestation verifier is implemented."]},
-  "retention":{"committed_artifacts":{"directory":"validation","max_count":2,"max_total_bytes":8192,"supersession":"One current cursor/paging bounded-resource-run pair; replacement requires an atomic manifest update."},"wall_clock_freshness_merge_gate":false},
-  "external_artifacts":[]
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-track-f-retained-evidence.py",
+      "sha256": "06b923e0cdc96fb923abd561c1908056fb8287c7f40c1329443e74384b480c13",
+      "result_model": "violations-v1"
+    },
+    "producer": {
+      "path": "src/verify.rs",
+      "git_blob_oid": "019bda616237a7c50c74ead47651b7fe63e24060"
+    }
+  },
+  "environment": {
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "value": "1.95",
+        "trust": "recorded-metadata",
+        "source": "producer Cargo.toml in semantic closure"
+      },
+      {
+        "name": "database-server-version",
+        "value": "18.6 (Debian 18.6-1.pgdg13+2)",
+        "trust": "recorded-metadata",
+        "source": "SHOW server_version observed against the fresh dedicated PostgreSQL database in producer run 34394363154"
+      },
+      {
+        "name": "database-image-declared",
+        "value": "postgres:18",
+        "trust": "recorded-metadata",
+        "source": "producer docker-compose.yml in semantic closure"
+      },
+      {
+        "name": "os-kernel",
+        "value": "Linux 6.17.0-1022-azure x86_64",
+        "trust": "recorded-metadata",
+        "source": "uname -srm on producer runner"
+      },
+      {
+        "name": "rustc-version",
+        "value": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "trust": "recorded-metadata",
+        "source": "rustc --version on producer runner"
+      },
+      {
+        "name": "cargo-version",
+        "value": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+        "trust": "recorded-metadata",
+        "source": "cargo --version on producer runner"
+      },
+      {
+        "name": "build-profile",
+        "value": "release",
+        "trust": "recorded-metadata",
+        "source": "generate-evidence.sh uses cargo build --locked --release for cursor/paging retained runs"
+      },
+      {
+        "name": "track-f-producer-run-id",
+        "value": 34394363154,
+        "trust": "recorded-metadata",
+        "source": "GitHub Actions Track F one-shot producer"
+      },
+      {
+        "name": "track-f-temporary-artifact-id",
+        "value": 10121026931,
+        "trust": "recorded-metadata",
+        "source": "GitHub Actions artifact track-f-evidence-3df532e...; retention-days=7; committed JSON records are the durable retained copy"
+      },
+      {
+        "name": "track-f-temporary-artifact-zip-sha256",
+        "value": "e954d4dd8745d0466fc8f381d673812d4c3712c8f081cfcee3fd73023c1b2c9c",
+        "trust": "deterministically-recomputed",
+        "source": "downloaded Actions artifact ZIP digest independently matched upload metadata before promotion"
+      }
+    ],
+    "limitations": [
+      "Cursor/paging resource observations remain one dataset size and one hosted runner; no statistical distribution, soak, longevity, or cross-host performance claim is made.",
+      "Track F process observations are Linux/GitHub-hosted-runner observations and are not a scheduler-product qualification.",
+      "GitHub Actions producer binding is recorded-metadata, not a cryptographic trusted-producer-bound attestation.",
+      "The temporary Actions artifact was configured for seven-day retention and is not a long-term evidence authority; the five JSON records committed under validation/ are the retained evidence.",
+      "Exact published OxideBatch 0.6.0 public recovery leaves the crashed child StepExecution nonterminal STARTED after resolving the JobExecution; this remains UNSUPPORTED/GAP and is tracked by oxide-batch#269.",
+      "No graceful SIGTERM framework contract, stop/cancel process command, dedicated external correlation identity, or machine-readable launch result is claimed where the published 0.6.0 surface did not prove one."
+    ]
+  },
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 5,
+      "max_total_bytes": 12288,
+      "supersession": "One current cursor/paging bounded-resource pair plus the three Track F process-observation records; replacement requires an atomic manifest update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "external_artifacts": []
 }
