@@ -37,11 +37,12 @@ The program uses two independent GitHub ownership axes. They answer different qu
 
 A native GitHub milestone groups concrete campaigns that validate a bounded published OxideBatch release family or evidence horizon. Milestone assignment answers *which published release horizon owns the campaign's completion evidence*; it does not replace Track ownership.
 
-Current horizon:
+Historical closed horizon:
 
-- `OxideBatch 0.6 External Validation` (native milestone #1) owns concrete campaigns validating published OxideBatch 0.6.x artifacts.
-- At the time this policy was adopted, completed campaign #51 and active campaign #63 are the complete concrete 0.6.x campaign set and are intentionally assigned to milestone #1.
-- Long-lived Epic #8 and Tracks #10-#22 are intentionally not assigned to milestone #1.
+- `OxideBatch 0.6 External Validation` (native milestone #1) is closed and owns the final completed 0.6.x campaign set: #51, #63, #73, #79, #86, #93, and #98.
+- Fresh closure readback recorded `state=closed`, `open_issues=0`, `closed_issues=7`, with `closed_at=2026-09-15T23:50:39Z`.
+- The latest published OxideBatch release remains `v0.6.0`; no successor release-family evidence horizon exists yet. Create one only when concrete external validation of a new published release family begins.
+- Long-lived Epic #8 and Tracks #10-#22 remain intentionally milestone-null.
 
 ### Campaign activation invariant
 
@@ -310,20 +311,26 @@ No single workload proves the entire framework.
 
 ## Near-term sequence
 
-1. Keep `csv-postgres` as the v0.6.0 external correctness/recovery reference.
-2. Build `postgres-postgres` and drive DB reader/writer/same-resource requirements from real usage.
-3. Establish a small reusable measurement harness and raw Rust/sqlx baseline.
-4. Add comparable Spring Batch implementation and publish methodology/distributions, not marketing claims.
-5. Qualify JBeret against the same PostgreSQL workload and add it only if the accepted durability/restart comparison class holds.
-6. Keep `spring-batch-rs` as a conditional ecosystem watch/reference until workload-specific enterprise restart/repository comparability is proven.
-7. Exercise external launch/control: process scheduler first, then thin control-plane wrapper.
-8. Add event-driven file/object/message launch plus completion feedback.
-9. Add real observability exporter integration and container lifecycle scenarios.
-10. Add multi-resource/structured input coverage.
-11. Add Kafka item I/O/cross-resource delivery only after DB transaction/restart semantics are stable.
-12. Add Oracle portability before broad enterprise-database claims.
-13. Exercise upgrade/migration/retention/DR across the next published release transition.
-14. Add distributed execution only after released protocol/fencing/resource contracts exist.
+Completed in the closed 0.6 evidence horizon:
+1. Keep `csv-postgres` as the v0.6.0 external correctness/recovery reference (#51).
+2. Build and qualify `postgres-postgres` correctness/recovery against exact published 0.6.0 (#63).
+3. Establish the raw Rust/sqlx attribution baseline (#73).
+4. Add the comparable Spring Batch reference and retained methodology/distributions (#79).
+5. Qualify JBeret against the same PostgreSQL workload under the accepted durability/restart comparison class (#86).
+6. Establish the dense single-host local-partition scaling baseline (#93).
+7. Qualify scheduler-neutral external process launch/lifecycle behavior (#98). Preserve its explicit 0.6.0 gaps rather than treating campaign completion as full Track F coverage; recovery child-step closure remains tracked by `oxide-batch#269`.
+
+Future work remains evidence-driven and requires a concrete campaign plus an applicable open release horizon:
+8. Validate a thin control-plane wrapper only when the published public surface supports a meaningful bounded campaign.
+9. Add event-driven file/object/message launch plus completion feedback.
+10. Add real observability exporter integration and container lifecycle scenarios.
+11. Add multi-resource/structured input coverage.
+12. Add Kafka item I/O/cross-resource delivery only after DB transaction/restart semantics are stable.
+13. Add Oracle portability before broad enterprise-database claims.
+14. Exercise upgrade/migration/retention/DR across the next published release transition.
+15. Add distributed execution only after released protocol/fencing/resource contracts exist.
+
+Keep `spring-batch-rs` as a conditional ecosystem watch/reference until workload-specific enterprise restart/repository comparability is proven.
 
 ## Spring Batch as comparison baseline
 
