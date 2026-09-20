@@ -75,10 +75,19 @@ The machine policy still classifies CodeQL as `manual-readback` for future
 #38 drift auditing because the connected low-privilege surface does not expose
 the administrative default-setup setting itself. A recent dynamic run is
 useful acceptance evidence, but absence of a recent run is not a reliable
-proof that the setting was disabled. #37 additionally confirmed the admin
-`code-scanning/default-setup` state directly (see the readback table above):
-`state=configured`, languages `actions` and `python`, default query suite,
-`remote` threat model, weekly schedule.
+proof that the setting was disabled. #37 confirmed the admin
+`code-scanning/default-setup` state as `configured` with `actions` and
+`python`; that 2026-09-03 language list is now stale evidence rather than an
+accepted coverage claim because the repository contains maintained Rust
+workloads and Java benchmark controls.
+
+Hardening Reassessment #104 therefore declares the desired single-authority
+default-setup coverage as `actions`, `python`, `rust`, and
+`java-kotlin`. The checked-in policy intentionally does not claim that this
+is already the live producer set. Completion requires an admin-capable default
+setup readback, configuration/update through a GitHub-supported surface, and
+successful analysis evidence for the added languages. Do not add a competing
+advanced-setup workflow merely to make the desired state easier to automate.
 
 ## Workflow-level token posture
 
