@@ -3,7 +3,8 @@ name: Label automation
 on:
   issues:
     types: [opened, edited, reopened]
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] metadata-only; trusted default branch is checked out and PR-head code is never executed
+    branches: [main]
     types: [opened, edited, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -29,6 +30,7 @@ concurrency:
 
 jobs:
   reconcile:
+    if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
