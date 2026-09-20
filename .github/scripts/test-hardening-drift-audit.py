@@ -314,6 +314,34 @@ class WorkflowSecurityFixtureTests(unittest.TestCase):
         finally:
             temp.cleanup()
 
+    def test_privileged_label_automation_branch_scope_drift_is_rejected(self):
+        temp, root = self.copy_workflows()
+        try:
+            path = root / ".github" / "workflows" / "label-automation.yml"
+            text = path.read_text(encoding="utf-8").replace(
+                "branches: [main]",
+                "branches: [release]",
+            )
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "trusted pull_request_target boundary"):
+                WORKFLOW_SECURITY.validate_label_automation_boundary(root)
+        finally:
+            temp.cleanup()
+
+    def test_privileged_label_automation_repository_guard_drift_is_rejected(self):
+        temp, root = self.copy_workflows()
+        try:
+            path = root / ".github" / "workflows" / "label-automation.yml"
+            text = path.read_text(encoding="utf-8").replace(
+                "if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'\n",
+                "",
+            )
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "trusted pull_request_target boundary"):
+                WORKFLOW_SECURITY.validate_label_automation_boundary(root)
+        finally:
+            temp.cleanup()
+
 
 class FakeIssueClient:
     def __init__(self):
