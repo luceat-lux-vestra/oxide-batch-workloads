@@ -120,6 +120,13 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         self.assertIn("code-scanning/default-setup", rationale)
         self.assertIn("configured", rationale)
 
+    def test_codeql_language_coverage_tracks_current_repository_surfaces(self) -> None:
+        control = next(c for c in self.policy["controls"] if c["id"] == "security.code_scanning_languages")
+        self.assertEqual(control["readback"], "manual-readback")
+        self.assertEqual(control["classification"], "conditional")
+        self.assertCountEqual(control["expected"], ["actions", "java-kotlin", "python", "rust"])
+        self.assertIn("Desired live default-setup coverage", control.get("rationale", ""))
+
     def test_pvr_expected_state_is_not_contradicted_by_security_md(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting")
         security_md = SECURITY_MD_PATH.read_text(encoding="utf-8")
