@@ -232,7 +232,7 @@
       "classification": "conditional",
       "readback": "manual-readback",
       "expected": true,
-      "rationale": "Confirmed 2026-09-03: GitHub default setup was configured with languages=[actions,python]. Hardening Reassessment #104 treats that evidence as stale for current repository contents; the single default-setup authority must be re-read and expanded so maintained CodeQL-supported source surfaces are covered rather than inferred from the fact that CodeQL is merely enabled."
+      "rationale": "Confirmed 2026-09-03 via `gh api repos/.../code-scanning/default-setup`: GitHub default setup was configured with languages=[actions,python]. Hardening Reassessment #104 treats that language evidence as stale for current repository contents; the same authoritative default-setup endpoint must be re-read after supported configuration changes so maintained CodeQL-supported source surfaces are covered rather than inferred from the fact that CodeQL is merely enabled."
     },
     {
       "id": "security.code_scanning_languages",
