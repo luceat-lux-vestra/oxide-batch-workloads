@@ -157,6 +157,7 @@ class AuditClassifierTests(unittest.TestCase):
             "validate-evidence.py": "evidence-contract",
             "validate-label-taxonomy.py": "label-taxonomy",
             "validate-workflow-security.py": "workflow-security",
+            "check-actions-security.sh": "workflow-scanners",
         }
         for script, control in cases.items():
             with self.subTest(script=script):
