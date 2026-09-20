@@ -45,6 +45,9 @@ jobs:
       - name: Validate canonical workload registry
         run: python3 .github/scripts/validate-workload-registry.py
 
+      - name: Validate GitHub Actions semantics and trust boundaries
+        run: bash .github/scripts/check-actions-security.sh
+
       - name: Test OxideBatch provenance enforcement
         run: python3 .github/scripts/test-oxidebatch-provenance.py
 
