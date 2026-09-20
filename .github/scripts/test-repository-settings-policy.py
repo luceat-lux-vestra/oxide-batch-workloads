@@ -90,9 +90,12 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
             <= automated_repository_ids
         )
 
-    def test_required_contexts_are_the_stable_aggregate_gate_set(self) -> None:
+    def test_required_contexts_match_the_declared_merge_gate_set(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_status_contexts")
-        self.assertCountEqual(control["expected"], ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"])
+        self.assertCountEqual(
+            control["expected"],
+            ["dependency-review", "failure-triage", "supply-chain", "workloads-ci", "workloads-msrv"],
+        )
 
     def test_zero_approval_policy_does_not_claim_extra_approval_as_effective(self) -> None:
         approvals = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_approving_review_count")
