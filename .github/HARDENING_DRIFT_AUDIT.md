@@ -40,6 +40,7 @@ The audit composes existing sources and validators:
 | label automation security boundary | `label-automation.yml` + `validate-workflow-security.py` | automated static invariant |
 | evidence contract / deterministic retention | `validate-evidence.py` | automated |
 | immutable action references / critical workflow permissions | repository workflows + `validate-workflow-security.py` | automated static invariant |
+| workflow YAML/Actions semantics + independent security scan | `check-actions-security.sh` (checksum-pinned actionlint + zizmor + negative control) | automated |
 | repository/ruleset settings classified `repository-api` or `ruleset-api` | `.github/repository-settings-policy.json` | automated live readback |
 | settings classified `manual-readback` | `.github/repository-settings-policy.json` | explicitly reported, not claimed as continuously checked |
 
