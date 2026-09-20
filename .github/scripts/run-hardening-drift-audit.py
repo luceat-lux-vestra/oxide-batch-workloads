@@ -84,6 +84,7 @@ def run_canonical_checks(run=command):
         ("evidence-contract", [sys.executable, ".github/scripts/validate-evidence.py"]),
         ("label-taxonomy", [sys.executable, ".github/scripts/validate-label-taxonomy.py"]),
         ("workflow-security", [sys.executable, ".github/scripts/validate-workflow-security.py"]),
+        ("workflow-scanners", ["bash", ".github/scripts/check-actions-security.sh"]),
     ]
     findings = []
     for control, argv in checks:
