@@ -139,6 +139,56 @@ Keep PRs focused. A workload validation PR must not casually expand into framewo
 
 Preserve unrelated user changes. Prefer one writer for overlapping code areas; use subagents for bounded exploration/review rather than concurrent edits to the same files.
 
+## Failure classification before remediation
+
+A failing workload, CI shard, verifier, retained-evidence check, hardening
+audit, or other red signal is an **observation**, not a patch target. Before a
+non-trivial remediation, classify the observed failure as exactly one of:
+
+- `implementation defect` — identify the owner explicitly as a framework
+  implementation defect or a workload implementation defect;
+- `test defect` — the workload test, harness, oracle, fixture, failure
+  injection, or assertion is wrong for the intended contract;
+- `evidence defect` — evidence capture, retention, provenance, attribution,
+  freshness, parsing, or proof construction is wrong or insufficient;
+- `workflow-policy drift` — repository workflow, validation contract,
+  hardening policy, live settings, or their assumed contract have diverged;
+- `environment failure` — runner, PostgreSQL/service dependency, toolchain,
+  registry/network, host resource, or other execution environment caused the
+  failure;
+- `UNKNOWN` — available evidence does not justify any of the five classes.
+
+`UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain fail-closed.
+Classification is a proof obligation. Preserve at least:
+
+```text
+Observed:
+Classification:
+Basis:
+Root cause:
+Remediation:
+Proof:
+```
+
+The `Basis` must establish the responsibility boundary and identify plausible
+alternatives that were rejected or remain unresolved. In particular, this
+repository's independent-validation boundary is not negotiable: a framework
+implementation defect must not be hidden by weakening or rewriting a workload,
+test, verifier, failure injection, dataset, or assertion. Conversely, a proven
+workload/test defect must not be pushed into the framework merely because the
+framework is the system under validation.
+
+A deterministic/reproducible failure is not reclassified as
+`environment failure` merely because a rerun passes. Do not weaken a valid
+test, evidence contract, workload contract, or hardening/review policy to
+obtain green.
+
+If remediation changes the workload implementation, test/oracle, evidence
+collector or manifest premise, consumed OxideBatch version/provenance,
+workflow/policy, or another premise of the exact-final-HEAD proof, invalidate
+the affected evidence and rerun the relevant workload gate plus required CI on
+the new exact final HEAD.
+
 ## Strict review and definition of done
 
 Review the exact final HEAD, not an earlier commit and not CI status alone. Review correctness, architecture/ownership, abstractions and duplication, error handling and diagnostics, API/version provenance, performance/resource retention, dead code/hacks, edge cases, transaction/restart semantics, tests, diff scope, documentation, and evidence consistency.
