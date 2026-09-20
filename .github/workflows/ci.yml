@@ -131,11 +131,14 @@ jobs:
 
       - name: Record shard result
         if: always()
+        env:
+          WORKLOAD_NAME: ${{ matrix.name }}
+          CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
         run: |
           python3 .github/scripts/write-shard-result.py \
-            --workload "${{ matrix.name }}" \
+            --workload "$WORKLOAD_NAME" \
             --stage ci \
-            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --exit-code "$CONTRACT_EXIT_CODE" \
             --out "${{ runner.temp }}/result.json"
 
       - name: Upload shard result
@@ -190,21 +193,27 @@ jobs:
 
       - name: Record declared-MSRV shard result
         if: always() && matrix.msrv.declared
+        env:
+          WORKLOAD_NAME: ${{ matrix.name }}
+          CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
         run: |
           python3 .github/scripts/write-shard-result.py \
-            --workload "${{ matrix.name }}" \
+            --workload "$WORKLOAD_NAME" \
             --stage msrv \
-            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --exit-code "$CONTRACT_EXIT_CODE" \
             --out "${{ runner.temp }}/result.json"
 
       - name: Record explicit not-applicable MSRV disposition
         if: always() && !matrix.msrv.declared
+        env:
+          WORKLOAD_NAME: ${{ matrix.name }}
+          MSRV_POLICY_REASON: ${{ matrix.msrv.policy_reason }}
         run: |
           python3 .github/scripts/write-shard-result.py \
-            --workload "${{ matrix.name }}" \
+            --workload "$WORKLOAD_NAME" \
             --stage msrv \
             --not-applicable \
-            --reason "${{ matrix.msrv.policy_reason }}" \
+            --reason "$MSRV_POLICY_REASON" \
             --out "${{ runner.temp }}/result.json"
 
       - name: Upload shard result
@@ -246,18 +255,23 @@ jobs:
 
       - name: Run supply-chain policy validator
         id: contract
+        env:
+          WORKLOAD_NAME: ${{ matrix.name }}
         run: |
           set +e
-          python3 .github/scripts/validate-supply-chain.py --workload "${{ matrix.name }}"
+          python3 .github/scripts/validate-supply-chain.py --workload "$WORKLOAD_NAME"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Record shard result
         if: always()
+        env:
+          WORKLOAD_NAME: ${{ matrix.name }}
+          CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
         run: |
           python3 .github/scripts/write-shard-result.py \
-            --workload "${{ matrix.name }}" \
+            --workload "$WORKLOAD_NAME" \
             --stage supply-chain \
-            --exit-code "${{ steps.contract.outputs.exit_code }}" \
+            --exit-code "$CONTRACT_EXIT_CODE" \
             --out "${{ runner.temp }}/result.json"
 
       - name: Upload shard result
@@ -320,14 +334,19 @@ jobs:
 
       - name: Compute aggregate verdict
         if: always()
+        env:
+          DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
+          DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
+          UPSTREAM_JOB_OK: ${{ needs.ci-shard.result == 'success' }}
+          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage ci \
-            --discover-json '${{ needs.discover.outputs.workloads }}' \
+            --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
-            --discovery-ok "${{ needs.discover.result == 'success' }}" \
-            --upstream-job-ok "${{ needs.ci-shard.result == 'success' }}" \
-            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
+            --discovery-ok "$DISCOVERY_OK" \
+            --upstream-job-ok "$UPSTREAM_JOB_OK" \
+            --job-statuses-json "$JOB_STATUSES_JSON"
 
   workloads-msrv:
     name: workloads-msrv
@@ -374,14 +393,19 @@ jobs:
 
       - name: Compute aggregate verdict
         if: always()
+        env:
+          DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
+          DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
+          UPSTREAM_JOB_OK: ${{ needs.msrv-shard.result == 'success' }}
+          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage msrv \
-            --discover-json '${{ needs.discover.outputs.workloads }}' \
+            --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
-            --discovery-ok "${{ needs.discover.result == 'success' }}" \
-            --upstream-job-ok "${{ needs.msrv-shard.result == 'success' }}" \
-            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
+            --discovery-ok "$DISCOVERY_OK" \
+            --upstream-job-ok "$UPSTREAM_JOB_OK" \
+            --job-statuses-json "$JOB_STATUSES_JSON"
 
   # Stable, required aggregate context for #32's repository-wide
   # supply-chain policy (deny.toml). Fans out only over real workloads (see
@@ -433,11 +457,16 @@ jobs:
 
       - name: Compute aggregate verdict
         if: always()
+        env:
+          DISCOVER_JSON: ${{ needs.discover.outputs.supply-chain-workloads }}
+          DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
+          UPSTREAM_JOB_OK: ${{ needs.supply-chain-shard.result == 'success' }}
+          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage supply-chain \
-            --discover-json '${{ needs.discover.outputs.supply-chain-workloads }}' \
+            --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
-            --discovery-ok "${{ needs.discover.result == 'success' }}" \
-            --upstream-job-ok "${{ needs.supply-chain-shard.result == 'success' }}" \
-            --job-statuses-json '${{ steps.jobs.outputs.result || '{}' }}'
+            --discovery-ok "$DISCOVERY_OK" \
+            --upstream-job-ok "$UPSTREAM_JOB_OK" \
+            --job-statuses-json "$JOB_STATUSES_JSON"
