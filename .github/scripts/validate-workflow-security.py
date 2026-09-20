@@ -61,6 +61,8 @@ def validate_label_automation_boundary(root=ROOT):
     text = active_text(path)
     required = [
         "pull_request_target:",
+        "branches: [main]",
+        "if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'",
         "issues: write",
         "pull-requests: write",
         "ref: ${{ github.event.repository.default_branch }}",
