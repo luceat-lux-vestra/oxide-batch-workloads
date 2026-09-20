@@ -43,7 +43,10 @@ jobs:
           SENTINELS = {"unknown", "unverified", "insufficient evidence", "tbd", "todo", "n/a", "na", "none"}
 
           TRUSTED_BOT_LOGINS = {"dependabot[bot]"}
-          UNRESOLVED_ROOT = re.compile(r"(?i)\b(?:unknown|unverified|tbd|todo)\b|insufficient\s+evidence")
+          UNRESOLVED_ROOT = re.compile(
+              r"(?i)^\s*(?:(?:the\s+)?(?:root\s+cause|cause|reason)\s*(?:is|remains|[:=])\s*)?"
+              r"(?:still\s+)?(?:unknown|unverified|tbd|todo|insufficient\s+evidence)\b"
+          )
 
           class TriageError(ValueError):
               pass
@@ -162,6 +165,9 @@ jobs:
           expect_fail("unknown-classification", valid_remediation.replace("implementation defect", "UNKNOWN"))
           expect_fail("unknown-root-cause", valid_remediation.replace("state transition occurs before the owning transaction commits", "UNKNOWN"))
           expect_fail("decorated-unknown-root-cause", valid_remediation.replace("state transition occurs before the owning transaction commits", "UNKNOWN pending reproduction"))
+          expect_fail("prefixed-unknown-root-cause", valid_remediation.replace("state transition occurs before the owning transaction commits", "The cause remains UNKNOWN pending reproduction"))
+          expect_ok("descriptive-unverified-root-cause", valid_remediation.replace("state transition occurs before the owning transaction commits", "the workflow accepted an unverified external analysis bundle override"))
+          expect_ok("descriptive-insufficient-root-cause", valid_remediation.replace("state transition occurs before the owning transaction commits", "the prior policy treated insufficient evidence as acceptable proof"))
           expect_fail("ambiguous-selection", non_remediation.replace(f"- [ ] {REMEDIATION}", f"- [x] {REMEDIATION}"))
 
           try:
