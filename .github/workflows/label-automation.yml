@@ -17,7 +17,7 @@ on:
         description: Report proposed changes without mutating labels
         required: true
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
