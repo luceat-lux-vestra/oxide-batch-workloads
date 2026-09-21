@@ -124,8 +124,9 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         control = next(c for c in self.policy["controls"] if c["id"] == "security.code_scanning_languages")
         self.assertEqual(control["readback"], "manual-readback")
         self.assertEqual(control["classification"], "conditional")
-        self.assertCountEqual(control["expected"], ["actions", "java-kotlin", "python", "rust"])
+        self.assertCountEqual(control["expected"], ["actions", "python", "rust"])
         self.assertIn("Desired live default-setup coverage", control.get("rationale", ""))
+        self.assertIn("#120", control.get("rationale", ""))
 
     def test_pvr_expected_state_is_not_contradicted_by_security_md(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting")
