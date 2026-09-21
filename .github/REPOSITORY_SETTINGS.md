@@ -140,6 +140,8 @@ credential is **not** available to #38, so each row is labeled with the
 | Actions/reusable-workflow policy | `allowed_actions=all`, `sha_pinning_required=false` | `gh api repos/.../actions/permissions` | admin-gated |
 | Fork pull-request contributor approval | `first_time_contributors` | `gh api repos/.../actions/permissions/fork-pr-contributor-approval` | admin-gated |
 | Dependency Graph | Active (235-package SBOM returned) | `gh api repos/.../dependency-graph/sbom` | **publicly readable** |
+
+Dependency Graph being active is a live repository setting, not a consequence of public visibility. GitHub allows repository administrators to enable or disable it; the populated SBOM is therefore retained as direct operational evidence and as a drift signal.
 | Dependabot alerts | Enabled (HTTP 204) | `gh api repos/.../vulnerability-alerts` | admin-gated |
 | Dependabot security updates | Enabled | `security_and_analysis.dependabot_security_updates.status` | admin-gated |
 | Secret scanning | Enabled | `security_and_analysis.secret_scanning.status` | admin-gated |
