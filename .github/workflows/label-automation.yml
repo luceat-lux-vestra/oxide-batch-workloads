@@ -17,12 +17,10 @@ on:
         description: Report proposed changes without mutating labels
         required: true
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: label-automation-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
@@ -33,6 +31,10 @@ jobs:
     if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       # This workflow has write permission, so it must never execute PR-head code.
       # Always load the reconciler and its policy inputs from the trusted default branch.
