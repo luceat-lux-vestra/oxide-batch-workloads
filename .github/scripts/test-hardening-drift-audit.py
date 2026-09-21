@@ -352,7 +352,7 @@ class WorkflowSecurityFixtureTests(unittest.TestCase):
                 "backfill:\n        description: Reconcile all currently open issues and pull requests\n        required: true\n        type: boolean\n        default: true",
             )
             path.write_text(text, encoding="utf-8")
-            with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "trusted pull_request_target boundary"):
+            with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "backfill must be explicit opt-in"):
                 WORKFLOW_SECURITY.validate_label_automation_boundary(root)
         finally:
             temp.cleanup()
