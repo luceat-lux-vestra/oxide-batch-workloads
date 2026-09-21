@@ -75,10 +75,32 @@ The machine policy still classifies CodeQL as `manual-readback` for future
 #38 drift auditing because the connected low-privilege surface does not expose
 the administrative default-setup setting itself. A recent dynamic run is
 useful acceptance evidence, but absence of a recent run is not a reliable
-proof that the setting was disabled. #37 additionally confirmed the admin
-`code-scanning/default-setup` state directly (see the readback table above):
-`state=configured`, languages `actions` and `python`, default query suite,
-`remote` threat model, weekly schedule.
+proof that the setting was disabled. #37 confirmed the admin
+`code-scanning/default-setup` state as `configured` with `actions` and
+`python`; that 2026-09-03 language list is now stale evidence rather than an
+accepted coverage claim because the repository contains maintained Rust
+workloads and Java benchmark controls.
+
+Hardening Reassessment #104 now declares desired single-authority
+default-setup coverage as `actions`, `python`, `java-kotlin`, and `rust`.
+
+Java/Kotlin is no longer a speculative coverage target. On exact PR #121 head
+`5d38a31a6247c76edfa5490aa6f5cbbf0a5066b3`, GitHub-managed default setup
+successfully ran `Analyze (java-kotlin)` in build mode `none`, discovered
+the nested Maven benchmark modules (`raw-jdbc`, `spring-batch`, and
+`jberet`), and reported that CodeQL scanned 5 of 5 Java files. This satisfies
+the measurement side of #120 and makes Java/Kotlin useful advisory security
+coverage for the maintained comparison harnesses. It remains non-authoritative
+for benchmark correctness.
+
+The checked-in policy still intentionally does not claim that Rust is live in
+the producer set. Current PR #121 default-setup jobs include Actions, Python,
+and Java/Kotlin but no `Analyze (rust)`. Completion therefore still requires
+an admin-capable default-setup readback, configuration/update through a
+GitHub-supported surface, and successful Rust analysis evidence.
+
+Do not add a competing advanced-setup workflow merely to make the Rust
+configuration easier to automate.
 
 ## Workflow-level token posture
 
