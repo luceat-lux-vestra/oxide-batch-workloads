@@ -88,7 +88,7 @@
       "id": "ruleset.required_status_contexts",
       "classification": "required",
       "readback": "ruleset-api",
-      "expected": ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"]
+      "expected": ["dependency-review", "failure-triage", "supply-chain", "workloads-ci", "workloads-msrv"]
     },
     {"id": "ruleset.bypass_actors", "classification": "required", "readback": "ruleset-api", "expected": []},
     {
