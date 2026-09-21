@@ -21,12 +21,14 @@ TYPE_RULES = (
     (r"^security\s*:", "type:security"),
     (r"^(?:docs?|documentation)\s*:", "type:docs"),
     (r"^research\s*:", "type:research"),
+    (r"^hardening(?:\([^)]*\))?\s*:", "type:task"),
     (r"^(?:task|chore|governance|ci|evidence|deps?)\s*:", "type:task"),
     (r"^chore\(deps\)\s*:", "type:task"),
 )
 
 AREA_PREFIX_RULES = (
     (r"^ci\s*:", "area:ci"),
+    (r"^hardening(?:\([^)]*\))?\s*:", "area:governance"),
     (r"^(?:governance|chore)\s*:", "area:governance"),
     (r"^evidence\s*:", "area:evidence"),
     (r"^security\s*:", "area:security"),
