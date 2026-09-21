@@ -3,8 +3,18 @@
   "repository": "luceat-lux-vestra/oxide-batch-workloads",
   "ruleset_id": 21944159,
   "controls": [
-    {"id": "repository.visibility", "classification": "required", "readback": "repository-api", "expected": "public"},
-    {"id": "repository.default_branch", "classification": "required", "readback": "repository-api", "expected": "main"},
+    {
+      "id": "repository.visibility",
+      "classification": "required",
+      "readback": "repository-api",
+      "expected": "public"
+    },
+    {
+      "id": "repository.default_branch",
+      "classification": "required",
+      "readback": "repository-api",
+      "expected": "main"
+    },
     {
       "id": "repository.allow_squash_merge",
       "classification": "required",
@@ -61,14 +71,56 @@
       "expected": false,
       "rationale": "DCO-style web signoff is not cryptographic signed-commit enforcement and is not required by this hardening policy."
     },
-    {"id": "ruleset.enforcement", "classification": "required", "readback": "ruleset-api", "expected": "active"},
-    {"id": "ruleset.target_default_branch", "classification": "required", "readback": "ruleset-api", "expected": true},
-    {"id": "ruleset.deletion_protection", "classification": "required", "readback": "ruleset-api", "expected": true},
-    {"id": "ruleset.non_fast_forward_protection", "classification": "required", "readback": "ruleset-api", "expected": true},
-    {"id": "ruleset.required_linear_history", "classification": "required", "readback": "ruleset-api", "expected": true},
-    {"id": "ruleset.pull_request_required", "classification": "required", "readback": "ruleset-api", "expected": true},
-    {"id": "ruleset.allowed_merge_methods", "classification": "required", "readback": "ruleset-api", "expected": ["squash"]},
-    {"id": "ruleset.review_thread_resolution", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {
+      "id": "ruleset.enforcement",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": "active"
+    },
+    {
+      "id": "ruleset.target_default_branch",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
+    {
+      "id": "ruleset.deletion_protection",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
+    {
+      "id": "ruleset.non_fast_forward_protection",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
+    {
+      "id": "ruleset.required_linear_history",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
+    {
+      "id": "ruleset.pull_request_required",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
+    {
+      "id": "ruleset.allowed_merge_methods",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": [
+        "squash"
+      ]
+    },
+    {
+      "id": "ruleset.review_thread_resolution",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
     {
       "id": "ruleset.required_approving_review_count",
       "classification": "conditional",
@@ -83,14 +135,30 @@
       "expected": false,
       "rationale": "With required_approving_review_count=0 this setting is not counted as an effective hardening control."
     },
-    {"id": "ruleset.strict_required_status_checks", "classification": "required", "readback": "ruleset-api", "expected": true},
+    {
+      "id": "ruleset.strict_required_status_checks",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": true
+    },
     {
       "id": "ruleset.required_status_contexts",
       "classification": "required",
       "readback": "ruleset-api",
-      "expected": ["dependency-review", "failure-triage", "supply-chain", "workloads-ci", "workloads-msrv"]
+      "expected": [
+        "dependency-review",
+        "failure-triage",
+        "supply-chain",
+        "workloads-ci",
+        "workloads-msrv"
+      ]
     },
-    {"id": "ruleset.bypass_actors", "classification": "required", "readback": "ruleset-api", "expected": []},
+    {
+      "id": "ruleset.bypass_actors",
+      "classification": "required",
+      "readback": "ruleset-api",
+      "expected": []
+    },
     {
       "id": "actions.default_workflow_permissions",
       "classification": "required",
@@ -98,7 +166,12 @@
       "expected": "read",
       "rationale": "Confirmed 2026-09-03 via `gh api repos/.../actions/permissions/workflow` (admin-scoped credential): default_workflow_permissions=read, can_approve_pull_request_reviews=false. This endpoint requires repository administration access, which a scheduled #38 workflow's low-privilege GITHUB_TOKEN does not have by default, so the readback mode stays manual-readback."
     },
-    {"id": "actions.can_approve_pull_request_reviews", "classification": "required", "readback": "manual-readback", "expected": false},
+    {
+      "id": "actions.can_approve_pull_request_reviews",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": false
+    },
     {
       "id": "actions.fork_pull_request_policy",
       "classification": "required",
@@ -160,7 +233,18 @@
       "classification": "conditional",
       "readback": "manual-readback",
       "expected": true,
-      "rationale": "Confirmed 2026-09-03: `gh api repos/.../code-scanning/default-setup` returned state=configured, languages=[actions,python], query_suite=default, threat_model=remote, schedule=weekly, matching PR #56's dynamic github-code-scanning/codeql runs. No checked-in CodeQL workflow is added; the admin default-setup endpoint requires repository administration access, so readback stays manual-readback for #38."
+      "rationale": "Confirmed 2026-09-03 via `gh api repos/.../code-scanning/default-setup`: GitHub default setup was configured with languages=[actions,python]. Hardening Reassessment #104 treats that language evidence as stale for current repository contents; the same authoritative default-setup endpoint must be re-read after supported configuration changes so maintained CodeQL-supported source surfaces are covered rather than inferred from the fact that CodeQL is merely enabled."
+    },
+    {
+      "id": "security.code_scanning_languages",
+      "classification": "conditional",
+      "readback": "manual-readback",
+      "expected": [
+        "actions",
+        "python",
+        "rust"
+      ],
+      "rationale": "Desired live default-setup coverage for the repository's maintained GitHub Actions/Python governance code and first-class Rust workloads. Java comparative benchmark coverage is a separate bounded decision in #120 and is not claimed here. This Rust coverage is not claimed as live until an admin-capable default-setup readback plus successful Rust analysis evidence confirms it. Keep one CodeQL authority; do not add a competing advanced-setup workflow."
     },
     {
       "id": "security.signed_commits",
