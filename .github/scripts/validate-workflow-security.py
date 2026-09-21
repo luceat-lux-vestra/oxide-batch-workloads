@@ -68,6 +68,10 @@ def validate_label_automation_boundary(root=ROOT):
         "ref: ${{ github.event.repository.default_branch }}",
         "persist-credentials: false",
         "python3 .github/scripts/reconcile-labels.py",
+        "default: false",
+        "default: true",
+        "Mutating backlog reconciliation must run from",
+        'DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}',
     ]
     missing = [value for value in required if value not in text]
     if missing:
