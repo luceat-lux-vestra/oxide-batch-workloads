@@ -361,8 +361,8 @@ class WorkflowSecurityFixtureTests(unittest.TestCase):
         try:
             path = root / ".github" / "workflows" / "label-automation.yml"
             text = path.read_text(encoding="utf-8").replace(
-                "Mutating backlog reconciliation must run from",
-                "bulk mutation allowed from selected ref",
+                'if [[ "${DRY_RUN}" != "true" && "${GITHUB_REF}" != "${expected_ref}" ]]; then',
+                'if [[ "${DRY_RUN}" != "true" && "${GITHUB_REF}" == "${expected_ref}" ]]; then',
             )
             path.write_text(text, encoding="utf-8")
             with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "trusted pull_request_target boundary"):
@@ -370,6 +370,20 @@ class WorkflowSecurityFixtureTests(unittest.TestCase):
         finally:
             temp.cleanup()
 
+
+    def test_label_backfill_dry_run_default_is_enforced(self):
+        temp, root = self.copy_workflows()
+        try:
+            path = root / ".github" / "workflows" / "label-automation.yml"
+            text = path.read_text(encoding="utf-8").replace(
+                "dry_run:\n        description: Report proposed changes without mutating labels\n        required: true\n        type: boolean\n        default: true",
+                "dry_run:\n        description: Report proposed changes without mutating labels\n        required: true\n        type: boolean\n        default: false",
+            )
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(WORKFLOW_SECURITY.WorkflowSecurityError, "dry_run must default fail-safe"):
+                WORKFLOW_SECURITY.validate_label_automation_boundary(root)
+        finally:
+            temp.cleanup()
 
 class FakeIssueClient:
     def __init__(self):
