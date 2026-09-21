@@ -31,15 +31,23 @@ The last admin readback on 2026-09-03 proved GitHub default setup was configured
 
 That is no longer sufficient desired coverage because the repository contains first-class Rust workload implementations in addition to its GitHub Actions and Python governance tooling.
 
-The immediate desired single default-setup authority is therefore:
+The desired single default-setup authority is therefore:
 
 - `actions`
 - `python`
+- `java-kotlin`
 - `rust`
 
-GitHub's current compiled-language guidance documents Rust default-setup analysis with build mode `none`. The REST default-setup read endpoint is authoritative for readback, while the current update endpoint's published language enum still omits `rust`; this PR therefore does not invent an undocumented Rust mutation. The exit proof must use a supported GitHub configuration surface plus authoritative readback and successful Rust analysis.
+Java/Kotlin is now evidence-backed rather than speculative. On exact PR #121 head
+`5d38a31a6247c76edfa5490aa6f5cbbf0a5066b3`, GitHub-managed default setup ran
+`Analyze (java-kotlin)` with build mode `none`, discovered the nested Maven
+benchmark modules, and reported that it scanned all 5 maintained Java files.
+That makes Java/Kotlin useful advisory security coverage for the maintained
+comparative harnesses; it is not benchmark-correctness authority.
 
-The repository also contains maintained Java comparative benchmark controls, but #111 explicitly required that surface to be evaluated separately rather than enabled for visual parity. Issue #120 owns that bounded decision. Java/Kotlin is not part of this PR's desired live coverage until nested benchmark discovery/build behavior and independent security value are proven.
+Rust remains the only unproven desired language. GitHub's current compiled-language guidance documents Rust default-setup analysis with build mode `none`. The REST default-setup read endpoint is authoritative for readback, while the current update endpoint's published language enum still omits `rust`; this PR therefore does not invent an undocumented Rust mutation. Completion requires a supported GitHub configuration surface, authoritative default-setup readback, and successful managed `Analyze (rust)` evidence.
+
+GitHub default setup remains the single CodeQL authority. Do not add a competing advanced-setup workflow merely to obtain Rust coverage.
 
 ## PASS — existing dependency and repository governance
 
@@ -52,7 +60,7 @@ No second taxonomy, ruleset, or release authority is introduced.
 - exact final PR HEAD passes current required contexts;
 - actionlint and zizmor pass the real workflows and reject the negative fixture;
 - static hardening tests reject scanner removal/checksum weakening;
-- authoritative CodeQL readback plus successful analysis proves the desired Actions/Python/Rust producer set; Rust is not claimed from an undocumented REST mutation;
+- authoritative CodeQL readback plus successful analysis proves the desired Actions/Python/Java-Kotlin/Rust producer set; Java/Kotlin retains its measured 5/5 source evidence and Rust is not claimed from an undocumented REST mutation;
 - merged-main required checks and recurring hardening policy remain green;
 - label backfill mutation is exercised only after dry-run review.
 
