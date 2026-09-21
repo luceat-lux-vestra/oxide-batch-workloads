@@ -95,6 +95,7 @@ def canonical_ruleset():
                     "strict_required_status_checks_policy": True,
                     "required_status_checks": [
                         {"context": "dependency-review"},
+                        {"context": "failure-triage"},
                         {"context": "supply-chain"},
                         {"context": "workloads-ci"},
                         {"context": "workloads-msrv"},
