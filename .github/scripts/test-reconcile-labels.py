@@ -26,6 +26,8 @@ class LabelReconciliationTests(unittest.TestCase):
             "docs: clarify evidence": "type:docs",
             "research: compare schedulers": "type:research",
             "governance: reconcile settings": "type:task",
+            "hardening(reassessment): close workflow-security drift": "type:task",
+            "hardening: classify repository work": "type:task",
             "chore(deps): bump foo": "type:task",
         }
         for title, expected in cases.items():
@@ -104,6 +106,31 @@ class LabelReconciliationTests(unittest.TestCase):
         areas = MODULE.infer_path_areas([registered_path], self.policy)
         self.assertIn("area:workload", areas)
         self.assertIn("area:postgres", areas)
+
+    def test_hardening_prefix_adds_governance_area_only(self):
+        for title in (
+            "hardening: classify repository work",
+            "hardening(reassessment): close workflow-security drift",
+            "hardening(metadata): make backfill fail closed",
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(MODULE.infer_title_areas(title), {"area:governance"})
+
+    def test_real_reassessment_titles_reconcile_to_one_task_type(self):
+        for title in (
+            "hardening(reassessment): close workflow-security and code-scanning drift",
+            "hardening(reassessment): make CodeQL language coverage explicit",
+            "hardening(metadata): make manual backlog reconciliation fail closed",
+        ):
+            with self.subTest(title=title):
+                result = MODULE.reconcile_labels(
+                    [],
+                    MODULE.strong_type_from_title(title),
+                    MODULE.infer_title_areas(title),
+                    self.policy,
+                )
+                self.assertEqual([x for x in result if x.startswith("type:")], ["type:task"])
+                self.assertIn("area:governance", result)
 
     def test_governance_workflow_path_gets_ci_and_governance(self):
         areas = MODULE.infer_path_areas([".github/workflows/label-automation.yml"], self.policy)
