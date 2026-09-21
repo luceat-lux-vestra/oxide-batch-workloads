@@ -191,7 +191,7 @@
       "classification": "required",
       "readback": "repository-api",
       "expected": true,
-      "rationale": "Confirmed 2026-09-03: GET /repos/.../dependency-graph/sbom returned a populated SBOM (235 packages), direct evidence the graph is active. Verified this endpoint requires no authentication at all (plain unauthenticated curl returns HTTP 200 with the SBOM body), so unlike the other manual-readback controls, a future #38 low-privilege GITHUB_TOKEN (or no token) can read this deterministically. Public repositories cannot disable Dependency Graph, so no repository-update call was needed."
+      "rationale": "Confirmed 2026-09-03: GET /repos/.../dependency-graph/sbom returned a populated SBOM (235 packages), direct evidence the graph is active. Verified this endpoint requires no authentication at all (plain unauthenticated curl returns HTTP 200 with the SBOM body), so unlike the other manual-readback controls, a future #38 low-privilege GITHUB_TOKEN (or no token) can read this deterministically. Dependency Graph remains an independently mutable repository security setting even for public repositories, so its operational SBOM readback stays a required drift signal rather than being inferred from visibility."
     },
     {
       "id": "security.dependabot_alerts",
