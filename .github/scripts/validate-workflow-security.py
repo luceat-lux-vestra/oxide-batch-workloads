@@ -68,10 +68,30 @@ def validate_label_automation_boundary(root=ROOT):
         "ref: ${{ github.event.repository.default_branch }}",
         "persist-credentials: false",
         "python3 .github/scripts/reconcile-labels.py",
+        'DRY_RUN: ${{ inputs.dry_run }}',
+        'DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}',
+        'expected_ref="refs/heads/${DEFAULT_BRANCH}"',
+        'if [[ "${DRY_RUN}" != "true" && "${GITHUB_REF}" != "${expected_ref}" ]]; then',
+        "Mutating backlog reconciliation must run from",
     ]
     missing = [value for value in required if value not in text]
     if missing:
         fail("label automation lost trusted pull_request_target boundary: " + ", ".join(missing))
+
+    backfill_contract = """      backfill:
+        description: Reconcile all currently open issues and pull requests
+        required: true
+        type: boolean
+        default: false"""
+    dry_run_contract = """      dry_run:
+        description: Report proposed changes without mutating labels
+        required: true
+        type: boolean
+        default: true"""
+    if backfill_contract not in text:
+        fail("label automation backfill must be explicit opt-in (default: false)")
+    if dry_run_contract not in text:
+        fail("label automation dry_run must default fail-safe (default: true)")
     if "ref: ${{ github.event.pull_request.head.sha }}" in text or "ref: ${{ github.head_ref }}" in text:
         fail("label automation must not check out pull-request head code under write permissions")
 
