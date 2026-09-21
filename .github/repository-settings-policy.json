@@ -240,11 +240,10 @@
       "readback": "manual-readback",
       "expected": [
         "actions",
-        "java-kotlin",
         "python",
         "rust"
       ],
-      "rationale": "Desired live default-setup coverage for the repository's maintained GitHub Actions/Python governance code, Rust workloads, and Java comparative benchmark controls. This is not claimed as live until an admin-capable default-setup readback plus successful language analysis evidence confirms it. Keep one CodeQL authority; do not add a competing advanced-setup workflow."
+      "rationale": "Desired live default-setup coverage for the repository's maintained GitHub Actions/Python governance code and first-class Rust workloads. Java comparative benchmark coverage is a separate bounded decision in #120 and is not claimed here. This Rust coverage is not claimed as live until an admin-capable default-setup readback plus successful Rust analysis evidence confirms it. Keep one CodeQL authority; do not add a competing advanced-setup workflow."
     },
     {
       "id": "security.signed_commits",
