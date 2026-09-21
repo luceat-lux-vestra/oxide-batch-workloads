@@ -81,13 +81,18 @@ proof that the setting was disabled. #37 confirmed the admin
 accepted coverage claim because the repository contains maintained Rust
 workloads and Java benchmark controls.
 
-Hardening Reassessment #104 therefore declares the desired single-authority
-default-setup coverage as `actions`, `python`, `rust`, and
-`java-kotlin`. The checked-in policy intentionally does not claim that this
-is already the live producer set. Completion requires an admin-capable default
-setup readback, configuration/update through a GitHub-supported surface, and
-successful analysis evidence for the added languages. Do not add a competing
-advanced-setup workflow merely to make the desired state easier to automate.
+Hardening Reassessment #104 therefore declares the immediate desired
+single-authority default-setup coverage as `actions`, `python`, and `rust`.
+The checked-in policy intentionally does not claim that Rust is already in the
+live producer set. Completion requires an admin-capable default-setup readback,
+configuration/update through a GitHub-supported surface, and successful Rust
+analysis evidence.
+
+The maintained Java comparative benchmark surface is tracked separately by
+#120. It is not added to desired CodeQL coverage merely because Java files are
+present; default-setup discovery/build behavior and the independent security
+value of that benchmark surface must be measured first. Do not add a competing
+advanced-setup workflow merely to make either decision easier to automate.
 
 ## Workflow-level token posture
 
