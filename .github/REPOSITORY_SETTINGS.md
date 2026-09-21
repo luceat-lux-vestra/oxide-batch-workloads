@@ -81,18 +81,26 @@ proof that the setting was disabled. #37 confirmed the admin
 accepted coverage claim because the repository contains maintained Rust
 workloads and Java benchmark controls.
 
-Hardening Reassessment #104 therefore declares the immediate desired
-single-authority default-setup coverage as `actions`, `python`, and `rust`.
-The checked-in policy intentionally does not claim that Rust is already in the
-live producer set. Completion requires an admin-capable default-setup readback,
-configuration/update through a GitHub-supported surface, and successful Rust
-analysis evidence.
+Hardening Reassessment #104 now declares desired single-authority
+default-setup coverage as `actions`, `python`, `java-kotlin`, and `rust`.
 
-The maintained Java comparative benchmark surface is tracked separately by
-#120. It is not added to desired CodeQL coverage merely because Java files are
-present; default-setup discovery/build behavior and the independent security
-value of that benchmark surface must be measured first. Do not add a competing
-advanced-setup workflow merely to make either decision easier to automate.
+Java/Kotlin is no longer a speculative coverage target. On exact PR #121 head
+`5d38a31a6247c76edfa5490aa6f5cbbf0a5066b3`, GitHub-managed default setup
+successfully ran `Analyze (java-kotlin)` in build mode `none`, discovered
+the nested Maven benchmark modules (`raw-jdbc`, `spring-batch`, and
+`jberet`), and reported that CodeQL scanned 5 of 5 Java files. This satisfies
+the measurement side of #120 and makes Java/Kotlin useful advisory security
+coverage for the maintained comparison harnesses. It remains non-authoritative
+for benchmark correctness.
+
+The checked-in policy still intentionally does not claim that Rust is live in
+the producer set. Current PR #121 default-setup jobs include Actions, Python,
+and Java/Kotlin but no `Analyze (rust)`. Completion therefore still requires
+an admin-capable default-setup readback, configuration/update through a
+GitHub-supported surface, and successful Rust analysis evidence.
+
+Do not add a competing advanced-setup workflow merely to make the Rust
+configuration easier to automate.
 
 ## Workflow-level token posture
 
