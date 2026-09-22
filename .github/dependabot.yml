@@ -42,6 +42,13 @@ updates:
       # routine dependency churn.
       - dependency-name: "org.postgresql:postgresql"
       - dependency-name: "org.springframework.batch:spring-batch-core"
+      # JBeret 3.2.0.Final qualification freezes CDI 4.1.0 with the reviewed
+      # Java-SE runtime graph. A CDI major upgrade is a benchmark-contract
+      # migration (including its CDI implementation), not routine maintenance.
+      # Security updates remain independently eligible.
+      - dependency-name: "jakarta.enterprise:jakarta.enterprise.cdi-api"
+        update-types:
+          - "version-update:semver-major"
     labels:
       - dependencies
 
