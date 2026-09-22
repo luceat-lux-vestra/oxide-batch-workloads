@@ -30,7 +30,6 @@ csv = "1"
 
 [dev-dependencies]
 oxide-batch-test = "=0.6.0"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs"] }
 
 [profile.dev]
 opt-level = 0
