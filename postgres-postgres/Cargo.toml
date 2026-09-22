@@ -34,8 +34,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
-[dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs"] }
 
 [profile.dev]
 opt-level = 0
