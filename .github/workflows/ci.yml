@@ -354,17 +354,18 @@ jobs:
   workloads-msrv:
     name: workloads-msrv
     needs: [discover, msrv-shard]
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Download shard results
-        if: needs.discover.result == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: result-msrv-*
@@ -372,7 +373,7 @@ jobs:
           merge-multiple: false
 
       - name: Fetch shard job conclusions
-        if: needs.discover.result == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
         id: jobs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -395,7 +396,7 @@ jobs:
           result-encoding: json
 
       - name: Compute aggregate verdict
-        if: always()
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
         env:
           DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
@@ -418,17 +419,18 @@ jobs:
   supply-chain:
     name: supply-chain
     needs: [discover, supply-chain-shard]
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Download shard results
-        if: needs.discover.result == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: result-supply-chain-*
@@ -436,7 +438,7 @@ jobs:
           merge-multiple: false
 
       - name: Fetch shard job conclusions
-        if: needs.discover.result == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
         id: jobs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -459,7 +461,7 @@ jobs:
           result-encoding: json
 
       - name: Compute aggregate verdict
-        if: always()
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
         env:
           DISCOVER_JSON: ${{ needs.discover.outputs.supply-chain-workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
