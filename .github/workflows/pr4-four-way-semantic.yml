@@ -2,6 +2,7 @@ name: PR4 four-way semantic gate
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "postgres-postgres/**"
       - ".github/workflows/pr4-four-way-semantic.yml"
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   semantic:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: pr4-four-way-semantic
     runs-on: ubuntu-24.04
     timeout-minutes: 120
