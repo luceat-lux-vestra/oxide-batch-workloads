@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
   workflow_dispatch: {}
 
@@ -157,6 +158,7 @@ jobs:
   # from registry data (matrix.msrv.version); the boolean branch is on
   # registry-declared policy, never on a workload name.
   msrv-shard:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: msrv-shard (${{ matrix.name }})
     needs: discover
     runs-on: ubuntu-24.04
@@ -237,6 +239,7 @@ jobs:
   # registry fans this job out automatically (see
   # test-discover-supply-chain-workloads.py).
   supply-chain-shard:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: supply-chain-shard (${{ matrix.name }})
     needs: discover
     runs-on: ubuntu-24.04
@@ -351,7 +354,7 @@ jobs:
   workloads-msrv:
     name: workloads-msrv
     needs: [discover, msrv-shard]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -415,7 +418,7 @@ jobs:
   supply-chain:
     name: supply-chain
     needs: [discover, supply-chain-shard]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
