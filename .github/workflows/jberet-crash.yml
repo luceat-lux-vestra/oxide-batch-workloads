@@ -15,22 +15,6 @@ on:
       - 'postgres-postgres/src/**'
       - 'postgres-postgres/migrations/**'
       - 'postgres-postgres/docker-compose.yml'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/jberet-crash.yml'
-      - 'postgres-postgres/benchmark/java/jberet/src/test/**'
-      - 'postgres-postgres/benchmark/java/ci/validate-jberet-crash.py'
-      - 'postgres-postgres/benchmark/java/ci/test-validate-jberet-crash.py'
-      - 'postgres-postgres/ci/validate-jberet-crash-recovery'
-      - 'postgres-postgres/benchmark/java/jberet/src/main/**'
-      - 'postgres-postgres/benchmark/java/jberet/pom.xml'
-      - 'postgres-postgres/Cargo.toml'
-      - 'postgres-postgres/Cargo.lock'
-      - 'postgres-postgres/src/**'
-      - 'postgres-postgres/migrations/**'
-      - 'postgres-postgres/docker-compose.yml'
-
 permissions:
   contents: read
 

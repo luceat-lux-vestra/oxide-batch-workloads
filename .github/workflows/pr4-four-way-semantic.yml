@@ -7,13 +7,6 @@ on:
       - "postgres-postgres/**"
       - ".github/workflows/pr4-four-way-semantic.yml"
       - ".github/workflows/benchmark-postgres-postgres-four-way.yml"
-  push:
-    branches: [main]
-    paths:
-      - "postgres-postgres/**"
-      - ".github/workflows/pr4-four-way-semantic.yml"
-      - ".github/workflows/benchmark-postgres-postgres-four-way.yml"
-
 permissions:
   contents: read
 

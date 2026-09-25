@@ -5,8 +5,6 @@ name: CI
 # `supply-chain`) must always be producible on every relevant PR so they
 # remain valid branch protection required contexts.
 on:
-  push:
-    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
