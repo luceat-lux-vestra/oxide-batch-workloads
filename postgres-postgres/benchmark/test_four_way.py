@@ -126,12 +126,12 @@ class FourWayHarnessTests(unittest.TestCase):
         self.assertIn("retention-days: 30", text)
         self.assertIn("BENCH_MEASURED_RUNS % 4 == 0", text)
 
-    def test_semantic_gate_runs_on_pr_and_main_push(self):
+    def test_semantic_gate_runs_on_pr_without_post_merge_duplicate(self):
         workflow = MODULE_PATH.parents[2] / ".github" / "workflows" / "pr4-four-way-semantic.yml"
         text = workflow.read_text(encoding="utf-8")
         self.assertIn("pull_request:", text)
-        self.assertIn("push:", text)
-        self.assertIn("branches: [main]", text)
+        self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", text)
+        self.assertNotIn("push:", text)
         self.assertIn("./ci/validate-raw-jdbc-crash-recovery", text)
         self.assertIn("--measured-runs 4", text)
         self.assertIn("persist-credentials: false", text)
