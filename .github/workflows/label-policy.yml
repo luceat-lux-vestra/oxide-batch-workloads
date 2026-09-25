@@ -10,15 +10,6 @@ on:
       - ".github/scripts/test-reconcile-labels.py"
       - ".github/workflows/label-policy.yml"
       - ".github/workflows/label-automation.yml"
-  push:
-    branches: [main]
-    paths:
-      - ".github/labels.json"
-      - "workloads.json"
-      - ".github/scripts/reconcile-labels.py"
-      - ".github/scripts/test-reconcile-labels.py"
-      - ".github/workflows/label-policy.yml"
-      - ".github/workflows/label-automation.yml"
   workflow_dispatch: {}
 
 permissions:

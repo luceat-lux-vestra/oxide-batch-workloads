@@ -1,19 +1,6 @@
 name: Hardening drift audit policy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/repository-settings-policy.json"
-      - ".github/labels.json"
-      - ".github/scripts/audit_issue.py"
-      - ".github/scripts/run-hardening-drift-audit.py"
-      - ".github/scripts/report-hardening-drift-audit.py"
-      - ".github/scripts/report-supply-chain-audit.py"
-      - ".github/scripts/validate-workflow-security.py"
-      - ".github/scripts/test-hardening-drift-audit.py"
-      - ".github/scripts/test-scheduled-supply-chain-audit.py"
-      - ".github/workflows/*.yml"
   pull_request:
     branches: [main]
     paths:
