@@ -1,12 +1,6 @@
 name: Repository settings policy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/repository-settings-policy.json"
-      - ".github/scripts/test-repository-settings-policy.py"
-      - ".github/workflows/repository-settings-policy.yml"
   pull_request:
     branches: [main]
     paths:
