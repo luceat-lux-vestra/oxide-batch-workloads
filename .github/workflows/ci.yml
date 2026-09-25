@@ -13,8 +13,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  # Read prior exact-SHA aggregate results for Fast evidence reuse.
-  checks: read
+  checks: read # Needed to inspect prior exact-SHA check results for Fast evidence reuse.
   contents: read
 
 concurrency:
