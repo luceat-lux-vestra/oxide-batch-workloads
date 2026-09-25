@@ -7,14 +7,6 @@ on:
       - "postgres-postgres/ci/validate-jberet-clean"
       - "postgres-postgres/ci/validate-supply-chain"
       - ".github/workflows/jberet-clean.yml"
-  push:
-    branches: [main]
-    paths:
-      - "postgres-postgres/benchmark/java/**"
-      - "postgres-postgres/ci/validate-jberet-clean"
-      - "postgres-postgres/ci/validate-supply-chain"
-      - ".github/workflows/jberet-clean.yml"
-
 permissions:
   contents: read
 
