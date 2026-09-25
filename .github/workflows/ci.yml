@@ -13,6 +13,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
+  # Read prior exact-SHA aggregate results for Fast evidence reuse.
   checks: read
   contents: read
 
@@ -44,16 +45,24 @@ jobs:
         run: |
           set -euo pipefail
           checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
-          if ! jq -e --arg name "$EXPECTED_CHECK" '
+          current_run="/actions/runs/${GITHUB_RUN_ID}/"
+          latest="$(jq -c --arg name "$EXPECTED_CHECK" --arg current_run "$current_run" '
             [.check_runs[]
              | select(.name == $name and .app.slug == "github-actions")
-             | select(.status == "completed" and .conclusion == "success")]
-            | length > 0
-          ' <<<"$checks" >/dev/null; then
-            echo "::error::No successful prior '$EXPECTED_CHECK' Fast aggregate exists for exact HEAD $EXPECTED_SHA."
+             | select(((.details_url // "") | contains($current_run)) | not)]
+            | if length == 0 then empty else max_by(.id) end
+          ' <<<"$checks")"
+          if [ -z "$latest" ]; then
+            echo "::error::No prior '$EXPECTED_CHECK' Fast aggregate exists for exact HEAD $EXPECTED_SHA."
             exit 1
           fi
-          echo "Exact-SHA Fast workload evidence is reusable."
+          status="$(jq -r '.status' <<<"$latest")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::Latest prior '$EXPECTED_CHECK' evidence for exact HEAD $EXPECTED_SHA is status=$status conclusion=$conclusion; refusing stale-success reuse."
+            exit 1
+          fi
+          echo "Latest exact-SHA Fast workload evidence is reusable."
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
