@@ -32,6 +32,7 @@ missing framework-neutral contract.
 |---|---|---|
 | [`csv-postgres/`](csv-postgres/) | `oxide-batch` `0.6.0` | Streaming CSV → PostgreSQL restartable batch import: transaction/checkpoint/restart semantics, crash recovery, application-level idempotency, resource bounds. |
 | [`postgres-postgres/`](postgres-postgres/) | `oxide-batch` `0.6.0` | PostgreSQL → PostgreSQL cursor + keyset/paging restartable transform (campaign #63): deterministic source identity, released enlisted batch writer, independent streaming verification, and rollback + real hard-crash/new-process recovery for both reader modes. Retained larger-dataset resource evidence is the final campaign slice. |
+| [`postgres-local-partition/`](postgres-local-partition/) | `oxide-batch` `0.6.0` | Dense single-host local-partition scaling and recovery campaign (#93): deterministic range ownership, bounded worker/pool behavior, hard-crash/new-process restart, cancellation/drain, and retained scale evidence without upgrading the framework's transaction guarantees. |
 
 ## Accepted comparative benchmark evidence
 
@@ -133,12 +134,18 @@ aggregate for every registered real workload's locked dependency graph, while
 `dependency-review` remains separately required for its distinct diff-scoped
 dependency-change coverage.
 
-The live `Protect main` ruleset therefore requires these four stable contexts:
+The live `Protect main` ruleset therefore requires these five stable contexts:
 
 - `dependency-review`
+- `failure-triage`
 - `workloads-ci`
 - `workloads-msrv`
 - `supply-chain`
+
+`failure-triage` is the required unprivileged declaration gate for
+classification-before-remediation. Automatic failure classification remains a
+separate trusted default-branch reporter and does not replace this required
+pull-request context.
 
 Per-workload shard job names are implementation details and are never branch
 protection contracts.
