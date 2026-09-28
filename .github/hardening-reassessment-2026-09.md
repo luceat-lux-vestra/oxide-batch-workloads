@@ -1,8 +1,19 @@
 # Hardening Reassessment — 2026-09-20
 
-Owning issue: #104
+- **Status:** Completed point-in-time reassessment
+- **Owning issue:** #104 — completed 2026-09-22
+- **Rust CodeQL residual:** #123 — completed 2026-09-22
 
-This pass re-evaluates the completed repository hardening against current external GitHub/OpenSSF guidance and the repository's present code/language surfaces. Existing aggregate gates, dependency review, supply-chain/evidence contracts, label taxonomy, trusted-base metadata automation, and recurring drift architecture remain authoritative.
+This document records the September hardening reassessment and its closure. It
+is historical evidence, not a live backlog. Current repository policy lives in
+`repository-settings-policy.json`, the live ruleset, and the active workflow
+contracts.
+
+The reassessment re-evaluated the completed repository hardening against
+current external GitHub/OpenSSF guidance and the repository's then-current
+code/language surfaces. Existing aggregate gates, dependency review,
+supply-chain/evidence contracts, label taxonomy, trusted-base metadata
+automation, and recurring drift architecture remain authoritative.
 
 ## GAP — backlog mutation default
 
@@ -45,9 +56,18 @@ benchmark modules, and reported that it scanned all 5 maintained Java files.
 That makes Java/Kotlin useful advisory security coverage for the maintained
 comparative harnesses; it is not benchmark-correctness authority.
 
-Rust remains the only unproven desired language. GitHub's current compiled-language guidance documents Rust default-setup analysis with build mode `none`. The REST default-setup read endpoint is authoritative for readback, while the current update endpoint's published language enum still omits `rust`; this PR therefore does not invent an undocumented Rust mutation. Completion requires a supported GitHub configuration surface, authoritative default-setup readback, and successful managed `Analyze (rust)` evidence.
+Rust was the final residual at the time of this reassessment. That residual is
+now closed. Issue #123 retained the supported default-setup remediation and
+GitHub-managed run `35684911979` on exact
+`main@93139667564c87cdcb3d1e0a8e930ffee85e4fdd` completed successfully with
+`Analyze (actions)`, `Analyze (python)`, `Analyze (java-kotlin)`, and
+`Analyze (rust)`; the Rust analysis and SARIF/results upload steps also
+succeeded. No competing checked-in advanced-setup workflow was introduced.
 
-GitHub default setup remains the single CodeQL authority. Do not add a competing advanced-setup workflow merely to obtain Rust coverage.
+Current `main@c2779aff0b5917b9b40c9bb812ffd334423484ef` continues to emit the
+same four successful managed analyses in run `36115060879`. GitHub default
+setup remains the single CodeQL authority, and the administrative language
+selection remains a manual-readback control.
 
 ## PASS — existing dependency and repository governance
 
@@ -55,13 +75,26 @@ Dependency Review is already a required protected-main context and the public De
 
 No second taxonomy, ruleset, or release authority is introduced.
 
-## Exit criteria
+## Closure evidence
 
-- exact final PR HEAD passes current required contexts;
-- actionlint and zizmor pass the real workflows and reject the negative fixture;
-- static hardening tests reject scanner removal/checksum weakening;
-- authoritative CodeQL readback plus successful analysis proves the desired Actions/Python/Java-Kotlin/Rust producer set; Java/Kotlin retains its measured 5/5 source evidence and Rust is not claimed from an undocumented REST mutation;
-- merged-main required checks and recurring hardening policy remain green;
-- label backfill mutation is exercised only after dry-run review.
+The reassessment closed only after the repository and live producer evidence
+satisfied the owned gaps:
+
+- label backfill defaults to dry-run and preserves the audited trusted-base
+  mutation boundary;
+- checksum-pinned actionlint and zizmor plus the adversarial negative control
+  are exercised by the required validation path and recurring hardening audit;
+- Java/Kotlin default-setup coverage was measured over all 5 maintained Java
+  benchmark files;
+- #123 closed the Rust residual with managed `Analyze (rust)` and successful
+  analysis/SARIF/results upload;
+- #104 recorded successful current-main hardening/policy evidence before
+  completion;
+- no second CodeQL authority, taxonomy, ruleset, or release authority was
+  introduced.
+
+Later policy changes, including the required `failure-triage` context, are
+governed by current machine policy/live ruleset rather than retroactively
+rewriting this dated assessment.
 
 `UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain FAIL for claimed controls.
