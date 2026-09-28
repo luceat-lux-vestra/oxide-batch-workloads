@@ -134,7 +134,9 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         rationale = control.get("rationale", "")
         self.assertIn("Desired live default-setup coverage", rationale)
         self.assertIn("5/5 Java files", rationale)
-        self.assertIn("Rust coverage is still not claimed as live", rationale)
+        self.assertIn("Hardening Reassessment #104/#123 later closed the Rust residual", rationale)
+        self.assertIn("Analyze (rust)", rationale)
+        self.assertIn("manual-readback control", rationale)
 
     def test_pvr_expected_state_is_not_contradicted_by_security_md(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "security.private_vulnerability_reporting")
