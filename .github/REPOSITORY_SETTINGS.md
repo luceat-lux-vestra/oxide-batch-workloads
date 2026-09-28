@@ -47,8 +47,8 @@ The active `Protect main` ruleset (id `21944159`) readback confirmed:
 - pull requests required and squash as the only allowed merge method;
 - review-thread resolution;
 - strict required status checks;
-- stable required contexts `dependency-review`, `supply-chain`,
-  `workloads-ci`, and `workloads-msrv`;
+- stable required contexts `dependency-review`, `failure-triage`,
+  `supply-chain`, `workloads-ci`, and `workloads-msrv`;
 - `required_approving_review_count=0` with no code-owner or last-push approval
   requirement;
 - `require_extra_approval_for_unattributed_changes=false`.
@@ -71,9 +71,10 @@ and `actions`. This is direct runtime evidence that GitHub CodeQL default setup
 is enabled for this repository even though there is intentionally no checked-in
 CodeQL workflow file.
 
-The machine policy still classifies CodeQL as `manual-readback` for future
-#38 drift auditing because the connected low-privilege surface does not expose
-the administrative default-setup setting itself. A recent dynamic run is
+The machine policy classifies CodeQL and its selected language set as
+`manual-readback` for future drift auditing because the connected
+low-privilege surface does not expose the administrative default-setup setting
+itself. A recent dynamic run is
 useful acceptance evidence, but absence of a recent run is not a reliable
 proof that the setting was disabled. #37 confirmed the admin
 `code-scanning/default-setup` state as `configured` with `actions` and
@@ -93,14 +94,19 @@ the measurement side of #120 and makes Java/Kotlin useful advisory security
 coverage for the maintained comparison harnesses. It remains non-authoritative
 for benchmark correctness.
 
-The checked-in policy still intentionally does not claim that Rust is live in
-the producer set. Current PR #121 default-setup jobs include Actions, Python,
-and Java/Kotlin but no `Analyze (rust)`. Completion therefore still requires
-an admin-capable default-setup readback, configuration/update through a
-GitHub-supported surface, and successful Rust analysis evidence.
+That residual is now closed. Hardening Reassessment #104 / #123 retained
+the supported default-setup remediation and GitHub-managed run
+`35684911979` on exact `main@93139667564c87cdcb3d1e0a8e930ffee85e4fdd`
+successfully emitted `Analyze (actions)`, `Analyze (python)`,
+`Analyze (java-kotlin)`, and `Analyze (rust)`; the Rust analysis, SARIF
+artifact upload, and final results upload all succeeded. No competing
+advanced-setup workflow was introduced.
 
-Do not add a competing advanced-setup workflow merely to make the Rust
-configuration easier to automate.
+Current `main@c2779aff0b5917b9b40c9bb812ffd334423484ef` continues to emit the
+same four successful managed analyses in CodeQL run `36115060879`.
+The configured language list remains an admin/manual-readback control; managed
+producer success is runtime evidence, not a reason to weaken that readback
+classification or add a second CodeQL authority.
 
 ## Workflow-level token posture
 

@@ -75,7 +75,7 @@ Close a native evidence-horizon milestone only when:
 
 ### P0
 - [x] CSV/flat-file -> PostgreSQL (`csv-postgres`)
-- [ ] PostgreSQL -> PostgreSQL: cursor/streaming reader, keyset/paging reader, batch insert/update/upsert, same-resource transaction/checkpoint semantics, large-data resource bounds, hard-crash/new-process restart.
+- [x] PostgreSQL -> PostgreSQL: cursor/streaming reader, keyset/paging reader, batch insert/update/upsert, same-resource transaction/checkpoint semantics, large-data resource bounds, hard-crash/new-process restart — completed for the published `0.6.0` horizon by campaign #63 / `postgres-postgres`.
 
 ### P1
 - [ ] Multi-resource files -> PostgreSQL: deterministic resource ordering/identity, restart across resource boundaries, changed-source handling.
@@ -125,6 +125,14 @@ Each campaign should cover bind/type behavior, decimals/timestamps/time zones, U
 
 Benchmarking starts only after comparable correctness/recovery passes. The detailed candidate lifecycle and current comparison classification are owned by Track D issue #13; this roadmap records the durable high-level roles.
 
+**Completed `0.6.0` evidence slice:** #51 established the fresh OxideBatch
+baseline, #73 added the raw Rust/sqlx attribution control, #79 produced the
+accepted raw-Rust/OxideBatch/raw-Java/Spring Batch comparison, and #86
+qualified JBeret as reference-only after it failed the selected durability
+comparison class. The matrix below remains a broader expansion backlog; those
+completed campaigns do not imply that every dataset/chunk/cold-warm point has
+been exercised.
+
 Comparison roles:
 1. raw Rust + direct driver — Rust runtime/driver attribution baseline;
 2. OxideBatch — framework subject under equivalent durability/verification semantics;
@@ -153,6 +161,12 @@ Raw-driver results are required before interpreting Rust-vs-Java results.
 
 ## Track E — Scalability and concurrency
 
+**Completed `0.6.0` evidence slice:** campaign #93 added the
+`postgres-local-partition` workload and completed the bounded dense
+single-host local-partition scaling/restart/cancellation baseline for the exact
+published `0.6.0` API. The checklist below remains the broader long-lived
+scalability program and is not closed by that one campaign.
+
 Only after single-worker semantics and baseline performance are trustworthy:
 - [ ] bounded-memory scaling with dataset size
 - [ ] repeated-job connection/file/task/metadata retention
@@ -168,6 +182,13 @@ Distributed campaigns must additionally validate duplicate/delayed messages, lea
 ## Track F — Scheduler and orchestrator interoperability
 
 OxideBatch remains scheduler-agnostic. Validate external scheduling through public CLI/operator/API boundaries.
+
+**Completed `0.6.0` evidence slice:** campaign #98 qualified the
+scheduler-neutral external **process launch/lifecycle** boundary using the
+existing PostgreSQL workload. It intentionally did not implement cron,
+systemd, Kubernetes CronJob, Quartz, Airflow, Temporal, or another scheduler
+product, so the product-specific integration shapes and broader contract
+checklist below remain future work.
 
 Integration shapes:
 - [ ] process-oriented scheduler: cron/systemd timer/Kubernetes CronJob/enterprise scheduler
