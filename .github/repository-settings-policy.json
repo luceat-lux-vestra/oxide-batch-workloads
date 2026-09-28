@@ -245,7 +245,7 @@
         "java-kotlin",
         "rust"
       ],
-      "rationale": "Desired live default-setup coverage for the repository's maintained GitHub Actions/Python governance code, maintained Java comparative benchmark controls, and first-class Rust workloads. Java/Kotlin coverage was measured over 5/5 maintained Java files, and Hardening Reassessment #104/#123 later closed the Rust residual with GitHub-managed default-setup run 35684911979: Analyze (actions), Analyze (python), Analyze (java-kotlin), and Analyze (rust) all succeeded, including Rust analysis/SARIF/results upload. Current main continues to emit the same four managed analyses. Keep one CodeQL authority; the selected language set remains an administration/manual-readback control and no competing advanced-setup workflow is accepted."
+      "rationale": "Desired live default-setup coverage for the repository's maintained GitHub Actions/Python governance code, maintained Java comparative benchmark controls, and first-class Rust workloads. Java/Kotlin coverage was measured over 5/5 Java files, and Hardening Reassessment #104/#123 later closed the Rust residual with GitHub-managed default-setup run 35684911979: Analyze (actions), Analyze (python), Analyze (java-kotlin), and Analyze (rust) all succeeded, including Rust analysis/SARIF/results upload. Current main continues to emit the same four managed analyses. Keep one CodeQL authority; the selected language set remains an administration/manual-readback control and no competing advanced-setup workflow is accepted."
     },
     {
       "id": "security.signed_commits",
