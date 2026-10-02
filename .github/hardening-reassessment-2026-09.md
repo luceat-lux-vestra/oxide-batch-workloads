@@ -93,8 +93,6 @@ satisfied the owned gaps:
 - no second CodeQL authority, taxonomy, ruleset, or release authority was
   introduced.
 
-Later policy changes, including the required `failure-triage` context, are
-governed by current machine policy/live ruleset rather than retroactively
-rewriting this dated assessment.
+A later machine-enforced failure declaration/classification protocol was subsequently retired. Current machine policy/live ruleset remains authoritative without retroactively rewriting this dated assessment.
 
 `UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain FAIL for claimed controls.

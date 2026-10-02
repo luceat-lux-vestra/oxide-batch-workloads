@@ -47,8 +47,8 @@ The active `Protect main` ruleset (id `21944159`) readback confirmed:
 - pull requests required and squash as the only allowed merge method;
 - review-thread resolution;
 - strict required status checks;
-- stable required contexts `dependency-review`, `failure-triage`,
-  `supply-chain`, `workloads-ci`, and `workloads-msrv`;
+- stable required contexts `dependency-review`, `supply-chain`, `workloads-ci`,
+  and `workloads-msrv`;
 - `required_approving_review_count=0` with no code-owner or last-push approval
   requirement;
 - `require_extra_approval_for_unattributed_changes=false`.
