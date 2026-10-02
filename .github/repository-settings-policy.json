@@ -186,6 +186,32 @@
       "rationale": "Confirmed 2026-09-03 via `gh api repos/.../actions/permissions`: enabled=true, allowed_actions=all, sha_pinning_required=false. Left unrestricted rather than narrowed to selected-actions: CI depends on multiple third-party actions and an allowlist migration was not validated against them during #37. Effective fork-PR risk is bounded by token/secret isolation and the pull_request_target audit above, not by this allowlist, so it is hygiene rather than the binding security control."
     },
     {
+      "id": "actions.event_policy.label_automation",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": {
+        "policy_id": 5161,
+        "enforcement": "active",
+        "workflow_path": ".github/workflows/label-automation.yml",
+        "allowed_events": [
+          "issues",
+          "pull_request_target",
+          "workflow_dispatch"
+        ]
+      },
+      "rationale": "Issue #126 established repository Actions event policy 5161 for the only retained pull_request_target consumer, label-automation.yml. GitHub's repository Actions policy readback requires Administration: write, so the low-privilege hardening audit must inventory this as manual-readback rather than claim continuous verification."
+    },
+    {
+      "id": "actions.event_policy.retired_failure_triage",
+      "classification": "required",
+      "readback": "manual-readback",
+      "expected": {
+        "policy_id": 5160,
+        "state": "absent"
+      },
+      "rationale": "Issue #126 created Actions event policy 5160 for .github/workflows/failure-triage.yml. PR #147 retired that workflow and the failure-triage merge protocol. The path-scoped policy is a separate live repository resource and must be absent after retirement; an administration-scoped readback/delete is required because ordinary repository automation cannot inspect this endpoint."
+    },
+    {
       "id": "security.dependency_graph",
       "classification": "required",
       "readback": "repository-api",
