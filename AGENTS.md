@@ -139,55 +139,32 @@ Keep PRs focused. A workload validation PR must not casually expand into framewo
 
 Preserve unrelated user changes. Prefer one writer for overlapping code areas; use subagents for bounded exploration/review rather than concurrent edits to the same files.
 
-## Failure classification before remediation
+## Failure handling before remediation
 
-A failing workload, CI shard, verifier, retained-evidence check, hardening
-audit, or other red signal is an **observation**, not a patch target. Before a
-non-trivial remediation, classify the observed failure as exactly one of:
+A failing workload, CI shard, verifier, retained-evidence check, hardening audit,
+or other red signal is an **observation**, not a patch target. Establish the
+root cause far enough to justify the owning layer before changing framework or
+workload code, tests/oracles, evidence/provenance, workflow policy, or the
+execution environment.
 
-- `implementation defect` — identify the owner explicitly as a framework
-  implementation defect or a workload implementation defect;
-- `test defect` — the workload test, harness, oracle, fixture, failure
-  injection, or assertion is wrong for the intended contract;
-- `evidence defect` — evidence capture, retention, provenance, attribution,
-  freshness, parsing, or proof construction is wrong or insufficient;
-- `workflow-policy drift` — repository workflow, validation contract,
-  hardening policy, live settings, or their assumed contract have diverged;
-- `environment failure` — runner, PostgreSQL/service dependency, toolchain,
-  registry/network, host resource, or other execution environment caused the
-  failure;
-- `UNKNOWN` — available evidence does not justify any of the five classes.
+`UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain fail-closed
+where the unresolved point is material to remediation or merge judgment. Do not
+weaken, delete, bypass, or reconfigure valid workload checks, evidence
+obligations, supply-chain controls, or hardening policy merely to obtain green.
 
-`UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` remain fail-closed.
-Classification is a proof obligation. Preserve at least:
+A deterministic/reproducible failure does not become an environment failure
+merely because a rerun later passes. Fix deterministic failures at the proven
+owning layer. Rerun a suspected transient/environment failure only when the
+available evidence makes that hypothesis credible.
 
-```text
-Observed:
-Classification:
-Basis:
-Root cause:
-Remediation:
-Proof:
-```
+If remediation changes a premise of exact-HEAD proof, invalidate the affected
+evidence and rerun the relevant targeted validation and required CI on the new
+exact final PR HEAD before merge.
 
-The `Basis` must establish the responsibility boundary and identify plausible
-alternatives that were rejected or remain unresolved. In particular, this
-repository's independent-validation boundary is not negotiable: a framework
-implementation defect must not be hidden by weakening or rewriting a workload,
-test, verifier, failure injection, dataset, or assertion. Conversely, a proven
-workload/test defect must not be pushed into the framework merely because the
-framework is the system under validation.
-
-A deterministic/reproducible failure is not reclassified as
-`environment failure` merely because a rerun passes. Do not weaken a valid
-test, evidence contract, workload contract, or hardening/review policy to
-obtain green.
-
-If remediation changes the workload implementation, test/oracle, evidence
-collector or manifest premise, consumed OxideBatch version/provenance,
-workflow/policy, or another premise of the exact-final-HEAD proof, invalidate
-the affected evidence and rerun the relevant workload gate plus required CI on
-the new exact final HEAD.
+This repository does not use a mandatory PR-body failure declaration, a
+dedicated `failure-triage` merge context, or a sticky failure-classification
+reporter. The engineering discipline above remains authoritative without those
+machine-enforced protocols.
 
 ## Strict review and definition of done
 

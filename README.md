@@ -134,18 +134,16 @@ aggregate for every registered real workload's locked dependency graph, while
 `dependency-review` remains separately required for its distinct diff-scoped
 dependency-change coverage.
 
-The live `Protect main` ruleset therefore requires these five stable contexts:
+The live `Protect main` ruleset therefore requires these four stable contexts:
 
 - `dependency-review`
-- `failure-triage`
 - `workloads-ci`
 - `workloads-msrv`
 - `supply-chain`
 
-`failure-triage` is the required unprivileged declaration gate for
-classification-before-remediation. Automatic failure classification remains a
-separate trusted default-branch reporter and does not replace this required
-pull-request context.
+Failure investigation remains a fail-closed engineering discipline, but no
+dedicated PR-body declaration, `failure-triage` status context, or sticky
+failure-classification reporter is part of merge authority.
 
 Per-workload shard job names are implementation details and are never branch
 protection contracts.
