@@ -102,8 +102,8 @@ successfully emitted `Analyze (actions)`, `Analyze (python)`,
 artifact upload, and final results upload all succeeded. No competing
 advanced-setup workflow was introduced.
 
-Current `main@c2779aff0b5917b9b40c9bb812ffd334423484ef` continues to emit the
-same four successful managed analyses in CodeQL run `36115060879`.
+Current `main@b90690210c97a29310f9f071d6663fa7f9b14200` continues to emit the
+same four successful managed analyses in CodeQL run `36952216929`.
 The configured language list remains an admin/manual-readback control; managed
 producer success is runtime evidence, not a reason to weaken that readback
 classification or add a second CodeQL authority.
@@ -181,6 +181,38 @@ for issues in scope of this repository and to route OxideBatch framework
 vulnerabilities to the framework repository's Security Advisories. This now
 reflects the confirmed-enabled PVR state above rather than a conditional
 "when enabled" hedge.
+
+## Actions event-policy readback after failure-triage retirement
+
+Issue #126 established two path-scoped repository Actions event policies before
+GitHub's public-repository `pull_request_target` default enforcement:
+
+- policy `5160`: `.github/workflows/failure-triage.yml` ->
+  `pull_request_target`;
+- policy `5161`: `.github/workflows/label-automation.yml` ->
+  `issues`, `pull_request_target`, `workflow_dispatch`.
+
+PR #147 subsequently retired `failure-triage.yml` and the machine-enforced
+failure-declaration protocol. The accepted live settings state is therefore now:
+
+- policy `5161` remains active for the audited, trusted-base-only label
+  automation workflow;
+- policy `5160` is absent. A path-scoped exception must not outlive the
+  workflow and governance contract that justified it.
+
+Repository Actions policy resources are independent of workflow files and their
+REST read/update/delete surface requires repository Administration authority.
+The ordinary hardening audit intentionally does not carry that credential.
+Both expectations are therefore explicit `manual-readback` controls in
+`repository-settings-policy.json`, and the policy contract test fails if
+either expectation disappears from the source of truth.
+
+The 2026-10-03 final hardening sweep could not authoritatively read or delete
+policy `5160` through the connected low-privilege repository integration.
+Until an administration-scoped readback confirms `5160` absent (deleting it
+if still present) and confirms `5161` still matches its exact path/event
+contract, the checked-in policy is reconciled but that live administration
+surface remains an explicit manual-readback obligation.
 
 ## #38 boundary
 

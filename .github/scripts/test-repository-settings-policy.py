@@ -14,6 +14,8 @@ ACCEPTANCE_CRITICAL_SECURITY_CONTROL_IDS = {
     "actions.default_workflow_permissions",
     "actions.can_approve_pull_request_reviews",
     "actions.fork_pull_request_policy",
+    "actions.event_policy.label_automation",
+    "actions.event_policy.retired_failure_triage",
     "security.dependency_graph",
     "security.dependabot_alerts",
     "security.dependabot_security_updates",
@@ -115,6 +117,31 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         ids = {c["id"] for c in self.policy["controls"]}
         missing = ACCEPTANCE_CRITICAL_SECURITY_CONTROL_IDS - ids
         self.assertFalse(missing, f"acceptance-critical controls missing from policy: {missing}")
+
+    def test_actions_event_policy_surface_is_explicit_and_retirement_is_fail_closed(self) -> None:
+        controls = {c["id"]: c for c in self.policy["controls"]}
+
+        label_policy = controls["actions.event_policy.label_automation"]
+        self.assertEqual(label_policy["readback"], "manual-readback")
+        self.assertEqual(label_policy["classification"], "required")
+        self.assertEqual(
+            label_policy["expected"],
+            {
+                "policy_id": 5161,
+                "enforcement": "active",
+                "workflow_path": ".github/workflows/label-automation.yml",
+                "allowed_events": ["issues", "pull_request_target", "workflow_dispatch"],
+            },
+        )
+        self.assertIn("#126", label_policy.get("rationale", ""))
+        self.assertIn("Administration: write", label_policy.get("rationale", ""))
+
+        retired_policy = controls["actions.event_policy.retired_failure_triage"]
+        self.assertEqual(retired_policy["readback"], "manual-readback")
+        self.assertEqual(retired_policy["classification"], "required")
+        self.assertEqual(retired_policy["expected"], {"policy_id": 5160, "state": "absent"})
+        self.assertIn("#147", retired_policy.get("rationale", ""))
+        self.assertIn("must be absent", retired_policy.get("rationale", ""))
 
     def test_codeql_expected_state_is_backed_by_live_evidence(self) -> None:
         control = next(c for c in self.policy["controls"] if c["id"] == "security.code_scanning")
