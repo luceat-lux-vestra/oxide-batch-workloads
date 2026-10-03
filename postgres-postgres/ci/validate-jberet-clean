@@ -92,8 +92,8 @@ for required in \
   'org.jboss.marshalling:jboss-marshalling:jar:2.3.0' \
   'org.jboss.weld:weld-core-impl:jar:5.1.7.Final' \
   'org.jboss.weld.se:weld-se-core:jar:5.1.7.Final' \
-  'org.wildfly.security:wildfly-elytron-security-manager:jar:2.9.2.Final' \
-  'org.wildfly.security:wildfly-elytron-security-manager-action:jar:2.9.2.Final' \
+  'org.wildfly.security:wildfly-elytron-security-manager:jar:2.9.4.Final' \
+  'org.wildfly.security:wildfly-elytron-security-manager-action:jar:2.9.4.Final' \
   'org.postgresql:postgresql:jar:42.7.13'; do
   if ! grep -qF "$required" "$dependency_tree"; then
     echo "::error::JBeret resolved graph is missing exact required coordinate: $required" >&2

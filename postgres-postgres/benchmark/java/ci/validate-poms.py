@@ -48,8 +48,8 @@ EXPECTED_JBERET_DEPENDENCIES = [
     ("org.jboss.marshalling", "jboss-marshalling", "2.3.0"),
     ("org.jboss.weld", "weld-core-impl", "5.1.7.Final"),
     ("org.jboss.weld.se", "weld-se-core", "5.1.7.Final"),
-    ("org.wildfly.security", "wildfly-elytron-security-manager", "2.9.2.Final"),
-    ("org.wildfly.security", "wildfly-elytron-security-manager-action", "2.9.2.Final"),
+    ("org.wildfly.security", "wildfly-elytron-security-manager", "2.9.4.Final"),
+    ("org.wildfly.security", "wildfly-elytron-security-manager-action", "2.9.4.Final"),
     ("org.postgresql", "postgresql", "42.7.13"),
 ]
 
