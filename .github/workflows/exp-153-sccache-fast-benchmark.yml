@@ -1,0 +1,390 @@
+name: Issue 153 sccache Fast benchmark
+
+on:
+  push:
+    branches:
+      - exp/153-sccache-fast-benchmark
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-153-sccache-fast-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PRODUCT_BASE_SHA: acfb3fd30865594a203bb9d55cb8a4d7abc969f4
+  SCCACHE_CACHE_SIZE: 768M
+  SCCACHE_VERSION: "0.18.0"
+  SCCACHE_SHA256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+
+jobs:
+  prime:
+    name: prime exact compiler cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      cache_key: ${{ steps.cache-id.outputs.key }}
+    steps:
+      - name: Check out experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify product source parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${PRODUCT_BASE_SHA}^{commit}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" HEAD -- csv-postgres
+          git diff --quiet "${PRODUCT_BASE_SHA}" HEAD -- workloads.json
+          echo "experiment source parity: exact csv-postgres/workload registry content from ${PRODUCT_BASE_SHA}"
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: stable
+
+      - name: Cache representative workload dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: csv-postgres
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v${SCCACHE_VERSION}"
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"             --output "$archive"
+          echo "${SCCACHE_SHA256}  $archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Resolve run-scoped compiler cache identity
+        id: cache-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock_hash="$(sha256sum csv-postgres/Cargo.lock | awk '{print $1}')"
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          key="workloads-153-fast-sccache-v1-${lock_hash}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "compiler cache key: $key"
+
+      - name: Prime exact Fast compile surface
+        shell: bash
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-153-sccache
+          RUSTC_WRAPPER: sccache
+          CARGO_INCREMENTAL: "0"
+        run: |
+          set -euo pipefail
+          rm -rf csv-postgres/target "$SCCACHE_DIR"
+          mkdir -p benchmark-evidence/153/prime
+          sccache --zero-stats
+          start_ns="$(date +%s%N)"
+          (
+            cd csv-postgres
+            cargo check --locked --all-targets
+          )
+          end_ns="$(date +%s%N)"
+          sccache --show-stats --stats-format=json | tee benchmark-evidence/153/prime/stats.json
+          python3 - "$start_ns" "$end_ns" benchmark-evidence/153/prime/stats.json "$SCCACHE_DIR" > benchmark-evidence/153/prime/summary.json <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          start_ns, end_ns, stats_path, cache_dir = sys.argv[1:]
+          stats = json.load(open(stats_path, encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+          successful_writes = stats.get("cache_writes", 0)
+          cache_bytes = int(subprocess.check_output(["du", "-sb", cache_dir], text=True).split()[0])
+          result = {
+              "product_base_sha": os.environ["PRODUCT_BASE_SHA"],
+              "experiment_head_sha": os.environ["GITHUB_SHA"],
+              "prime_wall_ms": (int(end_ns) - int(start_ns)) / 1_000_000,
+              "rust_hits": rust_hits,
+              "rust_misses": rust_misses,
+              "cache_read_errors": read_errors,
+              "cache_write_errors": write_errors,
+              "successful_cache_writes": successful_writes,
+              "compiler_cache_bytes": cache_bytes,
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if read_errors != 0 or write_errors != 0:
+              raise SystemExit("prime recorded cache I/O errors")
+          if successful_writes <= 0:
+              raise SystemExit("prime produced no compiler-cache writes")
+          PY
+          cat benchmark-evidence/153/prime/summary.json
+
+      - name: Save run-scoped compiler cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-153-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Retain prime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-153-sccache-prime
+          path: benchmark-evidence/153/prime
+          if-no-files-found: error
+          retention-days: 30
+
+  pair:
+    name: pair ${{ matrix.replicate }} / ${{ matrix.order }}
+    needs: prime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - replicate: 1
+            order: AB
+          - replicate: 2
+            order: BA
+          - replicate: 3
+            order: AB
+          - replicate: 4
+            order: BA
+    env:
+      REPLICATE: ${{ matrix.replicate }}
+      ORDER: ${{ matrix.order }}
+    steps:
+      - name: Check out experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify product source parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${PRODUCT_BASE_SHA}^{commit}"
+          git diff --quiet "${PRODUCT_BASE_SHA}" HEAD -- csv-postgres
+          git diff --quiet "${PRODUCT_BASE_SHA}" HEAD -- workloads.json
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: stable
+
+      - name: Start common rust-cache setup timer
+        shell: bash
+        run: echo "RUST_CACHE_START_NS=$(date +%s%N)" >> "$GITHUB_ENV"
+
+      - name: Cache representative workload
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: csv-postgres
+
+      - name: Finish common rust-cache setup timer
+        shell: bash
+        run: |
+          set -euo pipefail
+          end_ns="$(date +%s%N)"
+          python3 - "$RUST_CACHE_START_NS" "$end_ns" >> "$GITHUB_ENV" <<'PY'
+          import sys
+          start_ns, end_ns = map(int, sys.argv[1:])
+          print(f"RUST_CACHE_SETUP_MS={(end_ns-start_ns)/1_000_000}")
+          PY
+
+      - name: Start candidate compiler-cache setup timer
+        shell: bash
+        run: echo "SCCACHE_SETUP_START_NS=$(date +%s%N)" >> "$GITHUB_ENV"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v${SCCACHE_VERSION}"
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"             --output "$archive"
+          echo "${SCCACHE_SHA256}  $archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore exact run-scoped compiler cache
+        id: restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-153-sccache
+          key: ${{ needs.prime.outputs.cache_key }}
+
+      - name: Verify exact restore and finish candidate setup timer
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.restore-sccache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = "true"
+          end_ns="$(date +%s%N)"
+          python3 - "$SCCACHE_SETUP_START_NS" "$end_ns" >> "$GITHUB_ENV" <<'PY'
+          import sys
+          start_ns, end_ns = map(int, sys.argv[1:])
+          print(f"SCCACHE_SETUP_MS={(end_ns-start_ns)/1_000_000}")
+          PY
+          echo "exact run-scoped compiler cache hit: $CACHE_HIT"
+
+      - name: Record environment identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="benchmark-evidence/153/pair-${REPLICATE}"
+          mkdir -p "$out"
+          {
+            echo "product_base_sha=${PRODUCT_BASE_SHA}"
+            echo "experiment_head_sha=${GITHUB_SHA}"
+            echo "replicate=${REPLICATE}"
+            echo "order=${ORDER}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "image_os=${ImageOS:-unknown}"
+            echo "image_version=${ImageVersion:-unknown}"
+            rustc --version --verbose
+            cargo --version --verbose
+            sccache --version
+            echo "RUSTFLAGS=${RUSTFLAGS-}"
+            echo "CARGO_INCREMENTAL=${CARGO_INCREMENTAL-}"
+          } > "$out/environment.txt"
+          lscpu > "$out/lscpu.txt"
+
+      - name: Run paired AB/BA crossover
+        shell: bash
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-153-sccache
+          SCCACHE_LOCAL_RW_MODE: READ_ONLY
+        run: |
+          set -euo pipefail
+          out="benchmark-evidence/153/pair-${REPLICATE}"
+          mkdir -p "$out"
+
+          run_a() {
+            rm -rf csv-postgres/target
+            local start_ns end_ns
+            start_ns="$(date +%s%N)"
+            (
+              cd csv-postgres
+              env -u RUSTC_WRAPPER -u SCCACHE_LOCAL_RW_MODE -u SCCACHE_DIR                 cargo check --locked --all-targets
+            )
+            end_ns="$(date +%s%N)"
+            python3 - "$start_ns" "$end_ns" > "$out/a-time.json" <<'PY'
+          import json, sys
+          start_ns, end_ns = map(int, sys.argv[1:])
+          print(json.dumps({"command_wall_ms": (end_ns-start_ns)/1_000_000}, indent=2))
+          PY
+          }
+
+          run_b() {
+            rm -rf csv-postgres/target
+            sccache --zero-stats
+            local start_ns end_ns
+            start_ns="$(date +%s%N)"
+            (
+              cd csv-postgres
+              RUSTC_WRAPPER=sccache CARGO_INCREMENTAL=0                 cargo check --locked --all-targets
+            )
+            end_ns="$(date +%s%N)"
+            python3 - "$start_ns" "$end_ns" > "$out/b-time.json" <<'PY'
+          import json, sys
+          start_ns, end_ns = map(int, sys.argv[1:])
+          print(json.dumps({"command_wall_ms": (end_ns-start_ns)/1_000_000}, indent=2))
+          PY
+            sccache --show-stats --stats-format=json | tee "$out/b-stats.json"
+          }
+
+          case "$ORDER" in
+            AB) run_a; run_b ;;
+            BA) run_b; run_a ;;
+            *) echo "::error::unknown crossover order: $ORDER" >&2; exit 1 ;;
+          esac
+
+      - name: Summarize admitted pair
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.restore-sccache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          out="benchmark-evidence/153/pair-${REPLICATE}"
+          python3 -             "$out/a-time.json"             "$out/b-time.json"             "$out/b-stats.json"             "$RUST_CACHE_SETUP_MS"             "$SCCACHE_SETUP_MS"             "$SCCACHE_DIR"             > "$out/summary.json" <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          a_path, b_path, stats_path, rust_cache_setup, sccache_setup, cache_dir = sys.argv[1:]
+          a_ms = json.load(open(a_path, encoding="utf-8"))["command_wall_ms"]
+          b_ms = json.load(open(b_path, encoding="utf-8"))["command_wall_ms"]
+          stats = json.load(open(stats_path, encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+          successful_writes = stats.get("cache_writes", 0)
+          rust_cache_setup_ms = float(rust_cache_setup)
+          sccache_setup_ms = float(sccache_setup)
+          cache_bytes = int(subprocess.check_output(["du", "-sb", cache_dir], text=True).split()[0])
+
+          result = {
+              "product_base_sha": os.environ["PRODUCT_BASE_SHA"],
+              "experiment_head_sha": os.environ["GITHUB_SHA"],
+              "replicate": int(os.environ["REPLICATE"]),
+              "order": os.environ["ORDER"],
+              "compiler_cache_exact_hit": os.environ["CACHE_HIT"] == "true",
+              "common_rust_cache_setup_ms": rust_cache_setup_ms,
+              "a_command_ms": a_ms,
+              "b_command_ms": b_ms,
+              "b_sccache_install_restore_ms": sccache_setup_ms,
+              "a_setup_inclusive_ms": rust_cache_setup_ms + a_ms,
+              "b_setup_inclusive_ms": rust_cache_setup_ms + sccache_setup_ms + b_ms,
+              "rust_hits": rust_hits,
+              "rust_misses": rust_misses,
+              "cache_read_errors": read_errors,
+              "cache_write_errors": write_errors,
+              "successful_cache_writes": successful_writes,
+              "compiler_cache_bytes": cache_bytes,
+              "correctness": "success",
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+
+          if not result["compiler_cache_exact_hit"]:
+              raise SystemExit("candidate did not restore the exact prime cache")
+          if read_errors != 0:
+              raise SystemExit("candidate recorded compiler-cache read errors")
+          if successful_writes != 0:
+              raise SystemExit("restore-only candidate wrote compiler-cache entries")
+          if rust_hits + rust_misses <= 0:
+              raise SystemExit("candidate produced no Rust compiler-cache requests")
+          PY
+          cat "$out/summary.json"
+
+      - name: Stop compiler cache server
+        if: always()
+        shell: bash
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-153-sccache
+          SCCACHE_LOCAL_RW_MODE: READ_ONLY
+        run: sccache --stop-server || true
+
+      - name: Retain paired evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-153-pair-${{ matrix.replicate }}-${{ matrix.order }}
+          path: benchmark-evidence/153/pair-${{ matrix.replicate }}
+          if-no-files-found: error
+          retention-days: 30
