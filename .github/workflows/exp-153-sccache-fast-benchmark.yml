@@ -317,6 +317,7 @@ jobs:
         shell: bash
         env:
           CACHE_HIT: ${{ steps.restore-sccache.outputs.cache-hit }}
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-153-sccache
         run: |
           set -euo pipefail
           out="benchmark-evidence/153/pair-${REPLICATE}"
