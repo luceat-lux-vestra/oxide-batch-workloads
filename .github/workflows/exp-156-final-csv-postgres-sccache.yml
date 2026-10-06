@@ -514,11 +514,11 @@ jobs:
         id: restore-sccache-c
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: \${{ runner.temp }}/workloads-156-sccache
-          key: \${{ needs.prime.outputs.cache_key }}
+          path: ${{ runner.temp }}/workloads-156-sccache
+          key: ${{ needs.prime.outputs.cache_key }}
 
       - name: Install verified sccache 0.18.0
-        if: \${{ steps.restore-sccache-c.outputs.cache-hit == 'true' }}
+        if: ${{ steps.restore-sccache-c.outputs.cache-hit == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -536,7 +536,7 @@ jobs:
       - name: Verify exact restore and finish compiler-cache setup timer
         shell: bash
         env:
-          CACHE_HIT: \${{ steps.restore-sccache-c.outputs.cache-hit }}
+          CACHE_HIT: ${{ steps.restore-sccache-c.outputs.cache-hit }}
         run: |
           set -euo pipefail
           test "$CACHE_HIT" = "true"
@@ -561,7 +561,7 @@ jobs:
       - name: Run C full Final contract
         shell: bash
         env:
-          SCCACHE_DIR: \${{ runner.temp }}/workloads-156-sccache
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-156-sccache
           SCCACHE_LOCAL_RW_MODE: READ_ONLY
           RUSTC_WRAPPER: sccache
         run: |
@@ -573,7 +573,7 @@ jobs:
           start_ns="$(date +%s%N)"
           (
             cd csv-postgres
-            PS4='+\${EPOCHREALTIME} ' bash -x ./ci/validate ci
+            PS4='+${EPOCHREALTIME} ' bash -x ./ci/validate ci
           ) 2>&1 | tee "$out/contract.log"
           end_ns="$(date +%s%N)"
           sccache --show-stats --stats-format=json | tee "$out/stats.json"
@@ -618,7 +618,7 @@ jobs:
         if: always()
         shell: bash
         env:
-          SCCACHE_DIR: \${{ runner.temp }}/workloads-156-sccache
+          SCCACHE_DIR: ${{ runner.temp }}/workloads-156-sccache
           SCCACHE_LOCAL_RW_MODE: READ_ONLY
         run: sccache --stop-server || true
 
