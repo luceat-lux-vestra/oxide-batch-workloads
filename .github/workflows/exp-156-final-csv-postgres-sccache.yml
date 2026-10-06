@@ -449,3 +449,184 @@ jobs:
           path: benchmark-evidence/156/pair-${{ matrix.replicate }}
           if-no-files-found: error
           retention-days: 30
+
+  c-smoke:
+    name: C smoke / dependency-only rust-cache + sccache
+    needs: prime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify product source parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$PRODUCT_BASE_SHA^{commit}"
+          git diff --quiet "$PRODUCT_BASE_SHA" HEAD -- csv-postgres
+          git diff --quiet "$PRODUCT_BASE_SHA" HEAD -- workloads.json
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Start dependency-cache setup timer
+        shell: bash
+        run: echo "RUST_CACHE_START_NS=$(date +%s%N)" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo dependencies only
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: csv-postgres
+          cache-targets: false
+
+      - name: Verify dependency-only cache leaves no target seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          end_ns="$(date +%s%N)"
+          python3 - "$RUST_CACHE_START_NS" "$end_ns" >> "$GITHUB_ENV" <<'PY'
+          import sys
+          a, b = map(int, sys.argv[1:])
+          print(f"RUST_CACHE_SETUP_MS={(b-a)/1_000_000}")
+          PY
+          if [ -d csv-postgres/target ]; then
+            target_bytes="$(du -sb csv-postgres/target | awk '{print $1}')"
+          else
+            target_bytes=0
+          fi
+          echo "TARGET_SEED_BYTES=$target_bytes" >> "$GITHUB_ENV"
+          test "$target_bytes" = "0"
+          echo "dependency-only rust-cache target seed bytes: $target_bytes"
+
+      - name: Start compiler-cache setup timer
+        shell: bash
+        run: echo "SCCACHE_SETUP_START_NS=$(date +%s%N)" >> "$GITHUB_ENV"
+
+      - name: Restore exact Final compiler cache
+        id: restore-sccache-c
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: \${{ runner.temp }}/workloads-156-sccache
+          key: \${{ needs.prime.outputs.cache_key }}
+
+      - name: Install verified sccache 0.18.0
+        if: \${{ steps.restore-sccache-c.outputs.cache-hit == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+          echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Verify exact restore and finish compiler-cache setup timer
+        shell: bash
+        env:
+          CACHE_HIT: \${{ steps.restore-sccache-c.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = "true"
+          end_ns="$(date +%s%N)"
+          python3 - "$SCCACHE_SETUP_START_NS" "$end_ns" >> "$GITHUB_ENV" <<'PY'
+          import sys
+          a, b = map(int, sys.argv[1:])
+          print(f"SCCACHE_SETUP_MS={(b-a)/1_000_000}")
+          PY
+
+      - name: Apply identical branch-like source mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> csv-postgres/src/main.rs <<'RS'
+
+          #[allow(dead_code)]
+          const __ISSUE_156_FINAL_CACHE_BENCHMARK_PRIVATE_ITEM: usize = 156;
+          RS
+          git diff --check
+
+      - name: Run C full Final contract
+        shell: bash
+        env:
+          SCCACHE_DIR: \${{ runner.temp }}/workloads-156-sccache
+          SCCACHE_LOCAL_RW_MODE: READ_ONLY
+          RUSTC_WRAPPER: sccache
+        run: |
+          set -euo pipefail
+          out="benchmark-evidence/156/c-smoke"
+          mkdir -p "$out"
+          rm -rf csv-postgres/target
+          sccache --zero-stats
+          start_ns="$(date +%s%N)"
+          (
+            cd csv-postgres
+            PS4='+\${EPOCHREALTIME} ' bash -x ./ci/validate ci
+          ) 2>&1 | tee "$out/contract.log"
+          end_ns="$(date +%s%N)"
+          sccache --show-stats --stats-format=json | tee "$out/stats.json"
+          python3 - "$start_ns" "$end_ns" "$out/stats.json" "$RUST_CACHE_SETUP_MS" "$SCCACHE_SETUP_MS" "$TARGET_SEED_BYTES" > "$out/summary.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          start_ns, end_ns, stats_path, rust_setup, sccache_setup, target_seed = sys.argv[1:]
+          stats = json.load(open(stats_path, encoding="utf-8")).get("stats", {})
+          hits = stats.get("cache_hits", {}).get("counts", {})
+          misses = stats.get("cache_misses", {}).get("counts", {})
+          result = {
+              "product_base_sha": os.environ["PRODUCT_BASE_SHA"],
+              "experiment_head_sha": os.environ["GITHUB_SHA"],
+              "topology": "C",
+              "cache_targets": False,
+              "target_seed_bytes": int(target_seed),
+              "rust_cache_setup_ms": float(rust_setup),
+              "sccache_setup_ms": float(sccache_setup),
+              "contract_wall_ms": (int(end_ns) - int(start_ns)) / 1_000_000,
+              "rust_hits": hits.get("Rust", 0),
+              "rust_misses": misses.get("Rust", 0),
+              "cache_read_errors": stats.get("cache_read_errors", 0),
+              "cache_write_errors": stats.get("cache_write_errors", 0),
+              "successful_cache_writes": stats.get("cache_writes", 0),
+              "correctness": "success",
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if result["target_seed_bytes"] != 0:
+              raise SystemExit("dependency-only rust-cache unexpectedly restored target data")
+          if result["cache_read_errors"] != 0:
+              raise SystemExit("C smoke recorded cache read errors")
+          if result["successful_cache_writes"] != 0:
+              raise SystemExit("C smoke wrote compiler-cache entries")
+          if result["rust_hits"] <= 0:
+              raise SystemExit("C smoke produced no useful Rust compiler-cache hits")
+          PY
+          cat "$out/summary.json"
+
+      - name: Stop compiler-cache server
+        if: always()
+        shell: bash
+        env:
+          SCCACHE_DIR: \${{ runner.temp }}/workloads-156-sccache
+          SCCACHE_LOCAL_RW_MODE: READ_ONLY
+        run: sccache --stop-server || true
+
+      - name: Retain C smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-156-c-smoke
+          path: benchmark-evidence/156/c-smoke
+          if-no-files-found: error
+          retention-days: 30
+
