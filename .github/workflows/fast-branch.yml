@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_VERSION: "0.18.0"
+  SCCACHE_CACHE_SIZE: 768M
+  COMPILE_SURFACE: csv-postgres-cargo-check-locked-all-targets-v1
+
 concurrency:
   group: fast-branch-${{ github.ref }}
   cancel-in-progress: true
@@ -23,6 +30,37 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve exact protected trusted base
+        id: trusted-base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          repo_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY")"
+          jq -e             --arg repo "$GITHUB_REPOSITORY"             --arg branch "$DEFAULT_BRANCH"             '.full_name == $repo and .default_branch == $branch'             <<<"$repo_json" >/dev/null
+          base_sha="$(gh api -H 'Accept: application/vnd.github+json'             "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "trusted protected-main SHA: $base_sha"
+
+      - name: Check out exact trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.trusted-base.outputs.base_sha }}
+          path: .fast-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify trusted-base checkout
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.trusted-base.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .fast-trusted-base rev-parse HEAD)" = "$BASE_SHA"
+
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # latest stable snapshot
         with:
@@ -33,12 +71,109 @@ jobs:
         with:
           workspaces: csv-postgres
 
+      - name: Resolve trusted compiler-cache identity
+        id: cache-id
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.trusted-base.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          lock_hash="$(sha256sum .fast-trusted-base/csv-postgres/Cargo.lock | awk '{print $1}')"
+          env_hash="$(
+            {
+              rustc -Vv
+              printf 'runner_os=%s\n' "$RUNNER_OS"
+              printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+              printf 'cargo_term_color=%s\n' "$CARGO_TERM_COLOR"
+              printf 'cargo_incremental=%s\n' "$CARGO_INCREMENTAL"
+              printf 'sccache_version=%s\n' "$SCCACHE_VERSION"
+              printf 'compile_surface=%s\n' "$COMPILE_SURFACE"
+            } | sha256sum | awk '{print $1}'
+          )"
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          key="workloads-fast-sccache-v1-linux-$env_hash-$lock_hash-$BASE_SHA"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "trusted compiler-cache key: $key"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"             --output "$archive"
+          echo "45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89  $archive"             | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore exact protected-main compiler cache
+        id: restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-fast-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Enable restore-only sccache on exact hit
+        id: enable-sccache
+        if: ${{ steps.restore-sccache.outputs.cache-hit == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "SCCACHE_DIR=$RUNNER_TEMP/workloads-fast-sccache"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+          } >> "$GITHUB_ENV"
+          echo "exact protected-main compiler cache hit: true"
+
+      - name: Compiler-cache miss fallback
+        if: ${{ steps.restore-sccache.outputs.cache-hit != 'true' }}
+        run: echo "No exact protected-main compiler cache; continuing with the canonical uncached Fast path."
+
       - name: Test fail-closed workload registry validation
         run: python3 .github/scripts/test-workload-registry.py
 
       - name: Validate canonical workload registry
         run: python3 .github/scripts/validate-workload-registry.py
 
+      - name: Zero compiler-cache stats
+        if: ${{ steps.enable-sccache.outcome == 'success' }}
+        run: sccache --zero-stats
+
       - name: Compile representative real workload
         working-directory: csv-postgres
         run: cargo check --locked --all-targets
+
+      - name: Verify restore-only compiler-cache health
+        if: ${{ always() && steps.enable-sccache.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stats="$RUNNER_TEMP/workloads-fast-sccache-stats.json"
+          sccache --show-stats --stats-format=json | tee "$stats"
+          python3 - "$stats" <<'PY'
+          import json
+          import sys
+
+          stats = json.load(open(sys.argv[1], encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+          successful_writes = stats.get("cache_writes", 0)
+
+          print(
+              f"consumer rust_hits={rust_hits} rust_misses={rust_misses} "
+              f"read_errors={read_errors} write_errors={write_errors} "
+              f"successful_writes={successful_writes}"
+          )
+          if read_errors != 0 or write_errors != 0:
+              raise SystemExit("restore-only compiler-cache consumer recorded cache I/O errors")
+          if successful_writes != 0:
+              raise SystemExit("restore-only compiler-cache consumer wrote cache entries")
+          PY
