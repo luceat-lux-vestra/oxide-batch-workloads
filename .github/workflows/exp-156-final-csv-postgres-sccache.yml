@@ -153,6 +153,7 @@ jobs:
           retention-days: 30
 
   pair:
+    if: ${{ false }} # Stage-C smoke turn: avoid rerunning the expensive 4-pair B benchmark.
     name: pair ${{ matrix.replicate }} / ${{ matrix.order }}
     needs: prime
     runs-on: ubuntu-24.04
