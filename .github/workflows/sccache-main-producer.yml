@@ -1,0 +1,221 @@
+name: Fast compiler cache producer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-sccache-producer-main
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_VERSION: "0.18.0"
+  SCCACHE_CACHE_SIZE: 768M
+  COMPILE_SURFACE: csv-postgres-cargo-check-locked-all-targets-v1
+
+jobs:
+  produce:
+    name: fast-sccache-producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify protected-main authority
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git log -1 --check
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo dependencies only
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: csv-postgres
+          cache-targets: false
+
+      - name: Resolve bounded compiler-cache identity
+        id: cache-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock_hash="$(sha256sum csv-postgres/Cargo.lock | awk '{print $1}')"
+          env_hash="$(
+            {
+              rustc -Vv
+              printf 'runner_os=%s\n' "$RUNNER_OS"
+              printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+              printf 'cargo_term_color=%s\n' "$CARGO_TERM_COLOR"
+              printf 'cargo_incremental=%s\n' "$CARGO_INCREMENTAL"
+              printf 'sccache_version=%s\n' "$SCCACHE_VERSION"
+              printf 'compile_surface=%s\n' "$COMPILE_SURFACE"
+            } | sha256sum | awk '{print $1}'
+          )"
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          root_prefix="workloads-fast-sccache-v1-linux-"
+          family="$root_prefix$env_hash"
+          lock_prefix="$family-$lock_hash-"
+          key="$lock_prefix$GITHUB_SHA"
+
+          {
+            echo "root_prefix=$root_prefix"
+            echo "family=$family"
+            echo "lock_prefix=$lock_prefix"
+            echo "key=$key"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "protected-main compiler-cache key: $key"
+
+      - name: Restore newest compatible protected-main compiler cache
+        id: restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-fast-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.cache-id.outputs.lock_prefix }}
+            ${{ steps.cache-id.outputs.family }}-
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"             --output "$archive"
+          echo "45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89  $archive"             | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Enable writable protected-main sccache
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.restore-sccache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          {
+            echo "SCCACHE_DIR=$RUNNER_TEMP/workloads-fast-sccache"
+            echo "RUSTC_WRAPPER=sccache"
+          } >> "$GITHUB_ENV"
+          echo "exact protected-main cache hit: $CACHE_HIT"
+
+      - name: Prime exact Fast compile surface
+        working-directory: csv-postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          sccache --zero-stats
+          cargo check --locked --all-targets
+
+      - name: Verify compiler-cache health
+        shell: bash
+        run: |
+          set -euo pipefail
+          stats="$RUNNER_TEMP/workloads-fast-sccache-stats.json"
+          sccache --show-stats --stats-format=json | tee "$stats"
+          python3 - "$stats" <<'PY'
+          import json
+          import sys
+
+          stats = json.load(open(sys.argv[1], encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+          successful_writes = stats.get("cache_writes", 0)
+
+          print(
+              f"producer rust_hits={rust_hits} rust_misses={rust_misses} "
+              f"read_errors={read_errors} write_errors={write_errors} "
+              f"successful_writes={successful_writes}"
+          )
+          if read_errors != 0 or write_errors != 0:
+              raise SystemExit("protected-main compiler-cache producer recorded cache I/O errors")
+          if rust_hits + rust_misses <= 0:
+              raise SystemExit("protected-main compiler-cache producer observed no Rust cacheable requests")
+          PY
+
+      - name: Save exact protected-main compiler cache
+        id: save-sccache
+        if: ${{ steps.restore-sccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-fast-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Keep only current and one previous Fast compiler cache
+        if: ${{ steps.restore-sccache.outputs.cache-hit != 'true' && steps.save-sccache.outcome == 'success' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_KEY: ${{ steps.cache-id.outputs.key }}
+          ROOT_PREFIX: ${{ steps.cache-id.outputs.root_prefix }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          ref="refs/heads/$DEFAULT_BRANCH"
+
+          list_caches() {
+            gh api --paginate --slurp -H 'Accept: application/vnd.github+json'               "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100"
+          }
+
+          caches="$(list_caches)"
+          mapfile -t delete_ids < <(
+            jq -r               --arg prefix "$ROOT_PREFIX"               --arg current "$CURRENT_KEY"               --arg ref "$ref" '
+                [
+                  .[].actions_caches[]
+                  | select(
+                      .ref == $ref
+                      and (.key | startswith($prefix))
+                      and .key != $current
+                    )
+                ]
+                | sort_by(.created_at)
+                | reverse
+                | .[1:][]
+                | .id
+              ' <<<"$caches"
+          )
+
+          for cache_id in "${delete_ids[@]}"; do
+            gh api --method DELETE               -H 'Accept: application/vnd.github+json'               "repos/$GITHUB_REPOSITORY/actions/caches/$cache_id"
+          done
+
+          remaining="$(
+            list_caches | jq               --arg prefix "$ROOT_PREFIX"               --arg ref "$ref" '
+                [
+                  .[].actions_caches[]
+                  | select(.ref == $ref and (.key | startswith($prefix)))
+                ]
+                | length
+              '
+          )"
+          test "$remaining" -le 2
+          echo "retained $remaining protected-main Fast compiler cache entries"
