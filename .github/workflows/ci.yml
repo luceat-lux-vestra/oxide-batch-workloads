@@ -217,24 +217,6 @@ jobs:
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "trusted protected-main SHA: $base_sha"
 
-      - name: Check out exact trusted base for Final compiler cache
-        if: matrix.name == 'csv-postgres'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.final-trusted-base.outputs.base_sha }}
-          path: .final-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify Final trusted-base checkout
-        if: matrix.name == 'csv-postgres'
-        shell: bash
-        env:
-          BASE_SHA: ${{ steps.final-trusted-base.outputs.base_sha }}
-        run: |
-          set -euo pipefail
-          test "$(git -C .final-trusted-base rev-parse HEAD)" = "$BASE_SHA"
-
       - name: Resolve exact Final compiler-cache identity
         if: matrix.name == 'csv-postgres'
         id: final-cache-id
@@ -246,7 +228,11 @@ jobs:
           COMPILE_SURFACE: csv-postgres-final-ci-v1
         run: |
           set -euo pipefail
-          lock_hash="$(sha256sum .final-trusted-base/csv-postgres/Cargo.lock | awk '{print $1}')"
+          lock_payload="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/contents/csv-postgres/Cargo.lock?ref=$BASE_SHA" \
+            --jq '.content')"
+          lock_hash="$(printf '%s' "$lock_payload" | tr -d '\n' | base64 --decode | sha256sum | awk '{print $1}')"
           env_hash="$(
             {
               rustc -Vv
