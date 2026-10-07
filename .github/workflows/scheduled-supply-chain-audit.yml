@@ -34,11 +34,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned cargo-deny
+      - name: Install verified cargo-deny 0.20.2
         id: install
         if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
         continue-on-error: true
-        run: cargo install cargo-deny --version "=0.20.2" --locked
+        run: bash .github/scripts/install-cargo-deny.sh
 
       - name: Run canonical supply-chain audit
         id: audit
