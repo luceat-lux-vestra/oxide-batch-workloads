@@ -452,6 +452,7 @@ jobs:
           retention-days: 30
 
   c-smoke:
+    if: ${{ false }} # Stage B-vs-C direct comparison: single C smoke already proven.
     name: C smoke / dependency-only rust-cache + sccache
     needs: prime
     runs-on: ubuntu-24.04
@@ -630,4 +631,52 @@ jobs:
           path: benchmark-evidence/156/c-smoke
           if-no-files-found: error
           retention-days: 30
+
+  bc-b:
+    name: pair 1 / BC / B
+    needs: prime
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: B
+      cache_targets: "true"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p1-b
+      pair: "1"
+      order: BC
+
+  bc-c:
+    name: pair 1 / BC / C
+    needs: [prime, bc-b]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: C
+      cache_targets: "false"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p1-c
+      pair: "1"
+      order: BC
+
+  cb-c:
+    name: pair 2 / CB / C
+    needs: [prime, bc-c]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: C
+      cache_targets: "false"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p2-c
+      pair: "2"
+      order: CB
+
+  cb-b:
+    name: pair 2 / CB / B
+    needs: [prime, cb-c]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: B
+      cache_targets: "true"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p2-b
+      pair: "2"
+      order: CB
 
