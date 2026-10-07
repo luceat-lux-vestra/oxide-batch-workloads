@@ -633,6 +633,7 @@ jobs:
           retention-days: 30
 
   bc-b:
+    if: ${{ false }} # Pair 1/2 evidence already admitted; do not rerun in pair 3/4 turn.
     name: pair 1 / BC / B
     needs: prime
     uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
@@ -645,6 +646,7 @@ jobs:
       order: BC
 
   bc-c:
+    if: ${{ false }} # Pair 1/2 evidence already admitted; do not rerun in pair 3/4 turn.
     name: pair 1 / BC / C
     needs: [prime, bc-b]
     uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
@@ -657,6 +659,7 @@ jobs:
       order: BC
 
   cb-c:
+    if: ${{ false }} # Pair 1/2 evidence already admitted; do not rerun in pair 3/4 turn.
     name: pair 2 / CB / C
     needs: [prime, bc-c]
     uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
@@ -669,6 +672,7 @@ jobs:
       order: CB
 
   cb-b:
+    if: ${{ false }} # Pair 1/2 evidence already admitted; do not rerun in pair 3/4 turn.
     name: pair 2 / CB / B
     needs: [prime, cb-c]
     uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
@@ -678,5 +682,53 @@ jobs:
       cache_key: ${{ needs.prime.outputs.cache_key }}
       sample_id: p2-b
       pair: "2"
+      order: CB
+
+  p3-b:
+    name: pair 3 / BC / B
+    needs: prime
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: B
+      cache_targets: "true"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p3-b
+      pair: "3"
+      order: BC
+
+  p3-c:
+    name: pair 3 / BC / C
+    needs: [prime, p3-b]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: C
+      cache_targets: "false"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p3-c
+      pair: "3"
+      order: BC
+
+  p4-c:
+    name: pair 4 / CB / C
+    needs: [prime, p3-c]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: C
+      cache_targets: "false"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p4-c
+      pair: "4"
+      order: CB
+
+  p4-b:
+    name: pair 4 / CB / B
+    needs: [prime, p4-c]
+    uses: ./.github/workflows/exp-156-final-csv-postgres-consumer.yml
+    with:
+      variant: B
+      cache_targets: "true"
+      cache_key: ${{ needs.prime.outputs.cache_key }}
+      sample_id: p4-b
+      pair: "4"
       order: CB
 
