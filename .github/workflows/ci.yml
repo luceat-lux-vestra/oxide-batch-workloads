@@ -151,9 +151,13 @@ jobs:
           matrix=$(python3 .github/scripts/discover-supply-chain-workloads.py)
           echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
 
-      - name: Install pinned cargo-deny
+      - name: Test cargo-deny installer failure semantics
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: cargo install cargo-deny --version "=0.20.2" --locked
+        run: bash .github/scripts/test-install-cargo-deny.sh
+
+      - name: Install verified cargo-deny 0.20.2
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/install-cargo-deny.sh
 
       - name: Test supply-chain validator
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -470,8 +474,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install pinned cargo-deny
-        run: cargo install cargo-deny --version "=0.20.2" --locked
+      - name: Install verified cargo-deny 0.20.2
+        run: bash .github/scripts/install-cargo-deny.sh
 
       - name: Run supply-chain policy validator
         id: contract
