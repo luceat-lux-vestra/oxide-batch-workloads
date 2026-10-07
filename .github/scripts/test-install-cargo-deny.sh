@@ -39,7 +39,9 @@ run_installer() {
 expect_failure() {
   local name="$1"
   shift
-  if "$@"; then
+  local log="$tmp/expected-failure-${name// /-}.log"
+  if "$@" >"$log" 2>&1; then
+    cat "$log" >&2
     echo "::error::$name unexpectedly succeeded" >&2
     exit 1
   fi
