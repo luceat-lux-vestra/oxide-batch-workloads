@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly DEFAULT_VERSION="0.20.2"
+# GitHub-hosted Ubuntu runners provide curl, tar, sha256sum, find, and install.\nreadonly DEFAULT_VERSION="0.20.2"
 readonly DEFAULT_ARCHIVE="cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
 readonly DEFAULT_URL="https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${DEFAULT_ARCHIVE}"
 readonly DEFAULT_SHA256="9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
