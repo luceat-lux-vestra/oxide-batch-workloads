@@ -194,6 +194,114 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ${{ matrix.path }}
+          cache-targets: ${{ matrix.name != 'csv-postgres' }}
+
+      - name: Resolve exact protected trusted base for Final compiler cache
+        if: matrix.name == 'csv-postgres'
+        id: final-trusted-base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          repo_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY")"
+          jq -e \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg branch "$DEFAULT_BRANCH" \
+            '.full_name == $repo and .default_branch == $branch' \
+            <<<"$repo_json" >/dev/null
+          base_sha="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "trusted protected-main SHA: $base_sha"
+
+      - name: Resolve exact Final compiler-cache identity
+        if: matrix.name == 'csv-postgres'
+        id: final-cache-id
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.final-trusted-base.outputs.base_sha }}
+          CARGO_INCREMENTAL: "0"
+          SCCACHE_VERSION: "0.18.0"
+          COMPILE_SURFACE: csv-postgres-final-ci-v1
+        run: |
+          set -euo pipefail
+          lock_payload="$(gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/contents/csv-postgres/Cargo.lock?ref=$BASE_SHA" \
+            --jq '.content')"
+          lock_hash="$(printf '%s' "$lock_payload" | tr -d '\n' | base64 --decode | sha256sum | awk '{print $1}')"
+          env_hash="$(
+            {
+              rustc -Vv
+              cargo -V
+              printf 'runner_os=%s\n' "$RUNNER_OS"
+              printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+              printf 'cargo_term_color=%s\n' "$CARGO_TERM_COLOR"
+              printf 'cargo_incremental=%s\n' "$CARGO_INCREMENTAL"
+              printf 'sccache_version=%s\n' "$SCCACHE_VERSION"
+              printf 'compile_surface=%s\n' "$COMPILE_SURFACE"
+            } | sha256sum | awk '{print $1}'
+          )"
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          key="workloads-final-csv-postgres-sccache-v1-linux-$env_hash-$lock_hash-$BASE_SHA"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "trusted Final compiler-cache key: $key"
+
+      - name: Restore exact protected-main Final compiler cache
+        if: matrix.name == 'csv-postgres'
+        id: restore-final-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workloads-final-csv-postgres-sccache
+          key: ${{ steps.final-cache-id.outputs.key }}
+
+      - name: Install verified sccache 0.18.0 for Final
+        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit == 'true'
+        shell: bash
+        env:
+          SCCACHE_VERSION: "0.18.0"
+          SCCACHE_SHA256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+          echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Enable restore-only Final compiler cache on exact hit
+        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit == 'true'
+        id: enable-final-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_INCREMENTAL=0"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/workloads-final-csv-postgres-sccache"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+          } >> "$GITHUB_ENV"
+          echo "exact protected-main Final compiler cache hit: true"
+
+      - name: Final compiler-cache miss fallback
+        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit != 'true'
+        run: echo "No exact protected-main Final compiler cache; continuing with the canonical uncached Final contract."
+
+      - name: Zero Final compiler-cache stats
+        if: matrix.name == 'csv-postgres' && steps.enable-final-sccache.outcome == 'success'
+        run: sccache --zero-stats
 
       - name: Run workload CI contract
         id: contract
@@ -202,6 +310,42 @@ jobs:
           set +e
           ./ci/validate ci
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Verify restore-only Final compiler-cache health
+        if: ${{ always() && matrix.name == 'csv-postgres' && steps.enable-final-sccache.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stats="$RUNNER_TEMP/workloads-final-csv-postgres-sccache-stats.json"
+          sccache --show-stats --stats-format=json | tee "$stats"
+          python3 - "$stats" <<'PY'
+          import json
+          import sys
+
+          stats = json.load(open(sys.argv[1], encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+          successful_writes = stats.get("cache_writes", 0)
+
+          print(
+              f"consumer rust_hits={rust_hits} rust_misses={rust_misses} "
+              f"read_errors={read_errors} write_errors={write_errors} "
+              f"successful_writes={successful_writes}"
+          )
+          if read_errors != 0 or write_errors != 0:
+              raise SystemExit("restore-only Final compiler-cache consumer recorded cache I/O errors")
+          if successful_writes != 0:
+              raise SystemExit("restore-only Final compiler-cache consumer wrote cache entries")
+          if rust_hits <= 0:
+              raise SystemExit("restore-only Final compiler-cache consumer produced no useful Rust hits")
+          PY
+
+      - name: Stop Final compiler-cache server
+        if: ${{ always() && matrix.name == 'csv-postgres' && steps.enable-final-sccache.outcome == 'success' }}
+        shell: bash
+        run: sccache --stop-server || true
 
       - name: Record shard result
         if: always()
