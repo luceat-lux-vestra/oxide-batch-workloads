@@ -6,3 +6,5 @@ Ephemeral non-production marker used only to exercise the existing
 
 No runtime, source, dependency, build, or workflow behavior is changed.
 This proof branch/PR must not be merged.
+
+Ready-for-review synchronize trigger; no executable behavior changed.
