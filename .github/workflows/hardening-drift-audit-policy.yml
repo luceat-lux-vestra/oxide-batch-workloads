@@ -26,7 +26,7 @@ concurrency:
 jobs:
   policy-contract:
     name: hardening-drift-audit-policy
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository

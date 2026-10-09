@@ -24,15 +24,13 @@
 # a broad/indefinite/generic bypass.
 
 [graph]
-# The repository's CI fleet only ever builds and validates real workloads on
-# ubuntu-24.04 runners (see .github/workflows/ci.yml's `runs-on`), so the
-# supply-chain graph is restricted to the one triple that is ever actually
-# compiled and shipped. Without this, the graph would also include packages
-# that only resolve for targets this repository never builds for at all
-# (e.g. the UEFI-only `r-efi` crate, which is LGPL-2.1-or-later and would
-# otherwise force an unjustified license exception for code that never
-# runs). This is a documented, deliberate narrowing, not an accidental one.
-targets = ["x86_64-unknown-linux-gnu"]
+# All primary CI runners now build real workloads on ubuntu-24.04-arm.
+# Keep the previously validated x86_64 GNU/Linux target for compatibility,
+# and scan native aarch64 GNU/Linux dependencies as well. The union prevents
+# ARM-only dependency edges from escaping advisories/licenses/bans/sources
+# checks without expanding into unrelated targets (e.g. UEFI-only r-efi).
+# Do not narrow this graph when migrating the host runner architecture.
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 all-features = true
 
 # This section is considered when running `cargo deny check advisories`.

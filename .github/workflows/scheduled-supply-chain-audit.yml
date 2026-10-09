@@ -24,7 +24,7 @@ permissions: {}
 
 jobs:
   detect:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     permissions:
       contents: read
@@ -67,7 +67,7 @@ jobs:
   report:
     needs: detect
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     permissions:
       actions: read

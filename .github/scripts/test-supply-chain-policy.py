@@ -14,6 +14,7 @@ third-party repository changing.
 """
 
 import shutil
+import tomllib
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +26,18 @@ DENY_TOML = REPO_ROOT / "deny.toml"
 
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+
+
+class LinuxArchitectureGraphContractTests(unittest.TestCase):
+    """Both historical x64 and native ARM64 Linux edges must be audited."""
+
+    def test_legacy_x64_and_native_arm64_targets_remain_in_scope(self) -> None:
+        policy = tomllib.loads(DENY_TOML.read_text(encoding="utf-8"))
+        self.assertCountEqual(
+            policy["graph"]["targets"],
+            ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"],
+            "The canonical supply-chain policy must scan both native ARM64 and x64 Linux targets",
+        )
 
 
 @unittest.skipUnless(shutil.which("cargo-deny"), "cargo-deny is not installed in this environment")

@@ -42,7 +42,7 @@ concurrency:
 jobs:
   paired:
     name: postgres-postgres-paired
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
