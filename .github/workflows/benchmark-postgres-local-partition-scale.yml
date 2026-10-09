@@ -34,7 +34,7 @@ concurrency:
 jobs:
   scale:
     name: postgres-local-partition-scale
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5435/postgres_local_partition_workload

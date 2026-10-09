@@ -34,7 +34,7 @@ concurrency:
 jobs:
   baseline:
     name: oxide-csv-postgres-baseline
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5433/csv_postgres_workload
