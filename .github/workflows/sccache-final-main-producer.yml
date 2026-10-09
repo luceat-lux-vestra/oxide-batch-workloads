@@ -16,14 +16,14 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   SCCACHE_VERSION: "0.18.0"
-  SCCACHE_SHA256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+  SCCACHE_SHA256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
   SCCACHE_CACHE_SIZE: 768M
   COMPILE_SURFACE: csv-postgres-final-ci-v1
 
 jobs:
   produce:
     name: final-csv-postgres-sccache-producer
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
       actions: write
@@ -79,7 +79,7 @@ jobs:
           [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          root_prefix="workloads-final-csv-postgres-sccache-v1-linux-"
+          root_prefix="workloads-final-csv-postgres-sccache-v1-linux-arm64-"
           family="$root_prefix$env_hash"
           lock_prefix="$family-$lock_hash-"
           key="$lock_prefix$GITHUB_SHA"
@@ -107,10 +107,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" \
+            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz" \
             --output "$archive"
           echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
           mkdir -p "$install_dir"

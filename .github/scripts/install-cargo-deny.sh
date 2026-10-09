@@ -3,9 +3,23 @@ set -euo pipefail
 
 # GitHub-hosted Ubuntu runners provide curl, tar, sha256sum, find, and install.
 readonly DEFAULT_VERSION="0.20.2"
-readonly DEFAULT_ARCHIVE="cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
+# Select only architecture-matched official pinned release binaries. Keep the
+# x86_64 default for unaffected x64 scheduled/maintenance audit runners.
+case "$(uname -m)" in
+  x86_64)
+    readonly DEFAULT_ARCHIVE="cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
+    readonly DEFAULT_SHA256="9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+    ;;
+  aarch64)
+    readonly DEFAULT_ARCHIVE="cargo-deny-0.20.2-aarch64-unknown-linux-musl.tar.gz"
+    readonly DEFAULT_SHA256="995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d"
+    ;;
+  *)
+    echo "::error::Unsupported cargo-deny runner architecture: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
 readonly DEFAULT_URL="https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${DEFAULT_ARCHIVE}"
-readonly DEFAULT_SHA256="9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
 
 version="$DEFAULT_VERSION"
 archive_name="$DEFAULT_ARCHIVE"

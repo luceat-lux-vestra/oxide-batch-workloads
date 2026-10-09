@@ -18,7 +18,7 @@ jobs:
   semantic:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: pr4-four-way-semantic
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
@@ -36,8 +36,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${JAVA_HOME_25_X64:-}" && -x "$JAVA_HOME_25_X64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
-          export JAVA_HOME="$JAVA_HOME_25_X64"
+          test "$(uname -m)" = "aarch64"
+          [[ -n "${JAVA_HOME_25_AARCH64:-}" && -x "$JAVA_HOME_25_AARCH64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
+          export JAVA_HOME="$JAVA_HOME_25_AARCH64"
           export PATH="$JAVA_HOME/bin:$PATH"
           [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || { echo "::error::ambient JVM tuning flags are forbidden"; exit 1; }
           java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
