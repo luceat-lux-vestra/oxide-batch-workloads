@@ -22,7 +22,7 @@ concurrency:
 jobs:
   fast:
     name: fast
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -94,7 +94,7 @@ jobs:
           [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          key="workloads-fast-sccache-v1-linux-$env_hash-$lock_hash-$BASE_SHA"
+          key="workloads-fast-sccache-v1-linux-arm64-$env_hash-$lock_hash-$BASE_SHA"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "trusted compiler-cache key: $key"
 
@@ -105,18 +105,19 @@ jobs:
           path: ${{ runner.temp }}/workloads-fast-sccache
           key: ${{ steps.cache-id.outputs.key }}
 
-      - name: Install verified sccache 0.18.0
-        if: ${{ steps.restore-sccache.outputs.cache-hit == 'true' }}
+      - name: Verify native ARM64 sccache 0.18.0 even on cold cache
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          test "$(uname -m)" = "aarch64"
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
-          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"             --output "$archive"
-          echo "45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89  $archive"             | sha256sum --check --strict
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"             --output "$archive"
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive"             | sha256sum --check --strict
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
+          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable restore-only sccache on exact hit

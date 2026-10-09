@@ -60,8 +60,14 @@ assert_scalar() {
 }
 
 select_java25() {
-  if [[ -n "${JAVA_HOME_25_X64:-}" && -x "${JAVA_HOME_25_X64}/bin/java" ]]; then
-    export JAVA_HOME="$JAVA_HOME_25_X64"
+  local pinned_java_home
+  case "$(uname -m)" in
+    x86_64) pinned_java_home="${JAVA_HOME_25_X64:-}" ;;
+    aarch64) pinned_java_home="${JAVA_HOME_25_AARCH64:-}" ;;
+    *) echo "::error::Unsupported Java 25 runner architecture" >&2; exit 1 ;;
+  esac
+  if [[ -n "$pinned_java_home" && -x "$pinned_java_home/bin/java" ]]; then
+    export JAVA_HOME="$pinned_java_home"
     export PATH="$JAVA_HOME/bin:$PATH"
   fi
 

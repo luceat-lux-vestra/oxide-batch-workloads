@@ -27,7 +27,7 @@ jobs:
   # business logic.
   discover:
     name: discover
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     outputs:
       workloads: ${{ steps.discover.outputs.workloads }}
@@ -177,7 +177,7 @@ jobs:
     # pattern workloads-ci's Jobs-API cross-check parses.
     name: ci-shard (${{ matrix.name }})
     needs: discover
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -187,6 +187,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Setup ARM Java 25 for PostgreSQL/Java workload
+        if: ${{ matrix.name == 'postgres-postgres' }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # latest stable snapshot
@@ -254,7 +261,7 @@ jobs:
           [[ "$env_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          key="workloads-final-csv-postgres-sccache-v1-linux-$env_hash-$lock_hash-$BASE_SHA"
+          key="workloads-final-csv-postgres-sccache-v1-linux-arm64-$env_hash-$lock_hash-$BASE_SHA"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "trusted Final compiler-cache key: $key"
 
@@ -266,23 +273,25 @@ jobs:
           path: ${{ runner.temp }}/workloads-final-csv-postgres-sccache
           key: ${{ steps.final-cache-id.outputs.key }}
 
-      - name: Install verified sccache 0.18.0 for Final
-        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit == 'true'
+      - name: Verify native ARM64 sccache 0.18.0 for Final even on cold cache
+        if: matrix.name == 'csv-postgres'
         shell: bash
         env:
           SCCACHE_VERSION: "0.18.0"
-          SCCACHE_SHA256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+          SCCACHE_SHA256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          test "$(uname -m)" = "aarch64"
+          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl.tar.gz" \
+            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz" \
             --output "$archive"
           echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
+          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable restore-only Final compiler cache on exact hit
@@ -382,7 +391,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: msrv-shard (${{ matrix.name }})
     needs: discover
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -463,7 +472,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: supply-chain-shard (${{ matrix.name }})
     needs: discover
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -517,7 +526,7 @@ jobs:
     name: workloads-ci
     needs: [discover, ci-shard]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Draft final-gate placeholder
@@ -581,7 +590,7 @@ jobs:
     name: workloads-msrv
     needs: [discover, msrv-shard]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -646,7 +655,7 @@ jobs:
     name: supply-chain
     needs: [discover, supply-chain-shard]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
