@@ -32,13 +32,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup native ARM Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: zulu
+          java-version: 25
+
       - name: Select Java 25
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = "aarch64"
-          [[ -n "${JAVA_HOME_25_AARCH64:-}" && -x "$JAVA_HOME_25_AARCH64/bin/java" ]] || { echo "::error::runner Java 25 is unavailable"; exit 1; }
-          export JAVA_HOME="$JAVA_HOME_25_AARCH64"
+          [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] || { echo "::error::setup-java did not provide ARM Java 25"; exit 1; }
           export PATH="$JAVA_HOME/bin:$PATH"
           [[ -z "${JAVA_TOOL_OPTIONS:-}" && -z "${_JAVA_OPTIONS:-}" && -z "${JDK_JAVA_OPTIONS:-}" ]] || { echo "::error::ambient JVM tuning flags are forbidden"; exit 1; }
           java_major="$(java -version 2>&1 | sed -n '1s/.* version "\([0-9][0-9]*\).*/\1/p')"
