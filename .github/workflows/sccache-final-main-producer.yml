@@ -107,6 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(uname -m)" = "aarch64"
           archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
           curl --fail --location --retry 3 --retry-delay 2 \
@@ -116,6 +117,7 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
+          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable writable protected-main Final sccache

@@ -273,14 +273,15 @@ jobs:
           path: ${{ runner.temp }}/workloads-final-csv-postgres-sccache
           key: ${{ steps.final-cache-id.outputs.key }}
 
-      - name: Install verified sccache 0.18.0 for Final
-        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit == 'true'
+      - name: Verify native ARM64 sccache 0.18.0 for Final even on cold cache
+        if: matrix.name == 'csv-postgres'
         shell: bash
         env:
           SCCACHE_VERSION: "0.18.0"
           SCCACHE_SHA256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
         run: |
           set -euo pipefail
+          test "$(uname -m)" = "aarch64"
           archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
           curl --fail --location --retry 3 --retry-delay 2 \
@@ -290,6 +291,7 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
+          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable restore-only Final compiler cache on exact hit
