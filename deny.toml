@@ -13,9 +13,9 @@
 # supply-chain scanning subjects, and are never checked against this policy.
 #
 # cargo-deny version is pinned repository-wide to exactly 0.20.2 (see the
-# `cargo install cargo-deny --version "=0.20.2" --locked` step in
-# .github/workflows/ci.yml) -- this file is not validated against, and must
-# not rely on, any other version's defaults.
+# verified, SHA-256-pinned official prebuilt installer at
+# .github/scripts/install-cargo-deny.sh, invoked from .github/workflows/ci.yml).
+# This file is not validated against, and must not rely on, another version's defaults.
 #
 # Policy exceptions: none. Every section below is zero-exception as of this
 # writing; if a future workload genuinely requires one, scope it as tightly
