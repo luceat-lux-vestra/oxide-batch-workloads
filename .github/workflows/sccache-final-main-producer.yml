@@ -11,10 +11,10 @@ on:
       - 'csv-postgres/.cargo/**'
       - 'csv-postgres/rust-toolchain'
       - 'csv-postgres/rust-toolchain.toml'
+      - 'csv-postgres/ci/validate'
       - '.cargo/**'
       - 'rust-toolchain'
       - 'rust-toolchain.toml'
-      - '.github/workflows/sccache-main-producer.yml'
       - '.github/workflows/sccache-final-main-producer.yml'
   workflow_dispatch:
 
