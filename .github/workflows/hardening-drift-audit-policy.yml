@@ -12,6 +12,7 @@ on:
       - ".github/scripts/report-supply-chain-audit.py"
       - ".github/scripts/validate-workflow-security.py"
       - ".github/scripts/test-hardening-drift-audit.py"
+      - ".github/scripts/test-cache-producer-guards.py"
       - ".github/scripts/test-scheduled-supply-chain-audit.py"
       - ".github/workflows/*.yml"
   workflow_dispatch: {}
@@ -39,6 +40,9 @@ jobs:
 
       - name: Test existing scheduled supply-chain audit lifecycle
         run: python3 .github/scripts/test-scheduled-supply-chain-audit.py
+
+      - name: Test trusted-main cache producer and consumer guards
+        run: python3 .github/scripts/test-cache-producer-guards.py
 
       - name: Validate workflow security invariants
         run: python3 .github/scripts/validate-workflow-security.py

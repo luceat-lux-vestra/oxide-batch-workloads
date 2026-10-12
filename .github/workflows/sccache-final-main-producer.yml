@@ -3,6 +3,19 @@ name: Final csv-postgres compiler cache producer
 on:
   push:
     branches: [main]
+    # Only dependency/toolchain or cache-producer contract changes require a new seed.
+    # Source-only merges use the last compatible protected-main cache via restore-keys.
+    paths:
+      - 'csv-postgres/Cargo.toml'
+      - 'csv-postgres/Cargo.lock'
+      - 'csv-postgres/.cargo/**'
+      - 'csv-postgres/rust-toolchain'
+      - 'csv-postgres/rust-toolchain.toml'
+      - '.cargo/**'
+      - 'rust-toolchain'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/sccache-main-producer.yml'
+      - '.github/workflows/sccache-final-main-producer.yml'
   workflow_dispatch:
 
 permissions:
