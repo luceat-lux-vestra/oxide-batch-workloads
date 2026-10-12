@@ -263,6 +263,7 @@ jobs:
 
           key="workloads-final-csv-postgres-sccache-v1-linux-arm64-$env_hash-$lock_hash-$BASE_SHA"
           echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "lock_prefix=workloads-final-csv-postgres-sccache-v1-linux-arm64-$env_hash-$lock_hash-" >> "$GITHUB_OUTPUT"
           echo "trusted Final compiler-cache key: $key"
 
       - name: Restore exact protected-main Final compiler cache
@@ -272,6 +273,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/workloads-final-csv-postgres-sccache
           key: ${{ steps.final-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.final-cache-id.outputs.lock_prefix }}
 
       - name: Verify native ARM64 sccache 0.18.0 for Final even on cold cache
         if: matrix.name == 'csv-postgres'
@@ -294,8 +297,8 @@ jobs:
           test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
-      - name: Enable restore-only Final compiler cache on exact hit
-        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit == 'true'
+      - name: Enable restore-only Final compiler cache on compatible main cache
+        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-matched-key != ''
         id: enable-final-sccache
         shell: bash
         run: |
@@ -306,11 +309,11 @@ jobs:
             echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
             echo "RUSTC_WRAPPER=sccache"
           } >> "$GITHUB_ENV"
-          echo "exact protected-main Final compiler cache hit: true"
+          echo "compatible protected-main Final compiler cache restored (read-only)"
 
       - name: Final compiler-cache miss fallback
-        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-hit != 'true'
-        run: echo "No exact protected-main Final compiler cache; continuing with the canonical uncached Final contract."
+        if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-matched-key == ''
+        run: echo "No compatible protected-main Final compiler cache; continuing with the canonical uncached Final contract."
 
       - name: Zero Final compiler-cache stats
         if: matrix.name == 'csv-postgres' && steps.enable-final-sccache.outcome == 'success'

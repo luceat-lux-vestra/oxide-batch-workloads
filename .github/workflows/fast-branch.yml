@@ -96,6 +96,7 @@ jobs:
 
           key="workloads-fast-sccache-v1-linux-arm64-$env_hash-$lock_hash-$BASE_SHA"
           echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "lock_prefix=workloads-fast-sccache-v1-linux-arm64-$env_hash-$lock_hash-" >> "$GITHUB_OUTPUT"
           echo "trusted compiler-cache key: $key"
 
       - name: Restore exact protected-main compiler cache
@@ -104,6 +105,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/workloads-fast-sccache
           key: ${{ steps.cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.cache-id.outputs.lock_prefix }}
 
       - name: Verify native ARM64 sccache 0.18.0 even on cold cache
         shell: bash
@@ -120,9 +123,9 @@ jobs:
           test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
           echo "$install_dir" >> "$GITHUB_PATH"
 
-      - name: Enable restore-only sccache on exact hit
+      - name: Enable restore-only sccache on compatible main cache
         id: enable-sccache
-        if: ${{ steps.restore-sccache.outputs.cache-hit == 'true' }}
+        if: ${{ steps.restore-sccache.outputs.cache-matched-key != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -131,11 +134,11 @@ jobs:
             echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
             echo "RUSTC_WRAPPER=sccache"
           } >> "$GITHUB_ENV"
-          echo "exact protected-main compiler cache hit: true"
+          echo "compatible protected-main compiler cache restored (read-only)"
 
       - name: Compiler-cache miss fallback
-        if: ${{ steps.restore-sccache.outputs.cache-hit != 'true' }}
-        run: echo "No exact protected-main compiler cache; continuing with the canonical uncached Fast path."
+        if: ${{ steps.restore-sccache.outputs.cache-matched-key == '' }}
+        run: echo "No compatible protected-main compiler cache; continuing with the canonical uncached Fast path."
 
       - name: Test fail-closed workload registry validation
         run: python3 .github/scripts/test-workload-registry.py
