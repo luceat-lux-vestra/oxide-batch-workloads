@@ -101,6 +101,9 @@ def test_consumers() -> None:
         assert "RUSTC_WRAPPER=sccache" in source
         assert "cache-hit == 'true'" not in source
         assert "No compatible protected-main" in source
+        assert "if read_errors != 0:" in source
+        assert "if write_errors != rust_misses:" in source
+        assert "if successful_writes != 0:" in source
 
 
 if __name__ == "__main__":
