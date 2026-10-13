@@ -50,8 +50,35 @@ jobs:
             exit 0
           fi
 
-          base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$BASE_SHA" --jq '.sha')"
-          head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$EXPECTED_SHA" --jq '.sha')"
+          # Keep exact-SHA Fast evidence mandatory, but retry bounded transport failures.
+          # Non-transient API errors, malformed JSON and unverified Fast jobs fail closed.
+          trusted_api_json() {
+            local path="$1" output rc attempt
+            for attempt in 1 2 3 4; do
+              if output="$(timeout 25s gh api -H 'Accept: application/vnd.github+json' "$path" 2>&1)"; then
+                printf '%s\n' "$output"
+                return 0
+              else
+                rc=$?
+              fi
+              if [ "$rc" -ne 124 ] \
+                && [[ "$output" != *"HTTP 429"* ]] \
+                && [[ "$output" != *"HTTP 500"* ]] \
+                && [[ "$output" != *"HTTP 502"* ]] \
+                && [[ "$output" != *"HTTP 503"* ]] \
+                && [[ "$output" != *"HTTP 504"* ]]; then
+                printf '::error::Non-retryable Fast evidence API failure: %s\n' "$output" >&2
+                return 1
+              fi
+              printf 'Fast evidence API transport failure (attempt %s of 4): %s\n' "$attempt" "$output" >&2
+              if [ "$attempt" -lt 4 ]; then sleep "$((attempt * 2))"; fi
+            done
+            echo '::error::Fast evidence API remained unavailable after 4 bounded attempts.' >&2
+            return 1
+          }
+
+          base_workflow_sha="$(trusted_api_json "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$BASE_SHA" | jq -er '.sha')"
+          head_workflow_sha="$(trusted_api_json "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$EXPECTED_SHA" | jq -er '.sha')"
           if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
             echo "reuse=false" >> "$GITHUB_OUTPUT"
             echo "Fast producer workflow changed on this PR; Final will execute the local registry checks instead of trusting self-modified evidence."
@@ -59,7 +86,7 @@ jobs:
           fi
 
           for _ in $(seq 1 60); do
-            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100")"
+            runs="$(trusted_api_json "repos/$GITHUB_REPOSITORY/actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100")"
             latest="$(jq -c --arg sha "$EXPECTED_SHA" '
               [.workflow_runs[]
                | select(.head_sha == $sha and .event == "push")]
@@ -74,7 +101,7 @@ jobs:
               exit 1
             fi
             run_id="$(jq -r '.id' <<<"$latest")"
-            jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
+            jobs="$(trusted_api_json "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
             matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
             if [ "$matching_jobs" != "1" ]; then
               echo "::error::Canonical Fast run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
@@ -558,28 +585,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^ci-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -587,15 +594,13 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.ci-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage ci \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
 
   workloads-msrv:
     name: workloads-msrv
@@ -618,28 +623,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^msrv-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -647,15 +632,13 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.msrv-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage msrv \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
 
   # Stable, required aggregate context for #32's repository-wide
   # supply-chain policy (deny.toml). Fans out only over real workloads (see
@@ -683,28 +666,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^supply-chain-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -712,12 +675,10 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.supply-chain-workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.supply-chain-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage supply-chain \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
