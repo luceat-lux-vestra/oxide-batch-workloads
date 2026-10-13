@@ -330,5 +330,31 @@ class LoadExpectedTests(unittest.TestCase):
         self.assertEqual(expected[0].expected_outcome, "validated")
 
 
+
+class AggregateWorkflowIndependenceTests(unittest.TestCase):
+    def test_required_aggregates_do_not_depend_on_jobs_api(self) -> None:
+        # Shard-job API details are diagnostic only. Required aggregate verdicts
+        # must not fail when the GitHub Jobs API intermittently responds 502.
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        for job, following, upstream in (
+            ("workloads-ci", "workloads-msrv", "ci-shard"),
+            ("workloads-msrv", "supply-chain", "msrv-shard"),
+            ("supply-chain", None, "supply-chain-shard"),
+        ):
+            section = source.split(f"  {job}:\n", 1)[1]
+            if following is not None:
+                section = section.split(f"  {following}:\n", 1)[0]
+            with self.subTest(job=job):
+                self.assertIn("Compute aggregate verdict", section)
+                self.assertIn("aggregate_verdict.py", section)
+                self.assertIn(f"needs.{upstream}.result == 'success'", section)
+                self.assertIn('--upstream-job-ok "$UPSTREAM_JOB_OK"', section)
+                self.assertIn("DISCOVERY_OK:", section)
+                self.assertIn("Download shard results", section)
+                self.assertNotIn("listJobsForWorkflowRunAttempt", section)
+                self.assertNotIn("Fetch shard job conclusions", section)
+                self.assertNotIn("steps.jobs.outputs.result", section)
+
+
 if __name__ == "__main__":
     unittest.main()

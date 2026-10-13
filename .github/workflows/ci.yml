@@ -558,28 +558,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^ci-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -587,15 +567,13 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.ci-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage ci \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
 
   workloads-msrv:
     name: workloads-msrv
@@ -618,28 +596,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^msrv-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -647,15 +605,13 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.msrv-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage msrv \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
 
   # Stable, required aggregate context for #32's repository-wide
   # supply-chain policy (deny.toml). Fans out only over real workloads (see
@@ -683,28 +639,8 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      - name: Fetch shard job conclusions
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        id: jobs
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              attempt_number: process.env.GITHUB_RUN_ATTEMPT,
-              per_page: 100,
-            });
-            const statuses = {};
-            for (const job of data.jobs) {
-              const match = job.name.match(/^supply-chain-shard \((.+)\)$/);
-              if (match) {
-                statuses[match[1]] = job.conclusion ?? job.status;
-              }
-            }
-            return statuses;
-          result-encoding: json
+      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
@@ -712,12 +648,10 @@ jobs:
           DISCOVER_JSON: ${{ needs.discover.outputs.supply-chain-workloads }}
           DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
           UPSTREAM_JOB_OK: ${{ needs.supply-chain-shard.result == 'success' }}
-          JOB_STATUSES_JSON: ${{ steps.jobs.outputs.result || '{}' }}
         run: |
           python3 .github/scripts/aggregate_verdict.py \
             --stage supply-chain \
             --discover-json "$DISCOVER_JSON" \
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK" \
-            --job-statuses-json "$JOB_STATUSES_JSON"
+            --upstream-job-ok "$UPSTREAM_JOB_OK"
