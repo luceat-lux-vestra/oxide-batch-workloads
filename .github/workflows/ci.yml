@@ -350,8 +350,16 @@ jobs:
               f"read_errors={read_errors} write_errors={write_errors} "
               f"successful_writes={successful_writes}"
           )
-          if read_errors != 0 or write_errors != 0:
-              raise SystemExit("restore-only Final compiler-cache consumer recorded cache I/O errors")
+          # sccache 0.18.0 records an intentional rejected cache-store operation
+          # for each cache miss in READ_ONLY mode. It is not a cache read failure.
+          # Fail closed if misses/rejections diverge, reads fail, or any write succeeds.
+          if read_errors != 0:
+              raise SystemExit("restore-only Final compiler-cache consumer recorded cache read errors")
+          if write_errors != rust_misses:
+              raise SystemExit(
+                  f"restore-only Final compiler-cache rejected-write count mismatch: "
+                  f"write_errors={write_errors}, rust_misses={rust_misses}"
+              )
           if successful_writes != 0:
               raise SystemExit("restore-only Final compiler-cache consumer wrote cache entries")
           if rust_hits <= 0:
