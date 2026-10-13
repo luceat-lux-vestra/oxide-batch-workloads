@@ -355,6 +355,18 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
                 self.assertNotIn("Fetch shard job conclusions", section)
                 self.assertNotIn("steps.jobs.outputs.result", section)
 
+    def test_fast_evidence_api_transport_retries_preserve_exact_head(self) -> None:
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        discovery = source.split("  discover:\n", 1)[1].split("  ci-shard:\n", 1)[0]
+        self.assertIn("trusted_api_json()", discovery)
+        self.assertIn("timeout 25s gh api", discovery)
+        self.assertIn('for attempt in 1 2 3 4; do', discovery)
+        self.assertIn('Fast evidence API remained unavailable', discovery)
+        self.assertIn('head_sha=$EXPECTED_SHA', discovery)
+        self.assertIn('job_conclusion" != "success"', discovery)
+        self.assertIn('matching_jobs" != "1"', discovery)
+
+
 
 if __name__ == "__main__":
     unittest.main()
