@@ -34,6 +34,14 @@ When a change invalidates existing evidence, regenerate it or explain precisely 
 
 Search the OxideBatch issue tracker before filing a new framework issue. Classify findings narrowly as bug, API ergonomics, missing capability, documentation gap, performance issue, or semantics/contract ambiguity. Link the issue from the workload documentation.
 
+## GitHub Actions lifecycle
+
+Keep production-default-branch automation small and owned. Research, experiment, migration, and other temporary workflows should run from a bounded non-default branch and be removed from source after their evidence is recorded.
+
+If an exceptional temporary workflow must exist on the default branch, its workflow file must declare non-empty `# lifecycle-owner:` and `# lifecycle-retire:` comments near the top. The owner identifies the issue/campaign responsible for it; the retirement declaration states the explicit condition for deleting or consolidating it. Historical Actions runs and artifacts are evidence, not a reason to keep or recreate obsolete workflow YAML.
+
+When a maintained workflow's purpose is superseded, consolidate or delete the source workflow without deleting historical runs solely for cosmetic cleanup.
+
 ## Pull requests
 
 Use the pull request template. Explain:

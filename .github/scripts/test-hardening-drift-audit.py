@@ -289,6 +289,37 @@ class WorkflowSecurityFixtureTests(unittest.TestCase):
         shutil.copytree(ROOT / ".github" / "workflows", root / ".github" / "workflows")
         return temp, root
 
+    def test_ephemeral_workflow_requires_lifecycle_metadata(self):
+        temp, root = self.copy_workflows()
+        try:
+            path = root / ".github" / "workflows" / "research-fixture.yml"
+            path.write_text(
+                "name: research fixture\non: workflow_dispatch\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                WORKFLOW_SECURITY.WorkflowSecurityError,
+                "lifecycle-owner.*lifecycle-retire",
+            ):
+                WORKFLOW_SECURITY.validate_ephemeral_workflow_lifecycle(root)
+        finally:
+            temp.cleanup()
+
+    def test_ephemeral_workflow_with_lifecycle_metadata_is_accepted(self):
+        temp, root = self.copy_workflows()
+        try:
+            path = root / ".github" / "workflows" / "research-fixture.yml"
+            path.write_text(
+                "# lifecycle-owner: issue #186\n"
+                "# lifecycle-retire: delete after bounded evidence is recorded\n"
+                "name: research fixture\n"
+                "on: workflow_dispatch\n",
+                encoding="utf-8",
+            )
+            WORKFLOW_SECURITY.validate_ephemeral_workflow_lifecycle(root)
+        finally:
+            temp.cleanup()
+
     def test_mutable_action_ref_fixture_is_rejected(self):
         temp, root = self.copy_workflows()
         try:
