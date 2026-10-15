@@ -427,12 +427,12 @@ def self_test() -> None:
 
         # Regression for the old py/redos issue: a long rejected dependency
         # sequence and a valid multiline dependency are both handled linearly.
-        long_needs = "  publish:\\n    needs:\\n" + "      - unrelated\\n" * 10000 + "    run: echo fixture\\n"
+        long_needs = "  publish:\n    needs:\n" + "      - unrelated\n" * 10000 + "    run: echo fixture\n"
         assert not needs_preflight(long_needs)
-        assert needs_preflight(long_needs.replace("    run:", "      - codeql-preflight\\n    run:"))
-        assert not needs_preflight("  publish:\\n    needs: codeql-preflight\\n    needs: unrelated\\n")
-        assert needs_preflight("  publish:\\n    needs:\\n      - classify\\n      - codeql-preflight\\n")
-        assert not needs_preflight("  publish:\\n    needs:\\n      - classify\\n      - unrelated\\n")
+        assert needs_preflight(long_needs.replace("    run:", "      - codeql-preflight\n    run:"))
+        assert not needs_preflight("  publish:\n    needs: codeql-preflight\n    needs: unrelated\n")
+        assert needs_preflight("  publish:\n    needs:\n      - classify\n      - codeql-preflight\n")
+        assert not needs_preflight("  publish:\n    needs:\n      - classify\n      - unrelated\n")
 
         cases = {
             "missing preflight": re.sub(
