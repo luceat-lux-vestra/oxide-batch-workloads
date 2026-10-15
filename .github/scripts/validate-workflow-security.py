@@ -7,9 +7,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 USES = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
-EPHEMERAL_WORKFLOW = re.compile(r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\\.(?:ya?ml)$", re.IGNORECASE)
-LIFECYCLE_OWNER = re.compile(r"^\\s*#\\s*lifecycle-owner:\\s*(\\S.*)$", re.IGNORECASE)
-LIFECYCLE_RETIRE = re.compile(r"^\\s*#\\s*lifecycle-retire:\\s*(\\S.*)$", re.IGNORECASE)
+EPHEMERAL_WORKFLOW = re.compile(r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\.(?:ya?ml)$", re.IGNORECASE)
+LIFECYCLE_OWNER = re.compile(r"^\s*#\s*lifecycle-owner:\s*(\S.*)$", re.IGNORECASE)
+LIFECYCLE_RETIRE = re.compile(r"^\s*#\s*lifecycle-retire:\s*(\S.*)$", re.IGNORECASE)
 
 
 class WorkflowSecurityError(ValueError):
@@ -80,7 +80,7 @@ def validate_ephemeral_workflow_lifecycle(root=ROOT):
                 "# lifecycle-owner: and # lifecycle-retire: comments"
             )
     if violations:
-        fail("\\n".join(violations))
+        fail("\n".join(violations))
 
 
 def validate_label_automation_boundary(root=ROOT):
