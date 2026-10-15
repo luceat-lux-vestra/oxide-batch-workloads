@@ -114,11 +114,35 @@ def contains_release_mutation(source: str) -> bool:
 
 
 def needs_preflight(block: str) -> bool:
-    return bool(
-        re.search(r"(?m)^    needs:\s*codeql-preflight\s*$", block)
-        or re.search(r"(?m)^    needs:\s*\[[^\]]*\bcodeql-preflight\b[^\]]*\]\s*$", block)
-        or re.search(r"(?ms)^    needs:\s*\n(?:      - .*\n)*      - codeql-preflight\s*$", block)
-    )
+    """Inspect one job's needs dependency using bounded line-by-line parsing.
+
+    Unsupported/ambiguous YAML forms are rejected, never assumed safe.
+    """
+    lines = block.splitlines()
+    indices = [i for i, line in enumerate(lines) if line.startswith("    needs:")]
+    if len(indices) != 1:
+        return False
+    index = indices[0]
+    line = lines[index]
+    if line.startswith("     "):
+        return False
+    value = line[len("    needs:"):].strip()
+    if value:
+        if value.startswith("[") and value.endswith("]"):
+            deps = [item.strip() for item in value[1:-1].split(",")]
+        else:
+            deps = [value]
+    else:
+        deps = []
+        for following in lines[index + 1:]:
+            if not following.startswith("      "):
+                break
+            if not following.startswith("      - "):
+                return False
+            deps.append(following[len("      - "):].strip())
+    if not deps or any(re.fullmatch(r"[A-Za-z0-9_-]+", d) is None for d in deps):
+        return False
+    return len(deps) == len(set(deps)) and "codeql-preflight" in deps
 
 
 def validate_policy(root: Path) -> str:
