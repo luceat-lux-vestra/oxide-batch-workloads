@@ -1,0 +1,13 @@
+schema_version = 1
+channel = "github-releases"
+managed_publisher = "not-implemented"
+prepublication_required = true
+preflight_entrypoint = "tools/ci/release_codeql_preflight.py"
+operator_bypass_scope = "owner-ui-api-governance"
+first_external_mutations = [
+    "draft-to-public",
+    "github-release-create",
+    "github-release-upload",
+    "crates-io-publish",
+    "package-registry-publish",
+]

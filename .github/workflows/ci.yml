@@ -87,6 +87,18 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/release-codeql-verdict.py --self-test
 
+      - name: Test exact-SHA CodeQL reuse, join, dispatch and fail-closed behavior
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 tools/ci/release_codeql_preflight.py --self-test
+
+      - name: Test future publisher CodeQL policy
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 tools/ci/verify_release_codeql_policy.py --self-test
+
+      - name: Require CodeQL publication-order policy
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 tools/ci/verify_release_codeql_policy.py
+
       - name: Test aggregate verdict logic
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test_aggregate_verdict.py

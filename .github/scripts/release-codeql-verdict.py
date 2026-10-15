@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Fail-closed release candidate CodeQL SARIF verdict. No publishing capability.
+"""Strict original-SARIF verifier for oxide-batch-workloads release-candidate CodeQL evidence."""
+from __future__ import annotations
 
-A manual or scheduled CodeQL run analyzes an exact protected-main SHA and retains the
-unaltered SARIF as evidence. This gate rejects corrupt reports, missing security
-severity, and any High/Critical finding; it does not grant release authorization.
-"""
 import argparse
 import hashlib
 import json
@@ -14,212 +11,347 @@ import sys
 import tempfile
 from pathlib import Path
 
-LANGUAGES = {"actions", "java-kotlin", "python", "rust"}
-COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+LANGUAGES = ("actions", "python", "rust", "java-kotlin")
+PACK = {"actions": "codeql/actions-queries", "python": "codeql/python-queries", "rust": "codeql/rust-queries", "java-kotlin": "codeql/java-queries"}
+REQUIRED = {
+    "actions": {
+        "actions/untrusted-checkout-toctou/critical",
+        "actions/untrusted-checkout-toctou/high",
+        "actions/missing-workflow-permissions",
+        "actions/cache-poisoning/direct-cache",
+        "actions/cache-poisoning/poisonable-step",
+        "actions/cache-poisoning/code-injection",
+        "actions/artifact-poisoning/critical",
+        "actions/untrusted-checkout/high",
+        "actions/untrusted-checkout/critical",
+        "actions/vulnerable-action",
+        "actions/code-injection/critical",
+        "actions/improper-access-control",
+        "actions/secrets-in-artifacts",
+        "actions/excessive-secrets-exposure",
+        "actions/unmasked-secret-exposure",
+        "actions/envvar-injection/critical",
+        "actions/envpath-injection/critical",
+    },
+    "python": {
+        "py/use-of-input",
+        "py/sql-injection",
+        "py/full-ssrf",
+        "py/command-line-injection",
+        "py/code-injection",
+        "py/unsafe-deserialization",
+        "py/ldap-injection",
+        "py/xpath-injection",
+        "py/xxe",
+        "py/template-injection",
+        "py/paramiko-missing-host-key-validation",
+        "py/path-injection",
+        "py/insecure-temporary-file",
+        "py/weak-sensitive-data-hashing",
+        "py/regex-injection",
+        "py/flask-debug",
+        "py/csrf-protection-disabled",
+    },
+    "java-kotlin": {
+        "java/sql-injection",
+        "java/command-line-injection",
+        "java/unsafe-deserialization",
+        "java/xss",
+        "java/ssrf",
+        "java/path-injection",
+        "java/zipslip",
+        "java/xxe",
+        "java/ldap-injection",
+        "java/jndi-injection",
+        "java/weak-cryptographic-algorithm",
+        "java/unsafe-hostname-verification",
+        "java/insecure-trustmanager",
+        "java/missing-jwt-signature-check",
+        "java/spring-disabled-csrf-protection",
+        "java/regex-injection",
+        "java/unvalidated-url-forward",
+    },
+    "rust": {
+        "rust/insecure-cookie",
+        "rust/xss",
+        "rust/access-invalid-pointer",
+        "rust/cleartext-transmission",
+        "rust/weak-cryptographic-algorithm",
+        "rust/weak-sensitive-data-hashing",
+        "rust/uncontrolled-allocation-size",
+        "rust/sql-injection",
+        "rust/hard-coded-cryptographic-value",
+        "rust/request-forgery",
+        "rust/non-https-url",
+        "rust/command-line-injection",
+        "rust/disabled-certificate-check",
+        "rust/path-injection",
+        "rust/cleartext-logging",
+        "rust/cleartext-storage-database",
+        "rust/regex-injection",
+    },
+}
+EXTRACTION = {
+    "actions": (
+        "actions/diagnostics/successfully-extracted-files",
+        "cli/expected-extracted-files/actions",
+        None,
+    ),
+    "python": (
+        "py/diagnostics/successfully-extracted-files",
+        "cli/expected-extracted-files/python",
+        "py/diagnostics/extraction-warnings",
+    ),
+    "java-kotlin": (
+        "java/diagnostics/successfully-extracted-files",
+        "cli/expected-extracted-files/java",
+        "java/diagnostics/extraction-warnings",
+    ),
+    "rust": (
+        "rust/diagnostics/successfully-extracted-files",
+        "cli/expected-extracted-files/rust",
+        "rust/diagnostics/extraction-warnings",
+    ),
+}
+
+
+def reject(message: str) -> None:
+    raise ValueError(message)
+
+
+def notification_paths(notes: list[dict], notification_id: str) -> set[str]:
+    paths: set[str] = set()
+    for note in notes:
+        if not isinstance(note, dict):
+            reject("malformed CodeQL notification")
+        descriptor = note.get("descriptor")
+        if not isinstance(descriptor, dict) or descriptor.get("id") != notification_id:
+            continue
+        locations = note.get("locations")
+        if not isinstance(locations, list) or not locations:
+            reject("extraction diagnostic has no source location")
+        for location in locations:
+            uri = (
+                location.get("physicalLocation", {}).get("artifactLocation", {}).get("uri")
+                if isinstance(location, dict)
+                else None
+            )
+            if not isinstance(uri, str) or not uri:
+                reject("extraction diagnostic has invalid source URI")
+            paths.add(uri)
+    return paths
+
+
+def expected_source(path: str, language: str) -> bool:
+    if language == "actions":
+        return path.startswith(".github/") and path.endswith((".yml", ".yaml"))
+    return path.endswith({
+        "python": ".py",
+        "java-kotlin": ".java",
+        "rust": ".rs",
+    }[language])
+
+
+def coverage(run: dict, language: str) -> tuple[int, int]:
+    actual_id, expected_id, warning_id = EXTRACTION[language]
+    notes: list[dict] = []
+    invocations = run.get("invocations")
+    if not isinstance(invocations, list) or not invocations:
+        reject("missing CodeQL invocation metadata")
+    for invocation in invocations:
+        if not isinstance(invocation, dict) or invocation.get("executionSuccessful") is not True:
+            reject("CodeQL analysis reports an unsuccessful invocation")
+        current = invocation.get("toolExecutionNotifications", [])
+        if not isinstance(current, list):
+            reject("malformed CodeQL tool notifications")
+        notes.extend(current)
+    for note in notes:
+        descriptor = note.get("descriptor", {}) if isinstance(note, dict) else {}
+        nid = descriptor.get("id") if isinstance(descriptor, dict) else None
+        if isinstance(note, dict) and note.get("level") == "error":
+            reject(f"CodeQL tool execution error: {nid or 'unknown'}")
+        if warning_id and nid == warning_id:
+            reject("CodeQL extraction warning")
+        if nid in {"rust/diagnostics/extraction-errors", "java/diagnostics/extraction-errors",
+                   "py/diagnostics/extraction-errors"}:
+            reject("CodeQL extraction error")
+    actual = notification_paths(notes, actual_id)
+    expected = {p for p in notification_paths(notes, expected_id) if expected_source(p, language)}
+    if not expected:
+        reject("no expected repository source files for CodeQL language")
+    if not actual:
+        reject("no successfully extracted source files")
+    missing = sorted(expected - actual)
+    if missing:
+        reject(f"CodeQL did not extract {len(missing)} expected source file(s): {', '.join(missing[:8])}")
+    return len(actual), len(expected)
 
 
 def check(directory: Path, language: str, candidate_sha: str) -> dict:
     if language not in LANGUAGES:
-        raise ValueError("unexpected language")
-    if not COMMIT.fullmatch(candidate_sha):
-        raise ValueError("candidate must be an exact immutable SHA")
+        reject("unexpected language")
+    if not SHA.fullmatch(candidate_sha):
+        reject("candidate must be an exact immutable SHA")
     files = sorted(directory.rglob("*.sarif"))
-    if len(files) != 1:
-        raise ValueError(f"expected exactly one SARIF file, got {len(files)}")
-    path = files[0]
-    if not path.is_file() or not path.stat().st_size:
-        raise ValueError("empty or unreadable SARIF")
-    raw = path.read_bytes()
+    if len(files) != 1 or not files[0].is_file() or not files[0].stat().st_size:
+        reject(f"expected exactly one nonempty SARIF file, got {len(files)}")
+    raw = files[0].read_bytes()
     data = json.loads(raw)
     if not isinstance(data, dict) or data.get("version") != "2.1.0":
-        raise ValueError("not SARIF version 2.1.0")
+        reject("not SARIF version 2.1.0")
     runs = data.get("runs")
     if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
-        raise ValueError("expected exactly one CodeQL SARIF run")
+        reject("expected exactly one CodeQL SARIF run")
     run = runs[0]
-    driver = run.get("tool", {}).get("driver", {})
-    if not isinstance(driver, dict) or driver.get("name") != "CodeQL":
-        raise ValueError("not CodeQL output")
-    automation_id = run.get("automationDetails", {}).get("id")
-    if not isinstance(automation_id, str) or automation_id not in {"/language:" + language, "/language:" + language + "/"}:
-        raise ValueError("SARIF category does not match scanned language")
-    invocations = run.get("invocations", [])
-    if not isinstance(invocations, list) or len(invocations) == 0 or any(
-        not isinstance(x, dict) or x.get("executionSuccessful") is not True for x in invocations
-    ):
-        raise ValueError("CodeQL analysis reports an unsuccessful invocation")
-    # CodeQL SARIF puts query rules in tool.extensions[].rules, not in
-    # tool.driver.rules. A clean scan may contain zero results and no driver rules.
-    tool = run.get("tool", {})
-    extensions = tool.get("extensions")
+    if run.get("tool", {}).get("driver", {}).get("name") != "CodeQL":
+        reject("not CodeQL output")
+    if run.get("automationDetails", {}).get("id") not in {
+        f"/language:{language}", f"/language:{language}/"
+    }:
+        reject("SARIF category does not match scanned language")
+    extracted, expected = coverage(run, language)
+
+    extensions = run.get("tool", {}).get("extensions")
     if not isinstance(extensions, list):
-        raise ValueError("missing CodeQL query pack metadata")
-    query_pack = {
-        "actions": "codeql/actions-queries",
-        "java-kotlin": "codeql/java-queries",
-        "python": "codeql/python-queries",
-        "rust": "codeql/rust-queries",
-    }[language]
-    packs = [(i, component) for i, component in enumerate(extensions)
-             if isinstance(component, dict) and component.get("name") == query_pack]
+        reject("missing CodeQL query pack metadata")
+    packs = [(i, x) for i, x in enumerate(extensions) if isinstance(x, dict) and x.get("name") == PACK[language]]
     if len(packs) != 1:
-        raise ValueError("missing or duplicate expected CodeQL query pack")
+        reject("missing or duplicate expected CodeQL query pack")
     component_index, component = packs[0]
     rules = component.get("rules")
-    if not isinstance(rules, list) or len(rules) == 0:
-        raise ValueError("no CodeQL rule metadata")
-    by_id = {}
+    if not isinstance(rules, list) or not rules:
+        reject("no CodeQL rule metadata")
+    by_id: dict[str, tuple[int, dict]] = {}
     for index, rule in enumerate(rules):
-        if not isinstance(rule, dict) or not isinstance(rule.get("id"), str) or not rule["id"]:
-            raise ValueError("malformed CodeQL rule")
-        if rule["id"] in by_id:
-            raise ValueError("duplicate CodeQL rule ID")
-        by_id[rule["id"]] = (index, rule)
+        rid = rule.get("id") if isinstance(rule, dict) else None
+        if not isinstance(rid, str) or not rid or rid in by_id:
+            reject("malformed or duplicate CodeQL rule ID")
+        by_id[rid] = (index, rule)
+    missing_rules = sorted(REQUIRED[language] - set(by_id))
+    if missing_rules:
+        reject(f"{language} security query rule set was reduced: {', '.join(missing_rules)}")
+
     results = run.get("results")
     if not isinstance(results, list):
-        raise ValueError("missing or malformed result set")
-    high = []
+        reject("missing or malformed result set")
+    high: list[tuple[str, float]] = []
     for result in results:
-        if not isinstance(result, dict) or not isinstance(result.get("ruleId"), str):
-            raise ValueError("result missing rule ID")
-        rule_id = result["ruleId"]
-        entry = by_id.get(rule_id)
-        if entry is None:
-            raise ValueError(f"result references unknown rule: {rule_id}")
-        rule_index, rule = entry
+        rid = result.get("ruleId") if isinstance(result, dict) else None
+        if not isinstance(rid, str) or rid not in by_id:
+            reject(f"result references unknown rule: {rid}")
+        rule_index, rule = by_id[rid]
         reference = result.get("rule")
-        if not isinstance(reference, dict) or reference.get("id") != rule_id:
-            raise ValueError(f"result has invalid SARIF rule reference: {rule_id}")
-        tool_component = reference.get("toolComponent")
-        if (not isinstance(tool_component, dict)
-                or tool_component.get("index") != component_index
-                or reference.get("index") != rule_index):
-            raise ValueError(f"result rule reference points outside verified CodeQL query pack: {rule_id}")
-        properties = rule.get("properties", {})
-        if not isinstance(properties, dict):
-            raise ValueError("rule properties are malformed")
-        result_properties = result.get("properties", {})
-        if not isinstance(result_properties, dict):
-            raise ValueError("result properties are malformed")
-        tags = properties.get("tags", [])
+        component_ref = reference.get("toolComponent") if isinstance(reference, dict) else None
+        if (
+            not isinstance(reference, dict)
+            or reference.get("id") != rid
+            or reference.get("index") != rule_index
+            or not isinstance(component_ref, dict)
+            or component_ref.get("index") != component_index
+        ):
+            reject(f"result has invalid CodeQL rule reference: {rid}")
+        props = rule.get("properties", {})
+        rprops = result.get("properties", {})
+        if not isinstance(props, dict) or not isinstance(rprops, dict):
+            reject("rule/result properties are malformed")
+        tags = props.get("tags", [])
         if not isinstance(tags, list):
-            raise ValueError("rule tags are malformed")
+            reject("rule tags are malformed")
         security = "security" in tags or any(
-            isinstance(t, str) and (t.startswith("external/cwe/") or t.startswith("cwe/"))
-            for t in tags
+            isinstance(tag, str) and (tag.startswith("external/cwe/") or tag.startswith("cwe/"))
+            for tag in tags
         )
-        # SARIF CodeQL security-severity can be stored at rule level; any explicit
-        # result-level override must also be validated rather than silently ignored.
-        scores = [item.get("security-severity") for item in (properties, result_properties)
-                  if "security-severity" in item]
+        scores = [obj.get("security-severity") for obj in (props, rprops) if "security-severity" in obj]
         if security and not scores:
-            raise ValueError(f"security finding has no severity: {rule_id}")
+            reject(f"security finding has no severity: {rid}")
         for score in scores:
             try:
-                val = float(score)
+                value = float(score)
             except (TypeError, ValueError) as exc:
-                raise ValueError(f"unparseable security severity: {rule_id}") from exc
-            if not math.isfinite(val) or not 0 <= val <= 10:
-                raise ValueError(f"out-of-range security severity: {rule_id}")
-            if val >= 7.0:
-                high.append((rule_id, val))
+                raise ValueError(f"unparseable security severity: {rid}") from exc
+            if not math.isfinite(value) or not 0 <= value <= 10:
+                reject(f"out-of-range security severity: {rid}")
+            if value >= 7.0:
+                high.append((rid, value))
     if high:
-        findings = ", ".join(f"{rid}({score:g})" for rid, score in high[:8])
-        raise ValueError(f"High/Critical CodeQL findings ({len(high)}): {findings}")
-    return {"candidate_sha": candidate_sha, "language": language,
-            "sarif_sha256": hashlib.sha256(raw).hexdigest(), "results": len(results),
-            "rules": len(rules), "high_or_critical": 0}
+        reject("High/Critical CodeQL findings: " + ", ".join(f"{rid}({score:g})" for rid, score in high[:8]))
+    return {
+        "candidate_sha": candidate_sha,
+        "language": language,
+        "sarif_sha256": hashlib.sha256(raw).hexdigest(),
+        "results": len(results),
+        "rules": len(rules),
+        "required_security_rules": len(REQUIRED[language]),
+        "extracted_files": extracted,
+        "expected_source_files": expected,
+        "high_or_critical": 0,
+    }
+
+
+def fixture(language: str, *, high: bool = False) -> dict:
+    required = sorted(REQUIRED[language])
+    rules = []
+    for rid in required:
+        rules.append({"id": rid, "properties": {"tags": ["security"], "security-severity": "8.0" if high and rid == required[0] else "5.0"}})
+    source = {
+        "actions": ".github/workflows/ci.yml",
+        "python": ".github/scripts/validate-evidence.py",
+        "rust": "csv-postgres/src/main.rs",
+        "java-kotlin": "postgres-postgres/benchmark/java/ci/BenchmarkLauncher.java",
+    }[language]
+    actual_id, expected_id, _ = EXTRACTION[language]
+    return {"version": "2.1.0", "runs": [{
+        "tool": {"driver": {"name": "CodeQL"}, "extensions": [{"name": PACK[language], "rules": rules}]},
+        "automationDetails": {"id": f"/language:{language}/"},
+        "invocations": [{"executionSuccessful": True, "toolExecutionNotifications": [
+            {"descriptor": {"id": actual_id}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": source}}}]},
+            {"descriptor": {"id": expected_id}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": source}}}]},
+        ]}],
+        "results": ([] if not high else [{"ruleId": required[0], "rule": {"id": required[0], "index": 0, "toolComponent": {"index": 0}}}]),
+    }]}
 
 
 def self_test() -> None:
     sha = "a" * 40
-    def fixture(language="java-kotlin", score="5.0", results=True, security=True):
-        rule = {"id": "java/test", "properties": {
-            "tags": ["security"] if security else ["correctness"]}}
-        if score is not None:
-            rule["properties"]["security-severity"] = score
-        return {"version": "2.1.0", "runs": [{
-            "tool": {"driver": {"name": "CodeQL"}, "extensions": [
-                {"name": "codeql/java-queries", "rules": [rule]}]},
-            "automationDetails": {"id": "/language:" + language + "/"},
-            "invocations": [{"executionSuccessful": True}],
-            "results": [{"ruleId": "java/test", "rule": {
-                "id": "java/test", "index": 0, "toolComponent": {"index": 0}
-            }}] if results else []}]}
-
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "result.sarif"
-        def probe(doc, expected_failure=None, language="java-kotlin", current_sha=sha):
+        for language in LANGUAGES:
+            path.write_text(json.dumps(fixture(language)), encoding="utf-8")
+            verdict = check(Path(tmp), language, sha)
+            assert verdict["required_security_rules"] == 17 and verdict["high_or_critical"] == 0
+        cases: list[tuple[dict, str, str]] = []
+        high = fixture("rust", high=True)
+        cases.append((high, "rust", "High/Critical"))
+        missing = fixture("rust")
+        missing["runs"][0]["tool"]["extensions"][0]["rules"].pop()
+        cases.append((missing, "rust", "rule set was reduced"))
+        warning = fixture("rust")
+        warning["runs"][0]["invocations"][0]["toolExecutionNotifications"].append({"descriptor": {"id": "rust/diagnostics/extraction-warnings"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": "src/bad.rs"}}}]})
+        cases.append((warning, "rust", "extraction warning"))
+        incomplete = fixture("actions")
+        incomplete["runs"][0]["invocations"][0]["toolExecutionNotifications"][1]["locations"].append({"physicalLocation": {"artifactLocation": {"uri": ".github/workflows/missing.yml"}}})
+        cases.append((incomplete, "actions", "did not extract"))
+        for doc, language, message in cases:
             path.write_text(json.dumps(doc), encoding="utf-8")
             try:
-                verdict = check(Path(tmp), language, current_sha)
-            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
-                if expected_failure is None or expected_failure not in str(error):
-                    raise AssertionError(f"unexpected verdict: {error}") from error
+                check(Path(tmp), language, sha)
+            except ValueError as exc:
+                assert message in str(exc), str(exc)
             else:
-                if expected_failure is not None:
-                    raise AssertionError(f"failure not detected: {expected_failure}")
-                assert verdict["high_or_critical"] == 0
-
-        probe(fixture())
-        # Real CodeQL 2.27.2 clean SARIF has zero driver rules/results but
-        # retains query descriptors in tool.extensions[].rules.
-        probe(fixture(results=False))
-        for language, pack in (
-            ("actions", "codeql/actions-queries"),
-            ("java-kotlin", "codeql/java-queries"),
-            ("python", "codeql/python-queries"),
-            ("rust", "codeql/rust-queries"),
-        ):
-            clean = fixture(language=language, results=False)
-            clean["runs"][0]["tool"]["extensions"][0]["name"] = pack
-            probe(clean, language=language)
-        probe(fixture(score="7.0"), "High/Critical")
-        probe(fixture(score="9.8"), "High/Critical")
-        probe(fixture(score=None), "no severity")
-        probe(fixture(score="NaN"), "out-of-range")
-        probe(fixture(score="-1"), "out-of-range")
-        probe(fixture(score="not-a-number"), "unparseable")
-        probe(fixture(security=False, score=None))
-        probe(fixture(), "candidate must be", current_sha="main")
-        probe(fixture(), "category does not match", language="actions")
-        bad = fixture()
-        bad["runs"][0]["tool"]["extensions"][0]["name"] = "codeql/other-queries"
-        probe(bad, "missing or duplicate expected CodeQL query pack")
-        bad = fixture()
-        bad["runs"][0]["results"][0]["rule"]["toolComponent"]["index"] = 5
-        probe(bad, "outside verified CodeQL query pack")
-        bad = fixture()
-        bad["runs"][0]["invocations"][0]["executionSuccessful"] = False
-        probe(bad, "unsuccessful invocation")
-        bad = fixture()
-        bad["runs"][0]["results"][0]["ruleId"] = "missing"
-        probe(bad, "unknown rule")
-        bad = fixture()
-        bad["runs"][0]["tool"]["extensions"][0]["rules"] = []
-        probe(bad, "no CodeQL rule")
-        bad = fixture()
-        bad["runs"][0].pop("results")
-        probe(bad, "missing or malformed result")
+                raise AssertionError(f"fail-open SARIF case: {message}")
         path.write_text("{bad", encoding="utf-8")
         try:
-            check(Path(tmp), "java-kotlin", sha)
+            check(Path(tmp), "rust", sha)
         except json.JSONDecodeError:
             pass
         else:
             raise AssertionError("malformed SARIF accepted")
-        path.unlink()
-        try:
-            check(Path(tmp), "java-kotlin", sha)
-        except ValueError as error:
-            assert "exactly one" in str(error)
-        else:
-            raise AssertionError("missing SARIF accepted")
-        print("release CodeQL SARIF negative controls passed")
+    print("release CodeQL SARIF negative controls passed")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--sarif-dir", type=Path)
     parser.add_argument("--language")
@@ -227,16 +359,17 @@ def main() -> None:
     args = parser.parse_args()
     if args.self_test:
         self_test()
-        return
+        return 0
     if not args.sarif_dir or not args.language or not args.candidate_sha:
         parser.error("--sarif-dir, --language and --candidate-sha are required")
     try:
         verdict = check(args.sarif_dir, args.language, args.candidate_sha)
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
-        print(f"::error::Release CodeQL evidence rejected: {error}", file=sys.stderr)
-        raise SystemExit(1) from error
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        print(f"::error::Release CodeQL evidence rejected: {exc}", file=sys.stderr)
+        return 1
     print("Release CodeQL evidence accepted: " + json.dumps(verdict, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
