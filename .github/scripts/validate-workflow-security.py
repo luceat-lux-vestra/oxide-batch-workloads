@@ -7,6 +7,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 USES = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
+EPHEMERAL_WORKFLOW = re.compile(r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\\.(?:ya?ml)$", re.IGNORECASE)
+LIFECYCLE_OWNER = re.compile(r"^\\s*#\\s*lifecycle-owner:\\s*(\\S.*)$", re.IGNORECASE)
+LIFECYCLE_RETIRE = re.compile(r"^\\s*#\\s*lifecycle-retire:\\s*(\\S.*)$", re.IGNORECASE)
 
 
 class WorkflowSecurityError(ValueError):
@@ -54,6 +57,30 @@ def validate_action_pins(root=ROOT):
                 violations.append(f"{path.relative_to(root)}:{lineno}: external action ref is not a full SHA: {value}")
     if violations:
         fail("\n".join(violations))
+
+
+def validate_ephemeral_workflow_lifecycle(root=ROOT):
+    """Require explicit ownership/retirement metadata for ephemeral workflows."""
+    violations = []
+    for path in workflow_paths(root):
+        if not EPHEMERAL_WORKFLOW.fullmatch(path.name):
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()[:40]
+        owner = next(
+            (match.group(1).strip() for line in lines if (match := LIFECYCLE_OWNER.match(line))),
+            "",
+        )
+        retire = next(
+            (match.group(1).strip() for line in lines if (match := LIFECYCLE_RETIRE.match(line))),
+            "",
+        )
+        if not owner or not retire:
+            violations.append(
+                f"{path.relative_to(root)}: ephemeral workflow requires non-empty "
+                "# lifecycle-owner: and # lifecycle-retire: comments"
+            )
+    if violations:
+        fail("\\n".join(violations))
 
 
 def validate_label_automation_boundary(root=ROOT):
@@ -132,6 +159,7 @@ def validate_audit_permission_boundaries(root=ROOT):
 
 def validate(root=ROOT):
     validate_action_pins(root)
+    validate_ephemeral_workflow_lifecycle(root)
     validate_label_automation_boundary(root)
     validate_audit_permission_boundaries(root)
 
