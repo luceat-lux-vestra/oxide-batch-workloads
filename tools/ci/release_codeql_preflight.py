@@ -81,11 +81,11 @@ def metadata(run: dict, wf: dict, jobs: dict, artifacts: dict, repo: str, sha: s
         reject("scan has invalid or future timestamp")
     expected_jobs = {f"codeql ({language})" for language in LANGUAGES}
     rows = jobs.get("jobs")
-    if jobs.get("total_count") != len(LANGUAGES) or not isinstance(rows, list) or len(rows) != 2 or {row.get("name") for row in rows if isinstance(row, dict)} != expected_jobs or any(row.get("status") != "completed" or row.get("conclusion") != "success" for row in rows):
+    if jobs.get("total_count") != len(LANGUAGES) or not isinstance(rows, list) or len(rows) != len(LANGUAGES) or {row.get("name") for row in rows if isinstance(row, dict)} != expected_jobs or any(row.get("status") != "completed" or row.get("conclusion") != "success" for row in rows):
         reject("missing, extra, incomplete or unsuccessful CodeQL language jobs")
     expected_artifacts = {*(f"codeql-{sha}-{language}" for language in LANGUAGES), *(f"codeql-source-{sha}-{language}" for language in LANGUAGES)}
     rows = artifacts.get("artifacts")
-    if artifacts.get("total_count") != 2 * len(LANGUAGES) or not isinstance(rows, list) or len(rows) != 4 or {row.get("name") for row in rows if isinstance(row, dict)} != expected_artifacts:
+    if artifacts.get("total_count") != 2 * len(LANGUAGES) or not isinstance(rows, list) or len(rows) != 2 * len(LANGUAGES) or {row.get("name") for row in rows if isinstance(row, dict)} != expected_artifacts:
         reject("expected two SARIF plus two source-provenance artifacts")
     for row in rows:
         if row.get("expired") is not False or not isinstance(row.get("id"), int) or not isinstance(row.get("size_in_bytes"), int) or row["size_in_bytes"] <= 0 or row.get("workflow_run", {}).get("head_sha") not in (None, run.get("head_sha")):
