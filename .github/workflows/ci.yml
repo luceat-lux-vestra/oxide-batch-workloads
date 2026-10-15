@@ -11,7 +11,6 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
 
 concurrency:
@@ -22,6 +21,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Diff-scoped dependency review remains an independent semantic authority.
+  # The previous separate workflow is consolidated to avoid remote status polling.
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Review dependency changes
+        if: github.event.pull_request.draft == false
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
   # Knows only the canonical registry and how to validate/discover it, plus
   # repository-wide provenance/evidence policy. Never knows a workload's
   # business logic.
@@ -33,93 +49,6 @@ jobs:
       workloads: ${{ steps.discover.outputs.workloads }}
       supply-chain-workloads: ${{ steps.discover-supply-chain.outputs.workloads }}
     steps:
-      - name: Resolve exact-SHA Fast evidence
-        id: fast-evidence
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_JOB: fast
-          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          set -euo pipefail
-          if [ "$SAME_REPOSITORY" != "true" ]; then
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-            echo "Fork PR has no trusted base-repository Fast run; Final executes the full local validation."
-            exit 0
-          fi
-
-          # Keep exact-SHA Fast evidence mandatory, but retry bounded transport failures.
-          # Non-transient API errors, malformed JSON and unverified Fast jobs fail closed.
-          trusted_api_json() {
-            local path="$1" output rc attempt
-            for attempt in 1 2 3 4; do
-              if output="$(timeout 25s gh api -H 'Accept: application/vnd.github+json' "$path" 2>&1)"; then
-                printf '%s\n' "$output"
-                return 0
-              else
-                rc=$?
-              fi
-              if [ "$rc" -ne 124 ] \
-                && [[ "$output" != *"HTTP 429"* ]] \
-                && [[ "$output" != *"HTTP 500"* ]] \
-                && [[ "$output" != *"HTTP 502"* ]] \
-                && [[ "$output" != *"HTTP 503"* ]] \
-                && [[ "$output" != *"HTTP 504"* ]]; then
-                printf '::error::Non-retryable Fast evidence API failure: %s\n' "$output" >&2
-                return 1
-              fi
-              printf 'Fast evidence API transport failure (attempt %s of 4): %s\n' "$attempt" "$output" >&2
-              if [ "$attempt" -lt 4 ]; then sleep "$((attempt * 2))"; fi
-            done
-            echo '::error::Fast evidence API remained unavailable after 4 bounded attempts.' >&2
-            return 1
-          }
-
-          base_workflow_sha="$(trusted_api_json "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$BASE_SHA" | jq -er '.sha')"
-          head_workflow_sha="$(trusted_api_json "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$EXPECTED_SHA" | jq -er '.sha')"
-          if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-            echo "Fast producer workflow changed on this PR; Final will execute the local registry checks instead of trusting self-modified evidence."
-            exit 0
-          fi
-
-          for _ in $(seq 1 60); do
-            runs="$(trusted_api_json "repos/$GITHUB_REPOSITORY/actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100")"
-            latest="$(jq -c --arg sha "$EXPECTED_SHA" '
-              [.workflow_runs[]
-               | select(.head_sha == $sha and .event == "push")]
-              | if length == 0 then empty else max_by(.id) end
-            ' <<<"$runs")"
-            if [ -z "$latest" ]; then sleep 5; continue; fi
-            status="$(jq -r '.status' <<<"$latest")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
-            if [ "$status" != "completed" ]; then sleep 5; continue; fi
-            if [ "$conclusion" != "success" ]; then
-              echo "::error::Canonical Fast workflow for exact HEAD $EXPECTED_SHA concluded '$conclusion'; classify/remediate it before Final."
-              exit 1
-            fi
-            run_id="$(jq -r '.id' <<<"$latest")"
-            jobs="$(trusted_api_json "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
-            matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
-            if [ "$matching_jobs" != "1" ]; then
-              echo "::error::Canonical Fast run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
-              exit 1
-            fi
-            job_status="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | .status' <<<"$jobs")"
-            job_conclusion="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")"
-            if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
-              echo "::error::Canonical Fast job for exact HEAD $EXPECTED_SHA is not completed/success (status=$job_status conclusion=$job_conclusion)."
-              exit 1
-            fi
-            echo "reuse=true" >> "$GITHUB_OUTPUT"
-            echo "Reusing canonical successful Fast evidence for exact HEAD $EXPECTED_SHA."
-            exit 0
-          done
-          echo "::error::Timed out waiting for canonical exact-SHA Fast evidence at $EXPECTED_SHA."
-          exit 1
-
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,11 +56,11 @@ jobs:
           fetch-depth: 0
 
       - name: Test fail-closed workload registry validation
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test-workload-registry.py
 
       - name: Validate canonical workload registry
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/validate-workload-registry.py
 
       - name: Validate GitHub Actions semantics and trust boundaries
@@ -682,3 +611,66 @@ jobs:
             --results-dir "${{ runner.temp }}/results" \
             --discovery-ok "$DISCOVERY_OK" \
             --upstream-job-ok "$UPSTREAM_JOB_OK"
+
+  # All semantic authorities run in this PR DAG. Existing shard aggregates
+  # enforce exact identity, full coverage, and policy-correct artifact results.
+  merge-gate:
+    name: Merge Gate
+    needs:
+      - discover
+      - ci-shard
+      - msrv-shard
+      - supply-chain-shard
+      - workloads-ci
+      - workloads-msrv
+      - supply-chain
+      - dependency-review
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every applicable authority to pass
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          event = os.environ["GITHUB_EVENT_NAME"]
+          required = {
+              "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
+              "workloads-ci", "workloads-msrv", "supply-chain",
+          }
+          expected = required | {"dependency-review"}
+          errors = []
+          if set(needs) != expected:
+              errors.append(f"unexpected/missing DAG jobs: expected={sorted(expected)}, observed={sorted(needs)}")
+          if event == "pull_request" and os.environ.get("PR_DRAFT") == "true":
+              errors.append("draft pull request has not received complete semantic validation")
+
+          for name in sorted(required):
+              result = needs.get(name, {}).get("result")
+              if result != "success":
+                  errors.append(f"{name}: expected success, observed {result!r}")
+
+          dependency_result = needs.get("dependency-review", {}).get("result")
+          expected_dependency = "success" if event == "pull_request" else "skipped"
+          if event not in {"pull_request", "workflow_dispatch"}:
+              errors.append(f"unexpected CI event: {event!r}")
+          if dependency_result != expected_dependency:
+              errors.append(
+                  f"dependency-review: expected {expected_dependency} on {event}, "
+                  f"observed {dependency_result!r}"
+              )
+
+          if errors:
+              for reason in errors:
+                  print(f"::error::{reason}")
+              sys.exit(1)
+          print("Merge Gate: every applicable dependency and semantic aggregate succeeded")
+          PY

@@ -142,23 +142,31 @@ Discovery failure, failed/cancelled/skipped shards, missing or duplicate
 results, unexpected extra results, malformed result files, policy/outcome
 mismatch, and incomplete coverage all fail closed.
 
-## Protected stable contexts
+## Protected PR merge authority
 
-The staged migrations from #28 and #32 are complete. The live `Protect main`
-ruleset requires exactly these stable contexts:
+The PR `CI` workflow now hosts the exact existing `dependency-review` check,
+three artifact-verifying aggregates (`workloads-ci`, `workloads-msrv`,
+`supply-chain`), and a final fail-closed `Merge Gate` job. The final job
+requires every applicable discovery, shard, and aggregate job to succeed, and
+requires `dependency-review` for PR events. A draft PR is not considered
+validated; manual CI dispatch does not invent a dependency-diff review.
+The per-shard artifact completeness/duplicate and MSRV disposition checks remain
+owned by `aggregate_verdict.py`, not by the coarse final gate.
 
-- `dependency-review`
-- `workloads-ci`
-- `workloads-msrv`
-- `supply-chain`
+The former contexts `ci` and `msrv` are obsolete; per-entry shard names are
+implementation details, never standalone branch-protection requirements.
+Before the live Ruleset #21944159 is changed, it still requires the previous
+four contexts (`dependency-review`, `workloads-ci`, `workloads-msrv`, and
+`supply-chain`). Retain all four until the new final `Merge Gate` has
+passed on the exact PR HEAD and merged protected main. Only then replace the
+four required contexts with the observed `Merge Gate` check. Never remove
+protection ahead of verifying the new producer.
 
-The former compatibility contexts `ci` and `msrv` have been removed. Per-entry
-shard names are implementation details and must never be registered as required
-branch-protection contexts.
-
-`dependency-review` remains separate because it protects dependency changes in
-the PR diff. It is not a substitute for the full-current-graph `supply-chain`
-control.
+`dependency-review` continues to protect dependency changes in the PR diff;
+it is not replaced by full-current-graph `supply-chain` validation. The
+independent push-only Fast branch workflow remains an **advisory early feedback**
+producer; PR merge authority no longer polls or reuses its run. Registry
+tests and validation run locally within `discover` before fan-out.
 
 ## Repository-wide supply-chain policy
 
