@@ -146,10 +146,7 @@
       "classification": "required",
       "readback": "ruleset-api",
       "expected": [
-        "dependency-review",
-        "supply-chain",
-        "workloads-ci",
-        "workloads-msrv"
+        "Merge Gate"
       ]
     },
     {

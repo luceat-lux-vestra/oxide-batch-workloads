@@ -126,20 +126,16 @@ full contract, including the structural separation between real `workloads`
 and bounded CI `fixtures` and the per-entry MSRV policy resolved from each
 `Cargo.toml`.
 
-The protected stable workload contexts are `workloads-ci` and
-`workloads-msrv`, computed by `.github/scripts/aggregate_verdict.py`; the old
-single-workload compatibility contexts `ci` and `msrv` were removed after the
-staged ruleset migration completed. `supply-chain` is also a protected stable
-aggregate for every registered real workload's locked dependency graph, while
-`dependency-review` remains separately required for its distinct diff-scoped
-dependency-change coverage.
-
-The live `Protect main` ruleset therefore requires these four stable contexts:
-
-- `dependency-review`
-- `workloads-ci`
-- `workloads-msrv`
-- `supply-chain`
+The stable workload aggregates are `workloads-ci` and
+`workloads-msrv` (computed by `.github/scripts/aggregate_verdict.py`),
+`supply-chain` for locked dependency graphs, and `dependency-review` for
+diff-scoped dependency changes. The live protected `main` ruleset requires the
+single **`Merge Gate`** status context. This is not a reduction of semantic
+coverage: `.github/workflows/ci.yml` implements `Merge Gate` as a fail-closed
+aggregate that requires successful discovery, workload CI/MSRV shards, the
+`workloads-ci`, `workloads-msrv`, and `supply-chain` aggregates, and
+`dependency-review` for pull requests. The gate rejects missing, skipped,
+or unsuccessful mandatory dependencies.
 
 Failure investigation remains a fail-closed engineering discipline, but no
 dedicated PR-body declaration, `failure-triage` status context, or sticky
