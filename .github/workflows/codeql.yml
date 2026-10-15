@@ -36,10 +36,12 @@ jobs:
             build-mode: none
           - language: python
             build-mode: none
+          # Match the previously passing GitHub default-setup build mode.
+          # Rust rejects autobuild; Java's Maven reactor is nested below repository root.
           - language: rust
-            build-mode: autobuild
+            build-mode: none
           - language: java-kotlin
-            build-mode: autobuild
+            build-mode: none
     env:
       EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
     steps:
@@ -65,15 +67,23 @@ jobs:
       - name: Verify checked-out commit
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
+      - name: Reject unscanned Kotlin sources
+        if: matrix.language == 'java-kotlin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CodeQL build-mode=none analyzes Java but does not analyze Kotlin.
+          # Require instrumented Java 25 Maven build if Kotlin is ever introduced.
+          if find . -type f \( -name '*.kt' -o -name '*.kts' \) -not -path './.git/*' -print -quit | grep -q .; then
+            echo "::error::Kotlin detected; switch java-kotlin to manual build mode with a Java 25 Maven build"
+            exit 1
+          fi
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-
-      - name: Autobuild compiled-language sources
-        if: matrix.build-mode == 'autobuild'
-        uses: github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
 
       - name: Analyze CodeQL
         id: analyze
