@@ -367,6 +367,11 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         self.assertNotIn("actions/workflows/fast-branch.yml/runs", discovery)
         self.assertNotIn("actions/runs/$run_id/jobs", discovery)
         self.assertNotIn("for _ in $(seq 1 60)", discovery)
+        self.assertNotIn("gh api", discovery)
+        # Retain independent early feedback, but never use its push run for PR authority.
+        fast = (MODULE_PATH.parents[1] / "workflows" / "fast-branch.yml").read_text(encoding="utf-8")
+        self.assertIn("  push:", fast)
+        self.assertNotIn("  pull_request:", fast)
         self.assertIn("  dependency-review:\n", source)
         self.assertIn("name: dependency-review", source)
         self.assertIn("actions/dependency-review-action@", source)
