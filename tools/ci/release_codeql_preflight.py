@@ -155,6 +155,8 @@ def verify_live(repo: str, sha: str, verdict: Path, timeout_seconds: int = 4200,
         reject("ambiguous rerun attempt for exact candidate")
     if len(active) > 1:
         reject("ambiguous active exact-source CodeQL scans")
+    if active and len(exact_runs) != 1:
+        reject("ambiguous active and completed exact candidate scans")
 
     selected: int | None = None
     if active:
@@ -185,8 +187,15 @@ def verify_live(repo: str, sha: str, verdict: Path, timeout_seconds: int = 4200,
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         ancestry(repo, sha)
+        # Recheck the complete exact-candidate set on each poll. A second run
+        # can race with our auto-dispatch or appear after the initial API list.
+        observed = [row for row in candidates(repo, wf) if exact(row, sha)]
+        if len(observed) > 1:
+            reject("ambiguous concurrent exact candidate CodeQL scans")
+        if selected is not None and observed and observed[0].get("id") != selected:
+            reject("selected CodeQL run was replaced during polling")
         if selected is None:
-            newly = [row for row in candidates(repo, wf) if row.get("id") not in before and row.get("event") == "workflow_dispatch" and exact(row, sha) and row.get("run_attempt") == 1]
+            newly = [row for row in observed if row.get("id") not in before and row.get("event") == "workflow_dispatch" and row.get("run_attempt") == 1]
             if len(newly) > 1:
                 reject("ambiguous auto-dispatched CodeQL runs")
             if newly:
@@ -279,6 +288,7 @@ def self_test() -> None:
         calls = [initial if isinstance(initial, list) else ([] if initial is None else [initial])]
         if initial is None:
             calls.append([candidate("queued")])
+        calls.append([candidate("queued")] if initial is None else (initial if isinstance(initial, list) else [initial]))
         with (
             mock.patch.dict(os.environ, {"GH_TOKEN": "fixture"}),
             mock.patch.object(sys.modules[__name__], "ancestry", return_value=sha),
@@ -308,6 +318,27 @@ def self_test() -> None:
     exercise([candidate("completed", "success", 71), candidate("completed", "success", 72)], None, False, "ambiguous duplicate")
     exercise(candidate("in_progress", attempt=2), None, False, "ambiguous rerun")
     exercise([candidate("in_progress", run_id=71), candidate("queued", run_id=72)], None, False, "ambiguous active")
+    exercise([candidate("in_progress", run_id=71), candidate("completed", "success", 72)], None, False, "ambiguous active and completed")
+    exercise(candidate("in_progress"), {**candidate("completed", "success"), "display_title": "CodeQL source " + "b" * 40}, False, "changed candidate identity")
+
+    with (
+        mock.patch.dict(os.environ, {"GH_TOKEN": "fixture"}),
+        mock.patch.object(sys.modules[__name__], "ancestry", return_value=sha),
+        mock.patch.object(sys.modules[__name__], "workflow", return_value=wf),
+        mock.patch.object(sys.modules[__name__], "candidates", side_effect=[
+            [], [candidate("queued", run_id=71)],
+            [candidate("queued", run_id=71), candidate("queued", run_id=72)]
+        ]),
+        mock.patch.object(sys.modules[__name__], "gh", return_value="") as dispatched,
+        mock.patch.object(time, "monotonic", side_effect=[0, 0]),
+    ):
+        try:
+            verify_live(repo, sha, Path("verdict.py"), 10, 0)
+        except ValueError as exc:
+            assert "ambiguous concurrent" in str(exc)
+        else:
+            raise AssertionError("post-dispatch duplicate scan race was accepted")
+        assert dispatched.call_count == 1
 
     with mock.patch.dict(os.environ, {"GH_TOKEN": "fixture"}), mock.patch.object(sys.modules[__name__], "ancestry", return_value=sha), mock.patch.object(sys.modules[__name__], "workflow", return_value=wf), mock.patch.object(sys.modules[__name__], "candidates", return_value=[]), mock.patch.object(sys.modules[__name__], "gh", side_effect=subprocess.CalledProcessError(1, ["gh"])):
         try:
