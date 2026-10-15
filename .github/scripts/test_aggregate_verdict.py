@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -355,16 +357,94 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
                 self.assertNotIn("Fetch shard job conclusions", section)
                 self.assertNotIn("steps.jobs.outputs.result", section)
 
-    def test_fast_evidence_api_transport_retries_preserve_exact_head(self) -> None:
+    def test_pr_discovery_is_local_and_fast_is_advisory(self) -> None:
         source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
         discovery = source.split("  discover:\n", 1)[1].split("  ci-shard:\n", 1)[0]
-        self.assertIn("trusted_api_json()", discovery)
-        self.assertIn("timeout 25s gh api", discovery)
-        self.assertIn('for attempt in 1 2 3 4; do', discovery)
-        self.assertIn('Fast evidence API remained unavailable', discovery)
-        self.assertIn('head_sha=$EXPECTED_SHA', discovery)
-        self.assertIn('job_conclusion" != "success"', discovery)
-        self.assertIn('matching_jobs" != "1"', discovery)
+        self.assertIn("python3 .github/scripts/test-workload-registry.py", discovery)
+        self.assertIn("python3 .github/scripts/validate-workload-registry.py", discovery)
+        self.assertNotIn("fast-evidence", discovery)
+        self.assertNotIn("trusted_api_json()", discovery)
+        self.assertNotIn("actions/workflows/fast-branch.yml/runs", discovery)
+        self.assertNotIn("actions/runs/$run_id/jobs", discovery)
+        self.assertNotIn("for _ in $(seq 1 60)", discovery)
+        self.assertIn("  dependency-review:\n", source)
+        self.assertIn("name: dependency-review", source)
+        self.assertIn("actions/dependency-review-action@", source)
+        self.assertIn("  merge-gate:\n", source)
+
+    def test_final_gate_declares_all_semantic_authorities(self) -> None:
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        gate = source.split("  merge-gate:\n", 1)[1]
+        self.assertIn("    if: always()", gate)
+        self.assertIn("    name: Merge Gate", gate)
+        for name in (
+            "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
+            "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"      - {name}\n", gate)
+
+    def test_final_gate_rejects_adversarial_job_results(self) -> None:
+        # Execute the *actual* inline GitHub Actions gate Python, rather than
+        # duplicating verdict logic in a test-only imitation.
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        gate = source.split("  merge-gate:\n", 1)[1]
+        program = gate.split("          python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+        program = "\n".join(line.removeprefix("          ") for line in program.splitlines()) + "\n"
+        names = {
+            "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
+            "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+        }
+
+        def run(
+            changes: dict[str, str] | None = None,
+            *,
+            removed: str | None = None,
+            extra: str | None = None,
+            event: str = "pull_request",
+            draft: str = "false",
+        ) -> subprocess.CompletedProcess[str]:
+            values = {name: {"result": "success"} for name in names}
+            if event == "workflow_dispatch":
+                values["dependency-review"] = {"result": "skipped"}
+            for name, result in (changes or {}).items():
+                values[name] = {"result": result}
+            if removed is not None:
+                del values[removed]
+            if extra is not None:
+                values[extra] = {"result": "success"}
+            return subprocess.run(
+                [sys.executable, "-c", program],
+                env={**os.environ, "NEEDS_JSON": json.dumps(values),
+                     "GITHUB_EVENT_NAME": event, "PR_DRAFT": draft},
+                capture_output=True, text=True, check=False,
+            )
+
+        for label, kwargs in (
+            ("valid PR", {}),
+            ("valid manual", {"event": "workflow_dispatch"}),
+        ):
+            with self.subTest(label=label):
+                actual = run(**kwargs)
+                self.assertEqual(actual.returncode, 0, actual.stdout + actual.stderr)
+
+        for label, kwargs in (
+            ("missing shard", {"removed": "ci-shard"}),
+            ("missing dependency", {"removed": "dependency-review"}),
+            ("unexpected extra", {"extra": "untrusted-observer"}),
+            ("failed aggregate", {"changes": {"workloads-msrv": "failure"}}),
+            ("cancelled shard", {"changes": {"supply-chain-shard": "cancelled"}}),
+            ("skipped discovery", {"changes": {"discover": "skipped"}}),
+            ("skipped PR review", {"changes": {"dependency-review": "skipped"}}),
+            ("manual claimed diff review", {"event": "workflow_dispatch",
+                                             "changes": {"dependency-review": "success"}}),
+            ("draft", {"draft": "true"}),
+            ("unrecognized event", {"event": "push"}),
+        ):
+            with self.subTest(label=label):
+                actual = run(**kwargs)
+                self.assertNotEqual(actual.returncode, 0, label + ": unexpected pass")
+                self.assertIn("::error::", actual.stdout)
 
 
 
