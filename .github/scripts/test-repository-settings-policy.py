@@ -96,7 +96,7 @@ class RepositorySettingsPolicyTests(unittest.TestCase):
         control = next(c for c in self.policy["controls"] if c["id"] == "ruleset.required_status_contexts")
         self.assertCountEqual(
             control["expected"],
-            ["dependency-review", "supply-chain", "workloads-ci", "workloads-msrv"],
+            ["Merge Gate"],
         )
 
     def test_zero_approval_policy_does_not_claim_extra_approval_as_effective(self) -> None:
