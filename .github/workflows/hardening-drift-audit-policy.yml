@@ -1,19 +1,31 @@
-name: Hardening drift audit policy
+name: Repository governance policy
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - ".github/repository-settings-policy.json"
+      - "deny.toml"
+      - "workloads.json"
       - ".github/labels.json"
+      - ".github/dependabot.yml"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/repository-settings-policy.json"
       - ".github/scripts/audit_issue.py"
+      - ".github/scripts/discover-supply-chain-workloads.py"
+      - ".github/scripts/validate-supply-chain.py"
       - ".github/scripts/run-hardening-drift-audit.py"
       - ".github/scripts/report-hardening-drift-audit.py"
+      - ".github/scripts/run-scheduled-supply-chain-audit.py"
       - ".github/scripts/report-supply-chain-audit.py"
+      - ".github/scripts/reconcile-labels.py"
+      - ".github/scripts/validate-label-taxonomy.py"
       - ".github/scripts/validate-workflow-security.py"
       - ".github/scripts/test-hardening-drift-audit.py"
       - ".github/scripts/test-cache-producer-guards.py"
       - ".github/scripts/test-scheduled-supply-chain-audit.py"
+      - ".github/scripts/test-repository-settings-policy.py"
+      - ".github/scripts/test-reconcile-labels.py"
+      - ".github/scripts/test-label-taxonomy.py"
       - ".github/workflows/*.yml"
   workflow_dispatch: {}
 
@@ -21,12 +33,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: hardening-drift-audit-policy-${{ github.event.pull_request.number || github.ref }}
+  group: repository-governance-policy-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   policy-contract:
-    name: hardening-drift-audit-policy
+    name: repository-governance-policy
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
@@ -38,7 +50,7 @@ jobs:
       - name: Test hardening drift audit
         run: python3 .github/scripts/test-hardening-drift-audit.py
 
-      - name: Test existing scheduled supply-chain audit lifecycle
+      - name: Test scheduled supply-chain audit lifecycle
         run: python3 .github/scripts/test-scheduled-supply-chain-audit.py
 
       - name: Test trusted-main cache producer and consumer guards
@@ -49,3 +61,12 @@ jobs:
 
       - name: Test repository settings policy contract
         run: python3 .github/scripts/test-repository-settings-policy.py
+
+      - name: Test label reconciliation policy
+        run: python3 .github/scripts/test-reconcile-labels.py
+
+      - name: Test label taxonomy invariants
+        run: python3 .github/scripts/test-label-taxonomy.py
+
+      - name: Validate label taxonomy and repository references
+        run: python3 .github/scripts/validate-label-taxonomy.py
