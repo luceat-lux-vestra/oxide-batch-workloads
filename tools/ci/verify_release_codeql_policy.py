@@ -101,10 +101,13 @@ def top_level_job_blocks(source: str) -> list[tuple[str, str, int]]:
 def contains_release_mutation(source: str) -> bool:
     if any(pattern.search(source) for pattern in MUTATION_PATTERNS):
         return True
-    # Cover direct REST writes while avoiding read-only `gh api` release reads.
-    for block in re.findall(r"(?ms)^\s*(?:-|)\s*run:\s*\|\s*\n(?P<body>(?:\s{8,}.*\n?)*)", source):
-        if "/releases" in block and re.search(r"\bgh\s+api\b", block) and re.search(
-            r"(?:-X|--method)\s+(?:POST|PATCH|DELETE)\b", block
+    # Inspect a *single gh api command*, including explicit backslash continuations.
+    # Checking an entire shell block misclassifies sccache binary downloads under
+    # github.com/.../releases plus unrelated POSTs as package publications.
+    for match in re.finditer(r"\bgh\s+api\b[^\n]*(?:\\\r?\n[^\n]*)*", source):
+        command = match.group()
+        if re.search(r"/releases(?:/|\b)", command) and re.search(
+            r"(?:-X|--method)\s+(?:POST|PATCH|DELETE)\b", command
         ):
             return True
     return False
