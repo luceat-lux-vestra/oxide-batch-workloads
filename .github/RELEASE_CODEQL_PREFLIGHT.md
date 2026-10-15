@@ -1,0 +1,9 @@
+# Release-candidate CodeQL preflight (nonpublishing)
+
+This workload-consumer repository has **no managed publisher**. Weekly/manual CodeQL is preserved; routine PR CodeQL remains absent.
+
+Use **Actions → Release CodeQL preflight → Run workflow** on trusted `main` with an exact 40-hex protected-main candidate. The preflight validates ancestry; reuses one eligible full CodeQL execution of that candidate SHA, joins the single active execution, or dispatches canonical CodeQL from protected main. It waits no longer than 4,200 seconds; validates job coverage across Actions, Python, Rust and Java, run attempt 1, 8 nonexpired source-manifest/original-SARIF artifacts, source identity, extracted repository files, required reviewed security rule IDs, and zero High/Critical. Failed/ambiguous/invalid evidence is rejected, never silently replaced with older green data. Neither scanner nor preflight publishes artifacts externally.
+
+Any future checked-in managed publisher **must** configure a `codeql-preflight` job running `tools/ci/release_codeql_preflight.py` with `actions: write` and `contents: read`, and require `needs: codeql-preflight` for every publication job **before** any GitHub Release, registry, signing or package mutation. Update `.github/release-codeql-policy.toml` and extend `tools/ci/verify_release_codeql_policy.py` for new publication surfaces. CI rejects recognized unprotected managed publisher workflows. Owner direct UI/API publication cannot be technically blocked by workflow code; this is a governance boundary.
+
+Completion additionally requires post-merge exact protected-main CodeQL: run manual scanner with `candidate_sha=<main SHA>`; verify original four SARIF, four source manifests, attempt, workflow identity, four jobs, source extraction, required rules, findings, and raw SHA256. Until then [R2A #105](https://github.com/luceat-lux-vestra/research-to-action/issues/105) progress remains 6/8.
