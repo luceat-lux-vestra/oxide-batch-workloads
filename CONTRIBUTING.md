@@ -38,7 +38,7 @@ Search the OxideBatch issue tracker before filing a new framework issue. Classif
 
 Keep production-default-branch automation small and owned. Research, experiment, migration, and other temporary workflows should run from a bounded non-default branch and be removed from source after their evidence is recorded.
 
-If an exceptional temporary workflow must exist on the default branch, its workflow file must declare non-empty `# lifecycle-owner:` and `# lifecycle-retire:` comments near the top. The owner identifies the issue/campaign responsible for it; the retirement declaration states the explicit condition for deleting or consolidating it. Historical Actions runs and artifacts are evidence, not a reason to keep or recreate obsolete workflow YAML.
+If an exceptional temporary workflow must exist on the default branch, its workflow file must declare non-empty `# lifecycle-owner:` and `# lifecycle-retire:` comments near the top. The owner identifies the issue/campaign responsible for it; the retirement declaration states the explicit condition for deleting or consolidating it. Historical Actions runs/artifacts are not automatically evidence. Preserve them when a concrete issue, PR, R2A campaign, security/release decision, benchmark, or migration record consumes them as immutable proof. Orphaned temporary/research/one-off history with no such consumer may be deleted after exact workflow-ID/path/run-count validation; never delete evidence-bearing history solely for sidebar cosmetics. Old run history is not a reason to keep or recreate obsolete workflow source.
 
 When a maintained workflow's purpose is superseded, consolidate or delete the source workflow without deleting historical runs solely for cosmetic cleanup.
 
