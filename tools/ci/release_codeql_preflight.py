@@ -87,7 +87,7 @@ def metadata(run: dict, wf: dict, jobs: dict, artifacts: dict, repo: str, sha: s
         raise ValueError("invalid scan creation time") from exc
     if created.tzinfo is None or created > dt.datetime.now(dt.timezone.utc):
         reject("scan has invalid or future timestamp")
-    expected_jobs = {f"Analyze {language}" for language in LANGUAGES}
+    expected_jobs = {f"codeql ({language})" for language in LANGUAGES}
     rows = jobs.get("jobs")
     if jobs.get("total_count") != len(LANGUAGES) or not isinstance(rows, list) or len(rows) != len(LANGUAGES) or {row.get("name") for row in rows if isinstance(row, dict)} != expected_jobs or any(row.get("status") != "completed" or row.get("conclusion") != "success" for row in rows):
         reject("missing, extra, incomplete or unsuccessful CodeQL language jobs")
