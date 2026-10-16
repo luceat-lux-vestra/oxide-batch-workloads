@@ -366,7 +366,7 @@ def self_test() -> None:
     exercise(candidate("completed", "success"), None, False)
     exercise(candidate("in_progress"), candidate("completed", "success"), False)
     exercise(None, candidate("completed", "success"), True)
-    exercise(candidate("completed", "failure"), None, False, "ended failure")
+    exercise(candidate("completed", "failure"), None, False, "failed existing")
     exercise([candidate("completed", "success", 71), candidate("completed", "success", 72)], None, False)
     exercise(candidate("in_progress", attempt=2), None, False, "ambiguous rerun")
     exercise([candidate("in_progress", run_id=71), candidate("queued", run_id=72)], None, False, "ambiguous active")
