@@ -194,6 +194,7 @@ def verify_live(repo: str, sha: str, verdict: Path, timeout_seconds: int = 4200,
     if active and completed:
         reject("ambiguous active and completed exact candidate scans")
 
+    before = {row.get("id") for row in all_runs if isinstance(row.get("id"), int)}
     selected: int | None = None
     if active:
         selected = active[0]["id"]
@@ -217,7 +218,6 @@ def verify_live(repo: str, sha: str, verdict: Path, timeout_seconds: int = 4200,
             # All previous successful scans are missing or expired *original*
             # artifacts: replace absent evidence with one trusted new full scan.
             print("Prior CodeQL original evidence missing or expired: renewing exact-source scan", flush=True)
-        before = {row.get("id") for row in all_runs if isinstance(row.get("id"), int)}
         gh("api", "-X", "POST", f"repos/{repo}/actions/workflows/codeql.yml/dispatches", "-f", "ref=main", "-f", f"inputs[candidate_sha]={sha}")
         print(f"Dispatched trusted full CodeQL for candidate {sha}", flush=True)
         newly = [row for row in candidates(repo, wf) if row.get("id") not in before and row.get("event") == "workflow_dispatch" and exact(row, sha) and row.get("run_attempt") == 1]
