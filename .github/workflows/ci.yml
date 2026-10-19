@@ -168,7 +168,7 @@ jobs:
           java-version: 25
 
       - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # latest stable snapshot
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -387,7 +387,7 @@ jobs:
 
       - name: Install declared MSRV toolchain
         if: matrix.msrv.declared
-        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # latest stable snapshot; explicit toolchain input below overrides the default
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot; explicit toolchain input below overrides the default
         with:
           toolchain: ${{ matrix.msrv.version }}
 
