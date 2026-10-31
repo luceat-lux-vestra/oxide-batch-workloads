@@ -341,7 +341,6 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for job, following, upstream in (
             ("workloads-ci", "workloads-msrv", "ci-shard"),
             ("workloads-msrv", "supply-chain", "msrv-shard"),
-            ("supply-chain", None, "supply-chain-shard"),
         ):
             section = source.split(f"  {job}:\n", 1)[1]
             if following is not None:
@@ -356,6 +355,21 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
                 self.assertNotIn("listJobsForWorkflowRunAttempt", section)
                 self.assertNotIn("Fetch shard job conclusions", section)
                 self.assertNotIn("steps.jobs.outputs.result", section)
+
+    def test_supply_chain_is_single_registry_driven_authority(self) -> None:
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("  supply-chain-shard:\n", source)
+        section = source.split("  supply-chain:\n", 1)[1].split(
+            "  # Path-scoped qualification authorities execute inside", 1
+        )[0]
+        self.assertIn("needs: discover", section)
+        self.assertIn("needs.discover.outputs.supply-chain-workloads", section)
+        self.assertIn("run-supply-chain-authority.py", section)
+        self.assertNotIn("strategy:", section)
+        self.assertNotIn("matrix:", section)
+        self.assertNotIn("upload-artifact@", section)
+        self.assertNotIn("download-artifact@", section)
+        self.assertNotIn("aggregate_verdict.py", section)
 
     def test_pr_discovery_is_local_and_fast_is_advisory(self) -> None:
         source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -383,8 +397,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         self.assertIn("    if: always()", gate)
         self.assertIn("    name: Merge Gate", gate)
         for name in (
-            "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
-            "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+            "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
             "jberet-clean-qualification", "jberet-crash-qualification",
             "pr4-semantic-qualification", "repository-governance-policy",
         ):
@@ -405,8 +418,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             "repository-governance-policy": "governance",
         }
         names = {
-            "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
-            "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+            "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
             *scoped,
         }
 
@@ -456,7 +468,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             ("missing scoped authority", {"removed": "jberet-clean-qualification"}),
             ("unexpected extra", {"extra": "untrusted-observer"}),
             ("failed aggregate", {"changes": {"workloads-msrv": "failure"}}),
-            ("cancelled shard", {"changes": {"supply-chain-shard": "cancelled"}}),
+            ("failed supply-chain authority", {"changes": {"supply-chain": "failure"}}),
             ("skipped discovery", {"changes": {"discover": "skipped"}}),
             ("invalid scope classification", {"scopes": {"jberet_clean": "unknown"}}),
             ("applicable scoped failure", {
