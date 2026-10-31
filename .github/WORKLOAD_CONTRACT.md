@@ -68,11 +68,13 @@ The central workflow knows only:
    `<entry>/ci/validate`;
 3. how to invoke the `ci` and, when applicable, `msrv` stages;
 4. how to resolve each entry's MSRV from that entry's own `Cargo.toml`;
-5. how to collect normalized shard results and compute fail-closed aggregate
-   verdicts; and
-6. for real workloads, how to invoke the canonical supply-chain validator, which may
-   dispatch a workload-owned additional-ecosystem hook without teaching the central
-   workflow that ecosystem's policy.
+5. how to collect normalized CI/MSRV shard results and compute fail-closed
+   aggregate verdicts; and
+6. for real workloads, how to cross-check the supply-chain discovery projection
+   against the canonical registry and invoke the canonical supply-chain validator
+   for every real workload, which may dispatch a workload-owned
+   additional-ecosystem hook without teaching the central workflow that
+   ecosystem's policy.
 
 It does **not** know PostgreSQL, `DATABASE_URL`, migrations, broker/object-store
 configuration, workload smoke commands, or workload-name-specific branches.
@@ -125,7 +127,7 @@ The contract is the process exit code. The central workflow records shard
 identity and normalized outcome from trusted matrix/registry data; workload
 scripts do not self-author their own authoritative identity or verdict.
 
-## Aggregate verdicts
+## Aggregate verdicts and supply-chain authority
 
 `.github/scripts/aggregate_verdict.py` computes the stable aggregate results.
 It verifies complete expected coverage and policy-correct outcomes rather than
@@ -136,22 +138,30 @@ only checking whether some successful job exists.
 | `ci` | all registered entries | `validated` |
 | `msrv` | `declared: true` | `validated` |
 | `msrv` | `declared: false` | `not-applicable` |
-| `supply-chain` | every real workload | `validated` |
 
-Discovery failure, failed/cancelled/skipped shards, missing or duplicate
-results, unexpected extra results, malformed result files, policy/outcome
-mismatch, and incomplete coverage all fail closed.
+For `supply-chain`, the stable authority is intentionally not an artifact
+fan-out aggregate. One runner independently compares discovery's real-workload
+projection with the canonical registry, rejects missing/extra/duplicate/malformed
+subjects, and then validates every real workload sequentially. Any Cargo policy
+failure, required additional-ecosystem hook failure, or completeness mismatch
+fails the stable `supply-chain` authority.
+
+For CI/MSRV, discovery failure, failed/cancelled/skipped shards, missing or
+duplicate results, unexpected extra results, malformed result files,
+policy/outcome mismatch, and incomplete coverage all fail closed.
 
 ## Protected PR merge authority
 
-The PR `CI` workflow now hosts the exact existing `dependency-review` check,
-three artifact-verifying aggregates (`workloads-ci`, `workloads-msrv`,
-`supply-chain`), and a final fail-closed `Merge Gate` job. The final job
-requires every applicable discovery, shard, and aggregate job to succeed, and
-requires `dependency-review` for PR events. A draft PR is not considered
+The PR `CI` workflow hosts the exact existing `dependency-review` check,
+two artifact-verifying aggregates (`workloads-ci` and `workloads-msrv`), the
+single-runner `supply-chain` authority, and a final fail-closed `Merge Gate`
+job. The final job requires discovery, every applicable CI/MSRV shard and
+aggregate, the supply-chain authority, and all scoped semantic authorities to
+succeed, and requires `dependency-review` for PR events. A draft PR is not considered
 validated; manual CI dispatch does not invent a dependency-diff review.
-The per-shard artifact completeness/duplicate and MSRV disposition checks remain
-owned by `aggregate_verdict.py`, not by the coarse final gate.
+The CI/MSRV per-shard artifact completeness/duplicate and MSRV disposition
+checks remain owned by `aggregate_verdict.py`; supply-chain completeness is
+owned by `run-supply-chain-authority.py`, not by the coarse final gate.
 
 The former contexts `ci` and `msrv` are obsolete; per-entry shard names are
 implementation details, never standalone branch-protection requirements.
@@ -166,14 +176,17 @@ protection ahead of verifying the new producer.
 it is not replaced by full-current-graph `supply-chain` validation. The
 independent push-only Fast branch workflow remains an **advisory early feedback**
 producer; PR merge authority no longer polls or reuses its run. Registry
-tests and validation run locally within `discover` before fan-out.
+tests and validation run locally within `discover` before CI/MSRV fan-out and
+the single-runner supply-chain authority.
 
 ## Repository-wide supply-chain policy
 
 Root [`deny.toml`](../deny.toml) is the canonical advisories/licenses/bans/source
-policy. The workflow installs the repository-pinned cargo-deny version and runs
-`.github/scripts/validate-supply-chain.py` independently for every registered
-real workload against that workload's committed `Cargo.lock`.
+policy. The workflow installs the repository-pinned cargo-deny version once.
+`.github/scripts/run-supply-chain-authority.py` independently cross-checks the
+discovered real-workload projection against the canonical registry, then runs
+`.github/scripts/validate-supply-chain.py` for every registered real workload
+against that workload's committed `Cargo.lock`.
 
 The validator:
 
@@ -186,7 +199,8 @@ The validator:
   exposes an executable `ci/validate-supply-chain` hook;
 - invokes that workload-owned hook only after the Cargo policy succeeds; and
 - propagates either Cargo-policy or additional-hook failure into the same stable
-  aggregate gate.
+  `supply-chain` authority while continuing through the remaining registered
+  workloads for complete diagnostics.
 
 The additional hook is intentionally a narrow extension point, not a second central
 implementation of Maven/Gradle/npm policy. Central CI detects that Maven exists and

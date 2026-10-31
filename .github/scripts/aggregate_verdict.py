@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Canonical, unit-testable aggregate verdict logic for the workload CI fan-out.
 
-The central workflow's aggregate jobs (`workloads-ci`, `workloads-msrv`, and
-`supply-chain`) call this module's CLI. All decision logic lives in
+The central workflow's artifact-verifying aggregate jobs (`workloads-ci` and
+`workloads-msrv`) call this module's CLI. The reusable supply-chain stage model
+remains covered here, while production supply-chain authority now validates the
+canonical real-workload set directly in one runner. All decision logic lives in
 `compute_verdict`, a pure
 function over plain data, so it can be exercised by
 `test_aggregate_verdict.py` without any GitHub Actions runtime.

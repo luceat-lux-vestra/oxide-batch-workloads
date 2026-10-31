@@ -127,14 +127,16 @@ and bounded CI `fixtures` and the per-entry MSRV policy resolved from each
 `Cargo.toml`.
 
 The stable workload aggregates are `workloads-ci` and
-`workloads-msrv` (computed by `.github/scripts/aggregate_verdict.py`),
-`supply-chain` for locked dependency graphs, and `dependency-review` for
-diff-scoped dependency changes. The live protected `main` ruleset requires the
+`workloads-msrv` (computed by `.github/scripts/aggregate_verdict.py`).
+The stable `supply-chain` authority validates every real workload's locked
+dependency graph sequentially from the canonical registry, and
+`dependency-review` remains the separate diff-scoped dependency-change
+authority. The live protected `main` ruleset requires the
 single **`Merge Gate`** status context. This is not a reduction of semantic
 coverage: `.github/workflows/ci.yml` implements `Merge Gate` as a fail-closed
 aggregate that requires successful discovery, workload CI/MSRV shards, the
-`workloads-ci`, `workloads-msrv`, and `supply-chain` aggregates, and
-`dependency-review` for pull requests. The gate rejects missing, skipped,
+`workloads-ci` and `workloads-msrv` aggregates, the single-runner
+`supply-chain` authority, and `dependency-review` for pull requests. The gate rejects missing, skipped,
 or unsuccessful mandatory dependencies. The same canonical PR DAG conditionally
 invokes the maintained JBeret clean, JBeret crash/restart, PR4 four-way semantic,
 and repository-governance qualification workflows when the PR diff intersects
