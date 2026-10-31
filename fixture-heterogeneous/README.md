@@ -22,7 +22,8 @@ a workload to differ:
   exact-published-provenance scope, rather than merely being undeclared;
 - no database, no services, no migration;
 - no declared MSRV (`msrv.declared: false`, with an explicit `policy_reason`
-  instead of a silently skipped shard);
+  that produces aggregate `not-applicable` evidence without a dedicated no-op
+  runner);
 - a completely different golden-path smoke mechanism: a deterministic
   word-histogram over a checked-in text fixture, diffed against a checked-in
   golden JSON file, instead of a database round-trip.
