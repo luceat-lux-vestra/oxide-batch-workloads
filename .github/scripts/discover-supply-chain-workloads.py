@@ -9,8 +9,8 @@ distinct, narrower projection: it selects only `workloads.json`'s
 cross-checking it against the canonical registry. Supply-chain policy scanning is a production-graph control;
 `fixtures` are bounded CI-orchestration proofs (see
 .github/WORKLOAD_CONTRACT.md) and must never become an equivalent-weight
-supply-chain scanning subject, even though they participate in the shared
-ci/msrv fan-out. This module never infers workloads by scanning directories
+supply-chain scanning subject, even though they participate in CI fan-out and
+the full MSRV aggregate authority. This module never infers workloads by scanning directories
 and never hardcodes a workload name.
 """
 
