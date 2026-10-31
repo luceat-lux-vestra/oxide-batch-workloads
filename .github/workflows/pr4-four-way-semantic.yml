@@ -1,12 +1,8 @@
 name: PR4 four-way semantic gate
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "postgres-postgres/**"
-      - ".github/workflows/pr4-four-way-semantic.yml"
-      - ".github/workflows/benchmark-postgres-postgres-four-way.yml"
+  workflow_call:
+
 permissions:
   contents: read
 

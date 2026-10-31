@@ -1,32 +1,7 @@
 name: Repository governance policy
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "deny.toml"
-      - "workloads.json"
-      - ".github/labels.json"
-      - ".github/dependabot.yml"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/repository-settings-policy.json"
-      - ".github/scripts/audit_issue.py"
-      - ".github/scripts/discover-supply-chain-workloads.py"
-      - ".github/scripts/validate-supply-chain.py"
-      - ".github/scripts/run-hardening-drift-audit.py"
-      - ".github/scripts/report-hardening-drift-audit.py"
-      - ".github/scripts/run-scheduled-supply-chain-audit.py"
-      - ".github/scripts/report-supply-chain-audit.py"
-      - ".github/scripts/reconcile-labels.py"
-      - ".github/scripts/validate-label-taxonomy.py"
-      - ".github/scripts/validate-workflow-security.py"
-      - ".github/scripts/test-hardening-drift-audit.py"
-      - ".github/scripts/test-cache-producer-guards.py"
-      - ".github/scripts/test-scheduled-supply-chain-audit.py"
-      - ".github/scripts/test-repository-settings-policy.py"
-      - ".github/scripts/test-reconcile-labels.py"
-      - ".github/scripts/test-label-taxonomy.py"
-      - ".github/workflows/*.yml"
+  workflow_call:
   workflow_dispatch: {}
 
 permissions:

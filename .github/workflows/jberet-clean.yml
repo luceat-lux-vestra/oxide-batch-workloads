@@ -1,12 +1,8 @@
 name: JBeret clean qualification
 
 on:
-  pull_request:
-    paths:
-      - "postgres-postgres/benchmark/java/**"
-      - "postgres-postgres/ci/validate-jberet-clean"
-      - "postgres-postgres/ci/validate-supply-chain"
-      - ".github/workflows/jberet-clean.yml"
+  workflow_call:
+
 permissions:
   contents: read
 
