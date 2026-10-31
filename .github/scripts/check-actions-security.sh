@@ -41,7 +41,7 @@ tar -xzf "$zizmor_archive" -C "$TOOLS_DIR" zizmor
 # syntax for reusable workflow calls (rhysd/actionlint#711). Keep the canonical
 # GitHub syntax and suppress only that known parser diagnostic until upstream ships support.
 "$TOOLS_DIR/actionlint" \
-  -ignore 'reusable workflow call "\\$/\\.github/workflows/.+" at "uses" is not following the format' \
+  -ignore 'reusable workflow call "\$/\.github/workflows/.+" at "uses" is not following the format' \
   "$ROOT"/.github/workflows/*.yml
 "$TOOLS_DIR/zizmor" --no-online-audits --format plain "$ROOT"/.github/workflows/
 
