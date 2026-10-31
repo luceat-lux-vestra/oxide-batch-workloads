@@ -7,9 +7,11 @@ entry's own Cargo.toml -- see validate-workload-registry.py). It never
 inspects business logic: everything it emits comes straight from the
 already fail-closed-validated `workloads.json` registry.
 
-Workloads and fixtures both participate in the exact same fan-out/aggregate
-machinery (that is what proves the machinery is contract-driven), but only
-`workloads` are ever read by validate-oxidebatch-provenance.py.
+Workloads and fixtures share the same canonical discovery and full aggregate
+expectation. CI fans out over all entries; MSRV execution uses a narrower
+registry-derived projection containing only `msrv.declared=true`, while
+undeclared entries receive explicit aggregate N/A evidence. Only `workloads`
+are ever read by validate-oxidebatch-provenance.py.
 """
 
 import json

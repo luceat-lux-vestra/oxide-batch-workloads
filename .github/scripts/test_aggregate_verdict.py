@@ -371,6 +371,26 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         self.assertNotIn("download-artifact@", section)
         self.assertNotIn("aggregate_verdict.py", section)
 
+    def test_msrv_execution_projection_preserves_full_aggregate_authority(self) -> None:
+        source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        discover = source.split("  discover:\n", 1)[1].split("  ci-shard:\n", 1)[0]
+        self.assertIn("msrv-workloads: ${{ steps.discover-msrv.outputs.workloads }}", discover)
+        self.assertIn("python3 .github/scripts/test-discover-msrv-workloads.py", discover)
+        self.assertIn("python3 .github/scripts/test-synthesize-msrv-not-applicable.py", discover)
+        self.assertIn("python3 .github/scripts/discover-msrv-workloads.py", discover)
+
+        shard = source.split("  msrv-shard:\n", 1)[1].split("  workloads-ci:\n", 1)[0]
+        self.assertIn("needs.discover.outputs.msrv-workloads", shard)
+        self.assertNotIn("Record explicit not-applicable MSRV disposition", shard)
+        self.assertNotIn("!matrix.msrv.declared", shard)
+
+        aggregate = source.split("  workloads-msrv:\n", 1)[1].split("  supply-chain:\n", 1)[0]
+        self.assertIn("Synthesize explicit undeclared-MSRV dispositions", aggregate)
+        self.assertIn("synthesize-msrv-not-applicable.py", aggregate)
+        self.assertIn("DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}", aggregate)
+        self.assertNotIn("DISCOVER_JSON: ${{ needs.discover.outputs.msrv-workloads }}", aggregate)
+        self.assertIn("needs.msrv-shard.result == 'success'", aggregate)
+
     def test_pr_discovery_is_local_and_fast_is_advisory(self) -> None:
         source = (MODULE_PATH.parents[1] / "workflows" / "ci.yml").read_text(encoding="utf-8")
         discovery = source.split("  discover:\n", 1)[1].split("  ci-shard:\n", 1)[0]
