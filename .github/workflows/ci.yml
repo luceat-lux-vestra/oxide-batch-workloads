@@ -1,9 +1,9 @@
 name: CI
 
 # Every trigger here is unconditional (no `paths`/`paths-ignore`): the
-# stable aggregate contexts below (`workloads-ci`, `workloads-msrv`,
+# stable merge-authority contexts below (`workloads-ci`, `workloads-msrv`,
 # `supply-chain`) must always be producible on every relevant PR so they
-# remain valid branch protection required contexts.
+# remain valid branch protection inputs.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -165,13 +165,17 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test-discover-supply-chain-workloads.py
 
+      - name: Test consolidated supply-chain authority
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/test-run-supply-chain-authority.py
+
       - name: Discover workload fan-out matrix
         id: discover
         run: |
           matrix=$(python3 .github/scripts/discover-workloads.py)
           echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
 
-      - name: Discover supply-chain fan-out matrix
+      - name: Discover supply-chain authority matrix
         id: discover-supply-chain
         run: |
           matrix=$(python3 .github/scripts/discover-supply-chain-workloads.py)
@@ -497,65 +501,6 @@ jobs:
         if: matrix.msrv.declared && steps.contract.outputs.exit_code != '0'
         run: exit 1
 
-  # Fans out only over every registered REAL workload (workloads.json's
-  # `workloads` array -- never `fixtures`, via discover's separate
-  # supply-chain discovery projection). Invokes the repository-owned
-  # validator, which is the only place that knows how to turn a registry
-  # name into a cargo-deny invocation against root deny.toml. Contains no
-  # workload-name conditionals: adding a second real workload to the
-  # registry fans this job out automatically (see
-  # test-discover-supply-chain-workloads.py).
-  supply-chain-shard:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: supply-chain-shard (${{ matrix.name }})
-    needs: discover
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover.outputs.supply-chain-workloads) }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install verified cargo-deny 0.20.2
-        run: bash .github/scripts/install-cargo-deny.sh
-
-      - name: Run supply-chain policy validator
-        id: contract
-        env:
-          WORKLOAD_NAME: ${{ matrix.name }}
-        run: |
-          set +e
-          python3 .github/scripts/validate-supply-chain.py --workload "$WORKLOAD_NAME"
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Record shard result
-        if: always()
-        env:
-          WORKLOAD_NAME: ${{ matrix.name }}
-          CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
-        run: |
-          python3 .github/scripts/write-shard-result.py \
-            --workload "$WORKLOAD_NAME" \
-            --stage supply-chain \
-            --exit-code "$CONTRACT_EXIT_CODE" \
-            --out "${{ runner.temp }}/result.json"
-
-      - name: Upload shard result
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: result-supply-chain-${{ matrix.name }}
-          path: ${{ runner.temp }}/result.json
-          retention-days: 7
-
-      - name: Fail shard job if supply-chain policy check failed
-        if: steps.contract.outputs.exit_code != '0'
-        run: exit 1
-
   # Stable, required aggregate context. Computes its verdict with the same
   # testable script exercised by discover's "Test aggregate verdict logic"
   # step above -- never opaque GitHub expressions.
@@ -639,48 +584,31 @@ jobs:
             --discovery-ok "$DISCOVERY_OK" \
             --upstream-job-ok "$UPSTREAM_JOB_OK"
 
-  # Stable, required aggregate context for #32's repository-wide
-  # supply-chain policy (deny.toml). Fans out only over real workloads (see
-  # supply-chain-shard above); `dependency-review` remains a separate,
-  # diff-scoped required context protecting a distinct surface -- this is
-  # a full-current-graph control, not an alias for it.
+  # Stable repository-wide supply-chain authority (#32). Discovery projects
+  # only real workloads; this single runner independently cross-checks that
+  # projection against the canonical registry before validating every workload.
+  # dependency-review remains a separate diff-scoped authority.
   supply-chain:
     name: supply-chain
-    needs: [discover, supply-chain-shard]
-    if: always()
+    needs: discover
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Download shard results
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: result-supply-chain-*
-          path: ${{ runner.temp }}/results
-          merge-multiple: false
+      - name: Install verified cargo-deny 0.20.2
+        run: bash .github/scripts/install-cargo-deny.sh
 
-      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
-      # The Jobs API supplies optional diagnostics only; do not make it a gate.
-
-      - name: Compute aggregate verdict
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
+      - name: Validate every registered real workload
         env:
           DISCOVER_JSON: ${{ needs.discover.outputs.supply-chain-workloads }}
-          DISCOVERY_OK: ${{ needs.discover.result == 'success' }}
-          UPSTREAM_JOB_OK: ${{ needs.supply-chain-shard.result == 'success' }}
         run: |
-          python3 .github/scripts/aggregate_verdict.py \
-            --stage supply-chain \
-            --discover-json "$DISCOVER_JSON" \
-            --results-dir "${{ runner.temp }}/results" \
-            --discovery-ok "$DISCOVERY_OK" \
-            --upstream-job-ok "$UPSTREAM_JOB_OK"
+          python3 .github/scripts/run-supply-chain-authority.py \
+            --discover-json "$DISCOVER_JSON"
 
   # Path-scoped qualification authorities execute inside the canonical PR DAG.
   # Scope classification is fail-closed: an unclassifiable PR enables every lane.
@@ -708,15 +636,15 @@ jobs:
     if: ${{ needs.discover.outputs.governance == 'true' }}
     uses: $/.github/workflows/hardening-drift-audit-policy.yml
 
-  # All semantic authorities run in this PR DAG. Existing shard aggregates
-  # enforce exact identity, full coverage, and policy-correct artifact results.
+  # All semantic authorities run in this PR DAG. CI/MSRV shard aggregates
+  # enforce exact identity/full coverage; supply-chain independently verifies
+  # canonical real-workload completeness before scanning every workload.
   merge-gate:
     name: Merge Gate
     needs:
       - discover
       - ci-shard
       - msrv-shard
-      - supply-chain-shard
       - workloads-ci
       - workloads-msrv
       - supply-chain
@@ -743,7 +671,7 @@ jobs:
           needs = json.loads(os.environ["NEEDS_JSON"])
           event = os.environ["GITHUB_EVENT_NAME"]
           always_required = {
-              "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
+              "discover", "ci-shard", "msrv-shard",
               "workloads-ci", "workloads-msrv", "supply-chain",
           }
           scope_outputs = needs.get("discover", {}).get("outputs", {})
