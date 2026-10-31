@@ -12,12 +12,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 AGGREGATE_PATH = Path(__file__).with_name("aggregate_verdict.py")
 AGGREGATE_SPEC = importlib.util.spec_from_file_location("aggregate_verdict", AGGREGATE_PATH)
 assert AGGREGATE_SPEC and AGGREGATE_SPEC.loader
 aggregate = importlib.util.module_from_spec(AGGREGATE_SPEC)
+sys.modules[AGGREGATE_SPEC.name] = aggregate
 AGGREGATE_SPEC.loader.exec_module(aggregate)
 
 WRITER_PATH = Path(__file__).with_name("write-shard-result.py")
