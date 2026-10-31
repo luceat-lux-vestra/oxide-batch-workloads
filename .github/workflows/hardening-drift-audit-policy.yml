@@ -31,6 +31,9 @@ jobs:
       - name: Test trusted-main cache producer and consumer guards
         run: python3 .github/scripts/test-cache-producer-guards.py
 
+      - name: Test workflow security invariants
+        run: python3 .github/scripts/test-validate-workflow-security.py
+
       - name: Validate workflow security invariants
         run: python3 .github/scripts/validate-workflow-security.py
 
