@@ -47,6 +47,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       workloads: ${{ steps.discover.outputs.workloads }}
+      msrv-workloads: ${{ steps.discover-msrv.outputs.workloads }}
       supply-chain-workloads: ${{ steps.discover-supply-chain.outputs.workloads }}
       jberet_clean: ${{ steps.qualification-scope.outputs.jberet_clean }}
       jberet_crash: ${{ steps.qualification-scope.outputs.jberet_crash }}
@@ -161,6 +162,14 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test_write_shard_result.py
 
+      - name: Test declared-MSRV execution projection
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/test-discover-msrv-workloads.py
+
+      - name: Test undeclared-MSRV evidence synthesis
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/test-synthesize-msrv-not-applicable.py
+
       - name: Test supply-chain discovery projection
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test-discover-supply-chain-workloads.py
@@ -173,6 +182,12 @@ jobs:
         id: discover
         run: |
           matrix=$(python3 .github/scripts/discover-workloads.py)
+          echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
+
+      - name: Discover declared-MSRV execution matrix
+        id: discover-msrv
+        run: |
+          matrix=$(python3 .github/scripts/discover-msrv-workloads.py)
           echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
 
       - name: Discover supply-chain authority matrix
@@ -425,9 +440,9 @@ jobs:
         if: steps.contract.outputs.exit_code != '0'
         run: exit 1
 
-  # Fans out over every registered workload. The toolchain *version* comes
-  # from registry data (matrix.msrv.version); the boolean branch is on
-  # registry-declared policy, never on a workload name.
+  # Fans out only over entries whose validated registry policy declares an
+  # actual MSRV. Undeclared entries remain part of the full aggregate
+  # expectation and receive explicit not-applicable evidence in workloads-msrv.
   msrv-shard:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: msrv-shard (${{ matrix.name }})
@@ -436,7 +451,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.discover.outputs.workloads) }}
+      matrix: ${{ fromJson(needs.discover.outputs.msrv-workloads) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -444,20 +459,17 @@ jobs:
           persist-credentials: false
 
       - name: Install declared MSRV toolchain
-        if: matrix.msrv.declared
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot; explicit toolchain input below overrides the default
         with:
           toolchain: ${{ matrix.msrv.version }}
 
       - name: Cache Rust build
-        if: matrix.msrv.declared
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ${{ matrix.path }}
 
       - name: Run workload MSRV contract
         id: contract
-        if: matrix.msrv.declared
         working-directory: ${{ matrix.path }}
         run: |
           set +e
@@ -465,7 +477,7 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Record declared-MSRV shard result
-        if: always() && matrix.msrv.declared
+        if: always()
         env:
           WORKLOAD_NAME: ${{ matrix.name }}
           CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
@@ -476,19 +488,6 @@ jobs:
             --exit-code "$CONTRACT_EXIT_CODE" \
             --out "${{ runner.temp }}/result.json"
 
-      - name: Record explicit not-applicable MSRV disposition
-        if: always() && !matrix.msrv.declared
-        env:
-          WORKLOAD_NAME: ${{ matrix.name }}
-          MSRV_POLICY_REASON: ${{ matrix.msrv.policy_reason }}
-        run: |
-          python3 .github/scripts/write-shard-result.py \
-            --workload "$WORKLOAD_NAME" \
-            --stage msrv \
-            --not-applicable \
-            --reason "$MSRV_POLICY_REASON" \
-            --out "${{ runner.temp }}/result.json"
-
       - name: Upload shard result
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -497,8 +496,8 @@ jobs:
           path: ${{ runner.temp }}/result.json
           retention-days: 7
 
-      - name: Fail shard job if declared MSRV contract failed
-        if: matrix.msrv.declared && steps.contract.outputs.exit_code != '0'
+      - name: Fail shard job if MSRV contract failed
+        if: steps.contract.outputs.exit_code != '0'
         run: exit 1
 
   # Stable, required aggregate context. Computes its verdict with the same
@@ -567,7 +566,20 @@ jobs:
           path: ${{ runner.temp }}/results
           merge-multiple: false
 
-      # The aggregate verdict uses exact shard artifacts and needs.<stage>-shard.result.
+      # Downloaded artifacts cover declared-MSRV executions only. Materialize
+      # explicit N/A evidence for every undeclared registry entry before the
+      # unchanged full-registry aggregate verdict runs.
+      - name: Synthesize explicit undeclared-MSRV dispositions
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.discover.result == 'success') }}
+        env:
+          DISCOVER_JSON: ${{ needs.discover.outputs.workloads }}
+        run: |
+          python3 .github/scripts/synthesize-msrv-not-applicable.py \
+            --discover-json "$DISCOVER_JSON" \
+            --results-dir "${{ runner.temp }}/results"
+
+      # The aggregate verdict uses the full canonical discovery set, exact
+      # declared-MSRV shard artifacts, and synthesized undeclared N/A evidence.
       # The Jobs API supplies optional diagnostics only; do not make it a gate.
 
       - name: Compute aggregate verdict
