@@ -37,7 +37,12 @@ curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error   "https
 echo "${ZIZMOR_SHA256}  $zizmor_archive" | sha256sum -c -
 tar -xzf "$zizmor_archive" -C "$TOOLS_DIR" zizmor
 
-"$TOOLS_DIR/actionlint" "$ROOT"/.github/workflows/*.yml
+# actionlint 1.7.12 does not yet parse GitHub's documented `$/...` self-repository
+# syntax for reusable workflow calls (rhysd/actionlint#711). Keep the canonical
+# GitHub syntax and suppress only that known parser diagnostic until upstream ships support.
+"$TOOLS_DIR/actionlint" \
+  -ignore 'reusable workflow call "\$/\.github/workflows/.+" at "uses" is not following the format' \
+  "$ROOT"/.github/workflows/*.yml
 "$TOOLS_DIR/zizmor" --no-online-audits --format plain "$ROOT"/.github/workflows/
 
 fixture_dir="$TOOLS_DIR/negative/.github/workflows"

@@ -135,7 +135,12 @@ coverage: `.github/workflows/ci.yml` implements `Merge Gate` as a fail-closed
 aggregate that requires successful discovery, workload CI/MSRV shards, the
 `workloads-ci`, `workloads-msrv`, and `supply-chain` aggregates, and
 `dependency-review` for pull requests. The gate rejects missing, skipped,
-or unsuccessful mandatory dependencies.
+or unsuccessful mandatory dependencies. The same canonical PR DAG conditionally
+invokes the maintained JBeret clean, JBeret crash/restart, PR4 four-way semantic,
+and repository-governance qualification workflows when the PR diff intersects
+their existing scopes. Applicable qualification lanes must succeed; non-applicable
+lanes must be skipped, and an unclassifiable diff fails closed by enabling every
+qualification lane.
 
 Failure investigation remains a fail-closed engineering discipline, but no
 dedicated PR-body declaration, `failure-triage` status context, or sticky

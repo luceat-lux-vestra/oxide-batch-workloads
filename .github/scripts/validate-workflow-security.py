@@ -47,7 +47,7 @@ def validate_action_pins(root=ROOT):
             if not match:
                 continue
             value = match.group(1)
-            if value.startswith("./"):
+            if value.startswith(("./", "$/")):
                 continue
             if "@" not in value:
                 violations.append(f"{path.relative_to(root)}:{lineno}: external action has no immutable ref: {value}")

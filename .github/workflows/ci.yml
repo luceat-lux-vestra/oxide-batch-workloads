@@ -48,12 +48,66 @@ jobs:
     outputs:
       workloads: ${{ steps.discover.outputs.workloads }}
       supply-chain-workloads: ${{ steps.discover-supply-chain.outputs.workloads }}
+      jberet_clean: ${{ steps.qualification-scope.outputs.jberet_clean }}
+      jberet_crash: ${{ steps.qualification-scope.outputs.jberet_crash }}
+      pr4_semantic: ${{ steps.qualification-scope.outputs.pr4_semantic }}
+      governance: ${{ steps.qualification-scope.outputs.governance }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Test PR qualification scope classifier
+        run: python3 .github/scripts/test-detect-pr-qualification-scope.py
+
+      - name: Classify PR qualification scopes
+        id: qualification-scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          write_all() {
+            local value="$1"
+            {
+              echo "jberet_clean=$value"
+              echo "jberet_crash=$value"
+              echo "pr4_semantic=$value"
+              echo "governance=$value"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            write_all false
+            exit 0
+          fi
+
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::missing immutable PR base/head SHA; enabling every qualification scope"
+            write_all true
+            exit 0
+          fi
+
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            echo "::warning::PR base/head commit unavailable locally; enabling every qualification scope"
+            write_all true
+            exit 0
+          fi
+
+          changed="$RUNNER_TEMP/pr-qualification-changed-files.txt"
+          if ! git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" > "$changed"; then
+            echo "::warning::unable to classify PR diff; enabling every qualification scope"
+            write_all true
+            exit 0
+          fi
+
+          python3 .github/scripts/detect-pr-qualification-scope.py \
+            --files-from "$changed" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Test fail-closed workload registry validation
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -628,6 +682,32 @@ jobs:
             --discovery-ok "$DISCOVERY_OK" \
             --upstream-job-ok "$UPSTREAM_JOB_OK"
 
+  # Path-scoped qualification authorities execute inside the canonical PR DAG.
+  # Scope classification is fail-closed: an unclassifiable PR enables every lane.
+  jberet-clean-qualification:
+    name: JBeret clean qualification
+    needs: discover
+    if: ${{ needs.discover.outputs.jberet_clean == 'true' }}
+    uses: $/.github/workflows/jberet-clean.yml
+
+  jberet-crash-qualification:
+    name: JBeret crash/restart qualification
+    needs: discover
+    if: ${{ needs.discover.outputs.jberet_crash == 'true' }}
+    uses: $/.github/workflows/jberet-crash.yml
+
+  pr4-semantic-qualification:
+    name: PR4 four-way semantic gate
+    needs: discover
+    if: ${{ needs.discover.outputs.pr4_semantic == 'true' }}
+    uses: $/.github/workflows/pr4-four-way-semantic.yml
+
+  repository-governance-policy:
+    name: Repository governance policy
+    needs: discover
+    if: ${{ needs.discover.outputs.governance == 'true' }}
+    uses: $/.github/workflows/hardening-drift-audit-policy.yml
+
   # All semantic authorities run in this PR DAG. Existing shard aggregates
   # enforce exact identity, full coverage, and policy-correct artifact results.
   merge-gate:
@@ -641,6 +721,10 @@ jobs:
       - workloads-msrv
       - supply-chain
       - dependency-review
+      - jberet-clean-qualification
+      - jberet-crash-qualification
+      - pr4-semantic-qualification
+      - repository-governance-policy
     if: always()
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -658,21 +742,39 @@ jobs:
 
           needs = json.loads(os.environ["NEEDS_JSON"])
           event = os.environ["GITHUB_EVENT_NAME"]
-          required = {
+          always_required = {
               "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
               "workloads-ci", "workloads-msrv", "supply-chain",
           }
-          expected = required | {"dependency-review"}
+          scope_outputs = needs.get("discover", {}).get("outputs", {})
+          scoped = {
+              "jberet-clean-qualification": scope_outputs.get("jberet_clean"),
+              "jberet-crash-qualification": scope_outputs.get("jberet_crash"),
+              "pr4-semantic-qualification": scope_outputs.get("pr4_semantic"),
+              "repository-governance-policy": scope_outputs.get("governance"),
+          }
+          expected = always_required | {"dependency-review"} | set(scoped)
           errors = []
           if set(needs) != expected:
               errors.append(f"unexpected/missing DAG jobs: expected={sorted(expected)}, observed={sorted(needs)}")
           if event == "pull_request" and os.environ.get("PR_DRAFT") == "true":
               errors.append("draft pull request has not received complete semantic validation")
 
-          for name in sorted(required):
+          for name in sorted(always_required):
               result = needs.get(name, {}).get("result")
               if result != "success":
                   errors.append(f"{name}: expected success, observed {result!r}")
+
+          for name, enabled in sorted(scoped.items()):
+              if enabled not in {"true", "false"}:
+                  errors.append(f"{name}: invalid or missing scope classification {enabled!r}")
+                  continue
+              expected_result = "success" if enabled == "true" else "skipped"
+              result = needs.get(name, {}).get("result")
+              if result != expected_result:
+                  errors.append(
+                      f"{name}: scope={enabled}, expected {expected_result}, observed {result!r}"
+                  )
 
           dependency_result = needs.get("dependency-review", {}).get("result")
           expected_dependency = "success" if event == "pull_request" else "skipped"
