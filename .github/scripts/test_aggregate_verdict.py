@@ -385,6 +385,8 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for name in (
             "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
             "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+            "jberet-clean-qualification", "jberet-crash-qualification",
+            "pr4-semantic-qualification", "repository-governance-policy",
         ):
             with self.subTest(name=name):
                 self.assertIn(f"      - {name}\n", gate)
@@ -396,20 +398,34 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         gate = source.split("  merge-gate:\n", 1)[1]
         program = gate.split("          python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
         program = "\n".join(line.removeprefix("          ") for line in program.splitlines()) + "\n"
+        scoped = {
+            "jberet-clean-qualification": "jberet_clean",
+            "jberet-crash-qualification": "jberet_crash",
+            "pr4-semantic-qualification": "pr4_semantic",
+            "repository-governance-policy": "governance",
+        }
         names = {
             "discover", "ci-shard", "msrv-shard", "supply-chain-shard",
             "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
+            *scoped,
         }
 
         def run(
             changes: dict[str, str] | None = None,
             *,
+            scopes: dict[str, str] | None = None,
             removed: str | None = None,
             extra: str | None = None,
             event: str = "pull_request",
             draft: str = "false",
         ) -> subprocess.CompletedProcess[str]:
+            scope_values = {output: "false" for output in scoped.values()}
+            scope_values.update(scopes or {})
             values = {name: {"result": "success"} for name in names}
+            values["discover"]["outputs"] = scope_values
+            for name, output in scoped.items():
+                enabled = scope_values.get(output)
+                values[name] = {"result": "success" if enabled == "true" else "skipped"}
             if event == "workflow_dispatch":
                 values["dependency-review"] = {"result": "skipped"}
             for name, result in (changes or {}).items():
@@ -427,6 +443,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
 
         for label, kwargs in (
             ("valid PR", {}),
+            ("valid scoped PR", {"scopes": {"jberet_clean": "true", "governance": "true"}}),
             ("valid manual", {"event": "workflow_dispatch"}),
         ):
             with self.subTest(label=label):
@@ -436,10 +453,19 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for label, kwargs in (
             ("missing shard", {"removed": "ci-shard"}),
             ("missing dependency", {"removed": "dependency-review"}),
+            ("missing scoped authority", {"removed": "jberet-clean-qualification"}),
             ("unexpected extra", {"extra": "untrusted-observer"}),
             ("failed aggregate", {"changes": {"workloads-msrv": "failure"}}),
             ("cancelled shard", {"changes": {"supply-chain-shard": "cancelled"}}),
             ("skipped discovery", {"changes": {"discover": "skipped"}}),
+            ("invalid scope classification", {"scopes": {"jberet_clean": "unknown"}}),
+            ("applicable scoped failure", {
+                "scopes": {"jberet_clean": "true"},
+                "changes": {"jberet-clean-qualification": "failure"},
+            }),
+            ("non-applicable scoped success", {
+                "changes": {"jberet-clean-qualification": "success"},
+            }),
             ("skipped PR review", {"changes": {"dependency-review": "skipped"}}),
             ("manual claimed diff review", {"event": "workflow_dispatch",
                                              "changes": {"dependency-review": "success"}}),
