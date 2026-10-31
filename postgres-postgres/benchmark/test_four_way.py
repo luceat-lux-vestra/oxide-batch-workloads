@@ -127,11 +127,18 @@ class FourWayHarnessTests(unittest.TestCase):
         self.assertIn("BENCH_MEASURED_RUNS % 4 == 0", text)
 
     def test_semantic_gate_runs_on_pr_without_post_merge_duplicate(self):
-        workflow = MODULE_PATH.parents[2] / ".github" / "workflows" / "pr4-four-way-semantic.yml"
+        workflows = MODULE_PATH.parents[2] / ".github" / "workflows"
+        workflow = workflows / "pr4-four-way-semantic.yml"
         text = workflow.read_text(encoding="utf-8")
-        self.assertIn("pull_request:", text)
-        self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", text)
+        ci_text = (workflows / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertIn("workflow_call:", text)
+        self.assertNotIn("pull_request:", text)
         self.assertNotIn("push:", text)
+        self.assertIn("pull_request:", ci_text)
+        self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", ci_text)
+        self.assertIn("if: ${{ needs.discover.outputs.pr4_semantic == 'true' }}", ci_text)
+        self.assertIn("uses: $/.github/workflows/pr4-four-way-semantic.yml", ci_text)
         self.assertIn("./ci/validate-raw-jdbc-crash-recovery", text)
         self.assertIn("--measured-runs 4", text)
         self.assertIn("persist-credentials: false", text)
