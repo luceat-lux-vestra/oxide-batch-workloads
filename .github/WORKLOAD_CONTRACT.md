@@ -46,8 +46,11 @@ validation subject are rejected.
 ### Fixtures
 
 Entries under `fixtures` exist only to prove that central CI is contract-driven
-across heterogeneous Cargo projects. They participate in the ordinary `ci` and
-`msrv` fan-out/aggregate path but make no OxideBatch capability claim and are
+across heterogeneous Cargo projects. They participate in the ordinary `ci`
+fan-out and the full MSRV aggregate authority, but an entry with
+`msrv.declared=false` does not consume a dedicated MSRV runner. Its explicit
+`not-applicable` evidence is synthesized from validated registry policy inside
+the stable aggregate job. Fixtures make no OxideBatch capability claim and are
 not supply-chain validation subjects.
 
 This is not a provenance escape hatch. Fixture manifests and lockfiles are
@@ -103,8 +106,10 @@ Rules:
 - `declared: false` requires `package.rust-version` to be absent and requires a
   non-empty policy reason.
 - a duplicated registry version field is invalid.
-- an undeclared-MSRV entry still produces an explicit `msrv` shard result with
-  outcome `not-applicable`; it is never silently omitted from coverage.
+- an undeclared-MSRV entry still produces explicit normalized `msrv` evidence
+  with outcome `not-applicable`, synthesized by the aggregate authority from
+  its validated registry `policy_reason`; it is never silently omitted from
+  coverage and does not require a no-op runner.
 
 ## Workload-owned `ci/validate`
 
@@ -119,9 +124,11 @@ cleanup. The central workflow does not duplicate these commands.
 
 ### `ci/validate msrv`
 
-For entries with `msrv.declared: true`, central CI first installs the
-`Cargo.toml`-resolved toolchain and then invokes the entry's MSRV validation.
-An entry with `msrv.declared: false` does not need to implement this stage.
+For entries with `msrv.declared: true`, central CI places the entry in the
+declared-MSRV execution projection, installs the `Cargo.toml`-resolved
+toolchain, and invokes the entry's MSRV validation. An entry with
+`msrv.declared: false` does not enter the runner matrix and does not need to
+implement this stage.
 
 The contract is the process exit code. The central workflow records shard
 identity and normalized outcome from trusted matrix/registry data; workload
@@ -146,8 +153,14 @@ subjects, and then validates every real workload sequentially. Any Cargo policy
 failure, required additional-ecosystem hook failure, or completeness mismatch
 fails the stable `supply-chain` authority.
 
-For CI/MSRV, discovery failure, failed/cancelled/skipped shards, missing or
-duplicate results, unexpected extra results, malformed result files,
+For MSRV, the runner matrix contains only `declared=true` entries while the
+aggregate expectation remains the complete canonical discovery set. Before the
+verdict runs, the aggregate job synthesizes explicit `not-applicable` results
+for every validated `declared=false` entry. Malformed policy, duplicate names,
+or collisions with downloaded shard results fail closed.
+
+For CI/MSRV, discovery failure, failed/cancelled/skipped required shards,
+missing or duplicate results, unexpected extra results, malformed result files,
 policy/outcome mismatch, and incomplete coverage all fail closed.
 
 ## Protected PR merge authority
@@ -159,9 +172,11 @@ job. The final job requires discovery, every applicable CI/MSRV shard and
 aggregate, the supply-chain authority, and all scoped semantic authorities to
 succeed, and requires `dependency-review` for PR events. A draft PR is not considered
 validated; manual CI dispatch does not invent a dependency-diff review.
-The CI/MSRV per-shard artifact completeness/duplicate and MSRV disposition
-checks remain owned by `aggregate_verdict.py`; supply-chain completeness is
-owned by `run-supply-chain-authority.py`, not by the coarse final gate.
+The CI/declared-MSRV per-shard artifact completeness and full-registry MSRV
+policy/outcome checks remain owned by `aggregate_verdict.py`; undeclared-MSRV
+evidence materialization is fail-closed and registry-driven before that verdict.
+Supply-chain completeness is owned by `run-supply-chain-authority.py`, not by
+the coarse final gate.
 
 The former contexts `ci` and `msrv` are obsolete; per-entry shard names are
 implementation details, never standalone branch-protection requirements.
@@ -176,8 +191,8 @@ protection ahead of verifying the new producer.
 it is not replaced by full-current-graph `supply-chain` validation. The
 independent push-only Fast branch workflow remains an **advisory early feedback**
 producer; PR merge authority no longer polls or reuses its run. Registry
-tests and validation run locally within `discover` before CI/MSRV fan-out and
-the single-runner supply-chain authority.
+tests and validation run locally within `discover` before CI/declared-MSRV
+fan-out and the single-runner supply-chain authority.
 
 ## Repository-wide supply-chain policy
 
@@ -227,9 +242,9 @@ Neither replaces the other.
 
 ## Current fixture
 
-`fixture-heterogeneous/` exists only to prove that the `ci`/`msrv` orchestration
-works for an entry with a materially different shape from `csv-postgres` and
-without workload-name branching in central CI. It has no OxideBatch dependency,
+`fixture-heterogeneous/` exists only to prove that CI fan-out and full MSRV
+aggregate policy remain registry-driven for an entry with a materially different
+shape from `csv-postgres`, without workload-name branching in central CI. It has no OxideBatch dependency,
 no production evidence claim, and no supply-chain workload status.
 
 ## Contract changes
