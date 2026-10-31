@@ -688,25 +688,25 @@ jobs:
     name: JBeret clean qualification
     needs: discover
     if: ${{ needs.discover.outputs.jberet_clean == 'true' }}
-    uses: ./.github/workflows/jberet-clean.yml
+    uses: $/.github/workflows/jberet-clean.yml
 
   jberet-crash-qualification:
     name: JBeret crash/restart qualification
     needs: discover
     if: ${{ needs.discover.outputs.jberet_crash == 'true' }}
-    uses: ./.github/workflows/jberet-crash.yml
+    uses: $/.github/workflows/jberet-crash.yml
 
   pr4-semantic-qualification:
     name: PR4 four-way semantic gate
     needs: discover
     if: ${{ needs.discover.outputs.pr4_semantic == 'true' }}
-    uses: ./.github/workflows/pr4-four-way-semantic.yml
+    uses: $/.github/workflows/pr4-four-way-semantic.yml
 
   repository-governance-policy:
     name: Repository governance policy
     needs: discover
     if: ${{ needs.discover.outputs.governance == 'true' }}
-    uses: ./.github/workflows/hardening-drift-audit-policy.yml
+    uses: $/.github/workflows/hardening-drift-audit-policy.yml
 
   # All semantic authorities run in this PR DAG. Existing shard aggregates
   # enforce exact identity, full coverage, and policy-correct artifact results.
