@@ -77,13 +77,9 @@ async fn main() -> anyhow::Result<()> {
             sequence,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let result = execute_clean_iteration(
-                &workload_binary,
-                &database_url,
-                &campaign_id,
-                sequence,
-            )
-            .await?;
+            let result =
+                execute_clean_iteration(&workload_binary, &database_url, &campaign_id, sequence)
+                    .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
