@@ -10,13 +10,7 @@ use support::SeedOptions;
 #[test]
 fn endurancectl_plan_is_machine_readable_and_deterministic() {
     let output = Command::new(env!("CARGO_BIN_EXE_postgres-postgres-endurancectl"))
-        .args([
-            "plan",
-            "--campaign-id",
-            "s10-baseline",
-            "--sequence",
-            "24",
-        ])
+        .args(["plan", "--campaign-id", "s10-baseline", "--sequence", "24"])
         .output()
         .expect("spawn postgres-postgres-endurancectl");
 
@@ -32,10 +26,7 @@ fn endurancectl_plan_is_machine_readable_and_deterministic() {
     assert_eq!(plan["sequence"], 24);
     assert_eq!(plan["reader"], "paging");
     assert_eq!(plan["failure"], "before-commit");
-    assert_eq!(
-        plan["import_name"],
-        "endurance_s10-baseline_000024_paging"
-    );
+    assert_eq!(plan["import_name"], "endurance_s10-baseline_000024_paging");
 }
 
 async fn metadata_counts(pool: &sqlx::PgPool) -> (i64, i64, i64) {
