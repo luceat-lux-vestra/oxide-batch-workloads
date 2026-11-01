@@ -5,11 +5,21 @@
 //! spawning, fault delivery, recovery, sampling, and resume state belong to
 //! later campaign slices.
 
-use anyhow::{bail, Result};
+use std::path::Path;
+use std::process::{Output, Stdio};
+
+use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sqlx::postgres::PgPoolOptions;
+use tokio::process::Command;
 
 const MAX_CAMPAIGN_ID_LEN: usize = 48;
+
+pub const CANONICAL_SOURCE_ROWS: u64 = 200_000;
+pub const CANONICAL_SEED: u64 = 20_260_904;
+pub const CANONICAL_CHUNK_SIZE: u32 = 1_000;
+pub const CANONICAL_CURSOR_FETCH_SIZE: usize = 500;
+pub const CANONICAL_PAGING_PAGE_SIZE: usize = 750;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,6 +54,28 @@ pub struct IterationPlan {
     pub import_name: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ChildProcessResult {
+    pub pid: u32,
+    pub success: bool,
+    pub code: Option<i32>,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CleanIterationResult {
+    pub campaign_id: String,
+    pub sequence: u64,
+    pub reader: EnduranceReader,
+    pub import_name: String,
+    pub chunk_size: u32,
+    pub fetch_size: Option<usize>,
+    pub page_size: Option<usize>,
+    pub run: ChildProcessResult,
+    pub verification: ChildProcessResult,
+    pub cleanup_deleted_rows: u64,
+}
+
 pub fn plan_iteration(campaign_id: &str, sequence: u64) -> Result<IterationPlan> {
     validate_campaign_id(campaign_id)?;
     if sequence == 0 {
@@ -69,6 +101,122 @@ pub fn plan_iteration(campaign_id: &str, sequence: u64) -> Result<IterationPlan>
         failure,
         import_name,
     })
+}
+
+pub async fn execute_clean_iteration(
+    workload_binary: &Path,
+    database_url: &str,
+    campaign_id: &str,
+    sequence: u64,
+) -> Result<CleanIterationResult> {
+    let plan = plan_iteration(campaign_id, sequence)?;
+    if plan.failure != EnduranceFailure::Clean {
+        let failure = match plan.failure {
+            EnduranceFailure::BeforeCommit => "before-commit",
+            EnduranceFailure::AfterCommit => "after-commit",
+            EnduranceFailure::Clean => "clean",
+        };
+        bail!(
+            "sequence {sequence} is reserved for {failure} crash/recovery orchestration and cannot run through the clean Slice B path"
+        );
+    }
+
+    let (fetch_size, page_size) = match plan.reader {
+        EnduranceReader::Cursor => (Some(CANONICAL_CURSOR_FETCH_SIZE), None),
+        EnduranceReader::Paging => (None, Some(CANONICAL_PAGING_PAGE_SIZE)),
+    };
+
+    let mut run_command = Command::new(workload_binary);
+    run_command
+        .arg("run")
+        .arg("--database-url")
+        .arg(database_url)
+        .arg("--import-name")
+        .arg(&plan.import_name)
+        .arg("--chunk-size")
+        .arg(CANONICAL_CHUNK_SIZE.to_string())
+        .arg("--reader")
+        .arg(plan.reader.as_str());
+    match plan.reader {
+        EnduranceReader::Cursor => {
+            run_command
+                .arg("--fetch-size")
+                .arg(CANONICAL_CURSOR_FETCH_SIZE.to_string());
+        }
+        EnduranceReader::Paging => {
+            run_command
+                .arg("--page-size")
+                .arg(CANONICAL_PAGING_PAGE_SIZE.to_string());
+        }
+    }
+
+    let (run, run_output) = run_child(run_command, "run").await?;
+    require_success("run", &run, &run_output)?;
+
+    let mut verify_command = Command::new(workload_binary);
+    verify_command
+        .arg("verify")
+        .arg("--database-url")
+        .arg(database_url)
+        .arg("--import-name")
+        .arg(&plan.import_name);
+    let (verification, verify_output) = run_child(verify_command, "verify").await?;
+    require_success("verify", &verification, &verify_output)?;
+
+    let cleanup_deleted_rows = cleanup_business(database_url, &plan.import_name).await?;
+
+    Ok(CleanIterationResult {
+        campaign_id: plan.campaign_id,
+        sequence: plan.sequence,
+        reader: plan.reader,
+        import_name: plan.import_name,
+        chunk_size: CANONICAL_CHUNK_SIZE,
+        fetch_size,
+        page_size,
+        run,
+        verification,
+        cleanup_deleted_rows,
+    })
+}
+
+async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessResult, Output)> {
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("spawn postgres-postgres {phase} child"))?;
+    let pid = child
+        .id()
+        .ok_or_else(|| anyhow::anyhow!("postgres-postgres {phase} child has no process id"))?;
+    let output = child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("wait for postgres-postgres {phase} child"))?;
+    let process = ChildProcessResult {
+        pid,
+        success: output.status.success(),
+        code: output.status.code(),
+        status: output.status.to_string(),
+    };
+    Ok((process, output))
+}
+
+fn require_success(phase: &str, process: &ChildProcessResult, output: &Output) -> Result<()> {
+    if process.success {
+        return Ok(());
+    }
+
+    bail!(
+        "{phase} child failed: pid={} status={} code={:?}\nstdout={}\nstderr={}",
+        process.pid,
+        process.status,
+        process.code,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 /// Delete only one verified iteration's workload-owned business projection.
