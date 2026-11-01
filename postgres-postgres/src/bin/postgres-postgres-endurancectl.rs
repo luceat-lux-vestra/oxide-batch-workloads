@@ -1,9 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use postgres_postgres::endurance::{
-    cleanup_business, execute_clean_iteration, plan_iteration,
-};
+use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
 /// Campaign #203 bounded control surface for deterministic endurance setup
 /// and one clean logical-iteration execution.
