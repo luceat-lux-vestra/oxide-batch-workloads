@@ -1,9 +1,11 @@
 //! Campaign #203 support primitives for the S10 endurance harness.
 //!
 //! This module contains deterministic planning, one clean child-process
-//! iteration, and workload-owned business cleanup. Long-running loops, fault
-//! delivery, recovery, sampling, evidence persistence, and resume state belong
-//! to later campaign slices.
+//! iteration, scheduled crash/recovery orchestration, and workload-owned
+//! business cleanup. Long-running loops, sampling, evidence persistence, and
+//! resume state belong to later campaign slices.
+
+pub mod crash;
 
 use std::path::Path;
 use std::process::{Output, Stdio};
