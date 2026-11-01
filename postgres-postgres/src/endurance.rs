@@ -5,6 +5,8 @@
 //! delivery, recovery, sampling, evidence persistence, and resume state belong
 //! to later campaign slices.
 
+pub mod crash;
+
 use std::path::Path;
 use std::process::{Output, Stdio};
 
