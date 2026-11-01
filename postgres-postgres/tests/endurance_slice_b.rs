@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use postgres_postgres::endurance::{
-    execute_clean_iteration, plan_iteration, CANONICAL_CHUNK_SIZE,
-    CANONICAL_CURSOR_FETCH_SIZE, CANONICAL_PAGING_PAGE_SIZE,
+    execute_clean_iteration, plan_iteration, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE,
+    CANONICAL_PAGING_PAGE_SIZE,
 };
 use support::SeedOptions;
 
@@ -150,8 +150,7 @@ async fn verification_failure_preserves_business_rows_for_diagnosis() {
     let plan = plan_iteration(&campaign_id, 1).expect("sequence 1 is a clean cursor plan");
     let wrapper = failing_verify_wrapper();
 
-    let result =
-        execute_clean_iteration(&wrapper, &support::database_url(), &campaign_id, 1).await;
+    let result = execute_clean_iteration(&wrapper, &support::database_url(), &campaign_id, 1).await;
     let error = result.expect_err("forced verify failure must abort the clean iteration");
     assert!(
         error.to_string().contains("verify child failed"),
