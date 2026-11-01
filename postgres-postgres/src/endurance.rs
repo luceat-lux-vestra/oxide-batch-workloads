@@ -1,11 +1,12 @@
 //! Campaign #203 support primitives for the S10 endurance harness.
 //!
-//! This module contains deterministic planning, one clean child-process
-//! iteration, scheduled crash/recovery orchestration, and workload-owned
-//! business cleanup. Long-running loops, sampling, evidence persistence, and
-//! resume state belong to later campaign slices.
+//! This module contains deterministic planning, bounded clean and crash/recovery
+//! iteration execution, durable evidence persistence, and workload-owned
+//! business cleanup. Long-running loops, sampling, and resume state belong to
+//! later campaign slices.
 
 pub mod crash;
+pub mod evidence;
 
 use std::path::Path;
 use std::process::{Output, Stdio};
@@ -78,6 +79,18 @@ pub struct CleanIterationResult {
     pub cleanup_deleted_rows: u64,
 }
 
+pub trait IterationObserver {
+    fn record(&mut self, phase: &'static str, detail: serde_json::Value) -> Result<()>;
+}
+
+pub(crate) struct NoopIterationObserver;
+
+impl IterationObserver for NoopIterationObserver {
+    fn record(&mut self, _phase: &'static str, _detail: serde_json::Value) -> Result<()> {
+        Ok(())
+    }
+}
+
 pub fn plan_iteration(campaign_id: &str, sequence: u64) -> Result<IterationPlan> {
     validate_campaign_id(campaign_id)?;
     if sequence == 0 {
@@ -111,6 +124,24 @@ pub async fn execute_clean_iteration(
     campaign_id: &str,
     sequence: u64,
 ) -> Result<CleanIterationResult> {
+    let mut observer = NoopIterationObserver;
+    execute_clean_iteration_observed(
+        workload_binary,
+        database_url,
+        campaign_id,
+        sequence,
+        &mut observer,
+    )
+    .await
+}
+
+pub async fn execute_clean_iteration_observed(
+    workload_binary: &Path,
+    database_url: &str,
+    campaign_id: &str,
+    sequence: u64,
+    observer: &mut dyn IterationObserver,
+) -> Result<CleanIterationResult> {
     let plan = plan_iteration(campaign_id, sequence)?;
     if plan.failure != EnduranceFailure::Clean {
         let failure = match plan.failure {
@@ -122,6 +153,18 @@ pub async fn execute_clean_iteration(
             "sequence {sequence} is reserved for {failure} crash/recovery orchestration and cannot run through the clean Slice B path"
         );
     }
+
+    observer.record(
+        "iteration-planned",
+        serde_json::to_value(&plan).context("serialize clean iteration plan")?,
+    )?;
+    observer.record(
+        "iteration-started",
+        serde_json::json!({
+            "mode": "clean",
+            "import_name": plan.import_name,
+        }),
+    )?;
 
     let (fetch_size, page_size) = match plan.reader {
         EnduranceReader::Cursor => (Some(CANONICAL_CURSOR_FETCH_SIZE), None),
@@ -152,7 +195,14 @@ pub async fn execute_clean_iteration(
         }
     }
 
-    let (run, run_output) = run_child(run_command, "run").await?;
+    let (run, run_output) = run_child(
+        run_command,
+        "run",
+        observer,
+        "workload-child-started",
+        "workload-child-completed",
+    )
+    .await?;
     require_success("run", &run, &run_output)?;
 
     let mut verify_command = Command::new(workload_binary);
@@ -162,10 +212,24 @@ pub async fn execute_clean_iteration(
         .arg(database_url)
         .arg("--import-name")
         .arg(&plan.import_name);
-    let (verification, verify_output) = run_child(verify_command, "verify").await?;
+    let (verification, verify_output) = run_child(
+        verify_command,
+        "verify",
+        observer,
+        "verification-child-started",
+        "verification-child-completed",
+    )
+    .await?;
     require_success("verify", &verification, &verify_output)?;
 
     let cleanup_deleted_rows = cleanup_business(database_url, &plan.import_name).await?;
+    observer.record(
+        "cleanup-completed",
+        serde_json::json!({
+            "import_name": plan.import_name,
+            "deleted_rows": cleanup_deleted_rows,
+        }),
+    )?;
 
     Ok(CleanIterationResult {
         campaign_id: plan.campaign_id,
@@ -181,7 +245,13 @@ pub async fn execute_clean_iteration(
     })
 }
 
-async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessResult, Output)> {
+async fn run_child(
+    mut command: Command,
+    phase: &str,
+    observer: &mut dyn IterationObserver,
+    started_phase: &'static str,
+    completed_phase: &'static str,
+) -> Result<(ChildProcessResult, Output)> {
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -193,6 +263,8 @@ async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessRes
     let pid = child
         .id()
         .ok_or_else(|| anyhow::anyhow!("postgres-postgres {phase} child has no process id"))?;
+    observer.record(started_phase, serde_json::json!({ "pid": pid }))?;
+
     let output = child
         .wait_with_output()
         .await
@@ -203,6 +275,10 @@ async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessRes
         code: output.status.code(),
         status: output.status.to_string(),
     };
+    observer.record(
+        completed_phase,
+        serde_json::to_value(&process).context("serialize child process result")?,
+    )?;
     Ok((process, output))
 }
 

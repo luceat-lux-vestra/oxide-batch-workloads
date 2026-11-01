@@ -10,7 +10,8 @@ use tokio::time::{sleep, Instant};
 
 use super::{
     cleanup_business, plan_iteration, ChildProcessResult, EnduranceFailure, EnduranceReader,
-    IterationPlan, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE, CANONICAL_PAGING_PAGE_SIZE,
+    IterationObserver, IterationPlan, NoopIterationObserver, CANONICAL_CHUNK_SIZE,
+    CANONICAL_CURSOR_FETCH_SIZE, CANONICAL_PAGING_PAGE_SIZE,
 };
 use crate::source_digest;
 
@@ -72,15 +73,46 @@ pub async fn execute_crash_iteration(
     campaign_id: &str,
     sequence: u64,
 ) -> Result<CrashIterationResult> {
+    let mut observer = NoopIterationObserver;
+    execute_crash_iteration_observed(
+        workload_binary,
+        database_url,
+        campaign_id,
+        sequence,
+        &mut observer,
+    )
+    .await
+}
+
+pub async fn execute_crash_iteration_observed(
+    workload_binary: &Path,
+    database_url: &str,
+    campaign_id: &str,
+    sequence: u64,
+    observer: &mut dyn IterationObserver,
+) -> Result<CrashIterationResult> {
     #[cfg(not(unix))]
     {
-        let _ = (workload_binary, database_url, campaign_id, sequence);
+        let _ = (
+            workload_binary,
+            database_url,
+            campaign_id,
+            sequence,
+            observer,
+        );
         bail!("endurance crash orchestration requires Unix SIGKILL semantics");
     }
 
     #[cfg(unix)]
     {
-        execute_crash_iteration_unix(workload_binary, database_url, campaign_id, sequence).await
+        execute_crash_iteration_unix(
+            workload_binary,
+            database_url,
+            campaign_id,
+            sequence,
+            observer,
+        )
+        .await
     }
 }
 
@@ -90,11 +122,26 @@ async fn execute_crash_iteration_unix(
     database_url: &str,
     campaign_id: &str,
     sequence: u64,
+    observer: &mut dyn IterationObserver,
 ) -> Result<CrashIterationResult> {
     let plan = plan_iteration(campaign_id, sequence)?;
     let (failure_mode, expected_marker_boundary, expected_commits) =
         crash_contract(plan.failure, sequence)?;
     let (fetch_size, page_size) = reader_sizes(plan.reader);
+
+    observer.record(
+        "iteration-planned",
+        serde_json::to_value(&plan).context("serialize crash iteration plan")?,
+    )?;
+    observer.record(
+        "iteration-started",
+        serde_json::json!({
+            "mode": "crash-recovery",
+            "import_name": &plan.import_name,
+            "failure": plan.failure,
+            "fail_at_chunk": CANONICAL_CRASH_CHUNK,
+        }),
+    )?;
 
     let marker_path = marker_path(campaign_id, sequence)?;
     let _ = std::fs::remove_file(&marker_path);
@@ -117,6 +164,17 @@ async fn execute_crash_iteration_unix(
     let crash_pid = crash_child
         .id()
         .ok_or_else(|| anyhow::anyhow!("postgres-postgres crash child has no process id"))?;
+    if let Err(error) = observer.record(
+        "workload-child-started",
+        serde_json::json!({
+            "pid": crash_pid,
+            "fail_at_chunk": CANONICAL_CRASH_CHUNK,
+            "failure_mode": failure_mode,
+        }),
+    ) {
+        terminate_for_error(&mut crash_child).await;
+        return Err(error);
+    }
 
     let marker = match wait_for_pause_marker(
         &mut crash_child,
@@ -143,10 +201,33 @@ async fn execute_crash_iteration_unix(
             crash_pid
         );
     }
+    if let Err(error) = observer.record(
+        "crash-marker-observed",
+        serde_json::json!({
+            "pid": marker.pid,
+            "boundary": &marker.boundary,
+        }),
+    ) {
+        terminate_for_error(&mut crash_child).await;
+        let _ = std::fs::remove_file(&marker_path);
+        return Err(error);
+    }
 
     crash_child
         .start_kill()
         .context("deliver external SIGKILL to paused workload child")?;
+    if let Err(error) = observer.record(
+        "sigkill-delivered",
+        serde_json::json!({
+            "pid": crash_pid,
+            "signal": 9,
+        }),
+    ) {
+        let _ = crash_child.wait().await;
+        let _ = std::fs::remove_file(&marker_path);
+        return Err(error);
+    }
+
     let crash_output = crash_child
         .wait_with_output()
         .await
@@ -163,15 +244,26 @@ async fn execute_crash_iteration_unix(
         status: crash_output.status.to_string(),
         reaped: true,
     };
+    observer.record(
+        "crash-child-reaped",
+        serde_json::to_value(&crash).context("serialize crash child result")?,
+    )?;
     require_sigkill(&crash, &crash_output)?;
 
     let expected_rows = i64::from(expected_commits) * i64::from(CANONICAL_CHUNK_SIZE);
     let post_crash = observe_crash_state(database_url, &plan.import_name, expected_rows).await?;
     require_crash_state(&post_crash, expected_commits, expected_rows)?;
+    observer.record(
+        "post-crash-state-observed",
+        serde_json::to_value(&post_crash).context("serialize post-crash state")?,
+    )?;
 
     let (plain_relaunch, plain_output) = run_child(
         build_run_command(workload_binary, database_url, &plan),
         "plain relaunch",
+        observer,
+        "plain-relaunch-child-started",
+        "plain-relaunch-child-completed",
     )
     .await?;
     require_failure("plain relaunch", &plain_relaunch, &plain_output)?;
@@ -179,6 +271,9 @@ async fn execute_crash_iteration_unix(
     let (recovery, recovery_output) = run_child(
         build_recover_command(workload_binary, database_url, &plan),
         "recover",
+        observer,
+        "recovery-child-started",
+        "recovery-child-completed",
     )
     .await?;
     require_success("recover", &recovery, &recovery_output)?;
@@ -186,6 +281,9 @@ async fn execute_crash_iteration_unix(
     let (continuation, continuation_output) = run_child(
         build_run_command(workload_binary, database_url, &plan),
         "continuation",
+        observer,
+        "continuation-child-started",
+        "continuation-child-completed",
     )
     .await?;
     require_success("continuation", &continuation, &continuation_output)?;
@@ -193,11 +291,21 @@ async fn execute_crash_iteration_unix(
     let (verification, verify_output) = run_child(
         build_verify_command(workload_binary, database_url, &plan),
         "verify",
+        observer,
+        "verification-child-started",
+        "verification-child-completed",
     )
     .await?;
     require_success("verify", &verification, &verify_output)?;
 
     let cleanup_deleted_rows = cleanup_business(database_url, &plan.import_name).await?;
+    observer.record(
+        "cleanup-completed",
+        serde_json::json!({
+            "import_name": &plan.import_name,
+            "deleted_rows": cleanup_deleted_rows,
+        }),
+    )?;
 
     Ok(CrashIterationResult {
         campaign_id: plan.campaign_id,
@@ -308,7 +416,13 @@ fn build_verify_command(
     command
 }
 
-async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessResult, Output)> {
+async fn run_child(
+    mut command: Command,
+    phase: &str,
+    observer: &mut dyn IterationObserver,
+    started_phase: &'static str,
+    completed_phase: &'static str,
+) -> Result<(ChildProcessResult, Output)> {
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -320,6 +434,8 @@ async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessRes
     let pid = child
         .id()
         .ok_or_else(|| anyhow::anyhow!("postgres-postgres {phase} child has no process id"))?;
+    observer.record(started_phase, serde_json::json!({ "pid": pid }))?;
+
     let output = child
         .wait_with_output()
         .await
@@ -330,6 +446,10 @@ async fn run_child(mut command: Command, phase: &str) -> Result<(ChildProcessRes
         code: output.status.code(),
         status: output.status.to_string(),
     };
+    observer.record(
+        completed_phase,
+        serde_json::to_value(&process).context("serialize child process result")?,
+    )?;
     Ok((process, output))
 }
 
