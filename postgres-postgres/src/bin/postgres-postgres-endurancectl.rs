@@ -4,11 +4,11 @@ use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
-/// Campaign #203 bounded control surface for deterministic endurance setup
-/// and one clean logical-iteration execution.
+/// Campaign #203 bounded control surface for deterministic endurance setup,
+/// one clean logical iteration, and one scheduled crash/recovery iteration.
 ///
-/// Long-running loops and crash/recovery execution are intentionally absent
-/// until later campaign slices.
+/// Long-running loops, sampling, evidence persistence, and resume state are
+/// intentionally absent until later campaign slices.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
