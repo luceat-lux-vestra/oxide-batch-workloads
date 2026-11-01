@@ -189,11 +189,7 @@ impl EvidenceStore {
         Ok(())
     }
 
-    fn write_success(
-        &self,
-        sequence: u64,
-        execution: &RecordedExecutionResult,
-    ) -> Result<PathBuf> {
+    fn write_success(&self, sequence: u64, execution: &RecordedExecutionResult) -> Result<PathBuf> {
         let path = self.iteration_path(sequence);
         if path.exists() {
             bail!(
@@ -407,8 +403,13 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| anyhow::anyhow!("evidence path has non-UTF-8 file name: {}", path.display()))?;
-    let temp = parent.join(format!(".{file_name}.tmp-{}-{timestamp}", std::process::id()));
+        .ok_or_else(|| {
+            anyhow::anyhow!("evidence path has non-UTF-8 file name: {}", path.display())
+        })?;
+    let temp = parent.join(format!(
+        ".{file_name}.tmp-{}-{timestamp}",
+        std::process::id()
+    ));
 
     let write_result = (|| -> Result<()> {
         let mut file = OpenOptions::new()

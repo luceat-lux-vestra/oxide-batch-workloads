@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use postgres_postgres::endurance::evidence::{execute_recorded_iteration, EvidenceStore};
 use postgres_postgres::endurance::{
-    plan_iteration, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE,
-    CANONICAL_PAGING_PAGE_SIZE, CANONICAL_SEED, CANONICAL_SOURCE_ROWS,
+    plan_iteration, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE, CANONICAL_PAGING_PAGE_SIZE,
+    CANONICAL_SEED, CANONICAL_SOURCE_ROWS,
 };
 use serde_json::{json, Value};
 use support::SeedOptions;
@@ -156,15 +156,10 @@ async fn recorded_clean_iteration_persists_ordered_terminal_evidence_without_sec
     let root = temp_root("clean");
     let campaign_id = format!("recordclean{}", support::nonce());
     let database_url = support::database_url();
-    let result = execute_recorded_iteration(
-        &workload_binary(),
-        &database_url,
-        &root,
-        &campaign_id,
-        1,
-    )
-    .await
-    .expect("execute recorded clean iteration");
+    let result =
+        execute_recorded_iteration(&workload_binary(), &database_url, &root, &campaign_id, 1)
+            .await
+            .expect("execute recorded clean iteration");
 
     let iteration_path = PathBuf::from(&result.iteration_path);
     let iteration: Value =
@@ -337,10 +332,9 @@ async fn recorded_failure_preserves_diagnostics_without_success_or_secret_leakag
     let wrapper = failing_verify_wrapper();
     let plan = plan_iteration(&campaign_id, 1).expect("clean failure plan");
 
-    let error =
-        execute_recorded_iteration(&wrapper, &database_url, &root, &campaign_id, 1)
-            .await
-            .expect_err("forced verifier failure must fail the recorded iteration");
+    let error = execute_recorded_iteration(&wrapper, &database_url, &root, &campaign_id, 1)
+        .await
+        .expect_err("forced verifier failure must fail the recorded iteration");
     assert!(
         error.to_string().contains("verify child failed"),
         "unexpected execution error: {error:#}"
@@ -371,11 +365,9 @@ async fn recorded_failure_preserves_diagnostics_without_success_or_secret_leakag
         events.last().and_then(|event| event["phase"].as_str()),
         Some("iteration-terminal-failure")
     );
-    assert!(
-        !events
-            .iter()
-            .any(|event| event["phase"] == "iteration-terminal-success")
-    );
+    assert!(!events
+        .iter()
+        .any(|event| event["phase"] == "iteration-terminal-success"));
 
     let pool = support::pool().await;
     let source_digest = postgres_postgres::source_digest::compute(&pool)
