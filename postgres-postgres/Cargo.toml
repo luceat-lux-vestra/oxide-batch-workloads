@@ -7,6 +7,7 @@ name = "postgres-postgres"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
+default-run = "postgres-postgres"
 publish = false
 license = "Apache-2.0"
 description = "OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreSQL restartable batch transform (cursor and paging reader modes)"
@@ -18,6 +19,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "postgres-postgres"
 path = "src/main.rs"
+
+[[bin]]
+name = "postgres-postgres-endurancectl"
+path = "src/bin/postgres-postgres-endurancectl.rs"
 
 [dependencies]
 oxide-batch = { version = "=0.6.0", features = ["postgres"] }
