@@ -4,6 +4,7 @@
 
 mod support;
 
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
