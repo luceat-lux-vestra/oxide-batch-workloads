@@ -1,10 +1,15 @@
-use clap::{Parser, Subcommand};
-use postgres_postgres::endurance::{cleanup_business, plan_iteration};
+use std::path::PathBuf;
 
-/// Campaign #203 bounded control surface for deterministic endurance setup.
+use clap::{Parser, Subcommand};
+use postgres_postgres::endurance::{
+    cleanup_business, execute_clean_iteration, plan_iteration,
+};
+
+/// Campaign #203 bounded control surface for deterministic endurance setup
+/// and one clean logical-iteration execution.
 ///
-/// Long-running orchestration and crash/recovery execution are intentionally
-/// absent until later campaign slices.
+/// Long-running loops and crash/recovery execution are intentionally absent
+/// until later campaign slices.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
@@ -27,6 +32,16 @@ enum Command {
         database_url: String,
         #[arg(long)]
         import_name: String,
+    },
+    /// Execute one clean logical iteration through the real workload binary,
+    /// independently verify it, then clean only that iteration's business rows.
+    RunClean {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        campaign_id: String,
+        #[arg(long)]
+        sequence: u64,
     },
 }
 
@@ -56,5 +71,37 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::RunClean {
+            database_url,
+            campaign_id,
+            sequence,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_clean_iteration(
+                &workload_binary,
+                &database_url,
+                &campaign_id,
+                sequence,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
     }
+}
+
+fn sibling_workload_binary() -> anyhow::Result<PathBuf> {
+    let current_exe = std::env::current_exe()?;
+    let parent = current_exe.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot resolve postgres-postgres sibling directory from {}",
+            current_exe.display()
+        )
+    })?;
+    let binary_name = if cfg!(windows) {
+        "postgres-postgres.exe"
+    } else {
+        "postgres-postgres"
+    };
+    Ok(parent.join(binary_name))
 }
