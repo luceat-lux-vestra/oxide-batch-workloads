@@ -58,7 +58,7 @@ pub enum FailureClass {
 #[serde(tag = "kind", content = "result", rename_all = "kebab-case")]
 pub enum RecordedExecutionResult {
     Clean(CleanIterationResult),
-    Crash(CrashIterationResult),
+    Crash(Box<CrashIterationResult>),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -280,7 +280,7 @@ pub async fn execute_recorded_iteration(
                 &mut observer,
             )
             .await
-            .map(RecordedExecutionResult::Crash)
+            .map(|result| RecordedExecutionResult::Crash(Box::new(result)))
         }
     };
 
