@@ -9,12 +9,9 @@ mod support;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use postgres_postgres::endurance::crash::{
-    execute_crash_iteration, CANONICAL_CRASH_CHUNK,
-};
+use postgres_postgres::endurance::crash::{execute_crash_iteration, CANONICAL_CRASH_CHUNK};
 use postgres_postgres::endurance::{
-    plan_iteration, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE,
-    CANONICAL_PAGING_PAGE_SIZE,
+    plan_iteration, CANONICAL_CHUNK_SIZE, CANONICAL_CURSOR_FETCH_SIZE, CANONICAL_PAGING_PAGE_SIZE,
 };
 use support::SeedOptions;
 

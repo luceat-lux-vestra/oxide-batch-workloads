@@ -166,25 +166,35 @@ async fn execute_crash_iteration_unix(
     require_sigkill(&crash, &crash_output)?;
 
     let expected_rows = i64::from(expected_commits) * i64::from(CANONICAL_CHUNK_SIZE);
-    let post_crash =
-        observe_crash_state(database_url, &plan.import_name, expected_rows).await?;
+    let post_crash = observe_crash_state(database_url, &plan.import_name, expected_rows).await?;
     require_crash_state(&post_crash, expected_commits, expected_rows)?;
 
-    let (plain_relaunch, plain_output) =
-        run_child(build_run_command(workload_binary, database_url, &plan), "plain relaunch")
-            .await?;
+    let (plain_relaunch, plain_output) = run_child(
+        build_run_command(workload_binary, database_url, &plan),
+        "plain relaunch",
+    )
+    .await?;
     require_failure("plain relaunch", &plain_relaunch, &plain_output)?;
 
-    let (recovery, recovery_output) =
-        run_child(build_recover_command(workload_binary, database_url, &plan), "recover").await?;
+    let (recovery, recovery_output) = run_child(
+        build_recover_command(workload_binary, database_url, &plan),
+        "recover",
+    )
+    .await?;
     require_success("recover", &recovery, &recovery_output)?;
 
-    let (continuation, continuation_output) =
-        run_child(build_run_command(workload_binary, database_url, &plan), "continuation").await?;
+    let (continuation, continuation_output) = run_child(
+        build_run_command(workload_binary, database_url, &plan),
+        "continuation",
+    )
+    .await?;
     require_success("continuation", &continuation, &continuation_output)?;
 
-    let (verification, verify_output) =
-        run_child(build_verify_command(workload_binary, database_url, &plan), "verify").await?;
+    let (verification, verify_output) = run_child(
+        build_verify_command(workload_binary, database_url, &plan),
+        "verify",
+    )
+    .await?;
     require_success("verify", &verification, &verify_output)?;
 
     let cleanup_deleted_rows = cleanup_business(database_url, &plan.import_name).await?;
@@ -237,11 +247,7 @@ fn reader_sizes(reader: EnduranceReader) -> (Option<usize>, Option<usize>) {
     }
 }
 
-fn build_run_command(
-    workload_binary: &Path,
-    database_url: &str,
-    plan: &IterationPlan,
-) -> Command {
+fn build_run_command(workload_binary: &Path, database_url: &str, plan: &IterationPlan) -> Command {
     let mut command = Command::new(workload_binary);
     command
         .arg("run")
@@ -417,9 +423,7 @@ async fn wait_for_pause_marker(
             .try_wait()
             .context("poll crash child while waiting for pause marker")?
         {
-            bail!(
-                "crash child exited before semantic pause marker appeared: status={status}"
-            );
+            bail!("crash child exited before semantic pause marker appeared: status={status}");
         }
         if Instant::now() >= deadline {
             bail!(
@@ -478,8 +482,8 @@ async fn observe_crash_state(
     .await?;
     pool.close().await;
 
-    let (execution_status, execution_exit_code, commit_count, checkpoint_position) = row
-        .ok_or_else(|| anyhow::anyhow!("no durable execution/checkpoint exists after crash"))?;
+    let (execution_status, execution_exit_code, commit_count, checkpoint_position) =
+        row.ok_or_else(|| anyhow::anyhow!("no durable execution/checkpoint exists after crash"))?;
 
     Ok(CrashStateSnapshot {
         execution_status,
