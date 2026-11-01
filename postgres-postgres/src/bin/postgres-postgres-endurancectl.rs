@@ -2,13 +2,15 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::crash::execute_crash_iteration;
+use postgres_postgres::endurance::evidence::execute_recorded_iteration;
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
 /// Campaign #203 bounded control surface for deterministic endurance setup,
-/// one clean logical iteration, and one scheduled crash/recovery iteration.
+/// one clean logical iteration, one scheduled crash/recovery iteration, and
+/// one evidence-persisted bounded iteration.
 ///
-/// Long-running loops, sampling, evidence persistence, and resume state are
-/// intentionally absent until later campaign slices.
+/// Long-running loops, sampling, and resume state are intentionally absent
+/// until later campaign slices.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
@@ -47,6 +49,18 @@ enum Command {
     RunCrash {
         #[arg(long, env = "DATABASE_URL")]
         database_url: String,
+        #[arg(long)]
+        campaign_id: String,
+        #[arg(long)]
+        sequence: u64,
+    },
+    /// Execute one planned clean or crash/recovery iteration while persisting
+    /// durable campaign, event, iteration, and failure evidence.
+    RunRecorded {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
         #[arg(long)]
         campaign_id: String,
         #[arg(long)]
@@ -101,6 +115,24 @@ async fn main() -> anyhow::Result<()> {
             let result =
                 execute_crash_iteration(&workload_binary, &database_url, &campaign_id, sequence)
                     .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::RunRecorded {
+            database_url,
+            evidence_root,
+            campaign_id,
+            sequence,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_recorded_iteration(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
+                sequence,
+            )
+            .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
