@@ -383,7 +383,11 @@ fn binary_identity(path: &Path) -> Result<BinaryIdentity> {
         hasher.update(&buffer[..read]);
     }
     let digest = hasher.finalize();
-    let sha256 = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    let sha256 = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
 
     Ok(BinaryIdentity {
         path: canonical.display().to_string(),
