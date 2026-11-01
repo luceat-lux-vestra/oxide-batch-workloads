@@ -60,10 +60,7 @@ pub fn plan_iteration(campaign_id: &str, sequence: u64) -> Result<IterationPlan>
         49 => EnduranceFailure::AfterCommit,
         _ => EnduranceFailure::Clean,
     };
-    let import_name = format!(
-        "endurance_{campaign_id}_{sequence:06}_{}",
-        reader.as_str()
-    );
+    let import_name = format!("endurance_{campaign_id}_{sequence:06}_{}", reader.as_str());
 
     Ok(IterationPlan {
         campaign_id: campaign_id.to_owned(),
@@ -88,12 +85,11 @@ pub async fn cleanup_business(database_url: &str, import_name: &str) -> Result<u
     validate_endurance_import_name(import_name)?;
 
     let pool = PgPoolOptions::new().connect(database_url).await?;
-    let delete_result = sqlx::query(
-        "DELETE FROM app_business.customer_projection WHERE import_name = $1",
-    )
-    .bind(import_name)
-    .execute(&pool)
-    .await;
+    let delete_result =
+        sqlx::query("DELETE FROM app_business.customer_projection WHERE import_name = $1")
+            .bind(import_name)
+            .execute(&pool)
+            .await;
     pool.close().await;
 
     Ok(delete_result?.rows_affected())
@@ -137,11 +133,7 @@ fn validate_endurance_import_name(import_name: &str) -> Result<()> {
         .rsplit_once('_')
         .ok_or_else(|| anyhow::anyhow!("endurance import name is missing sequence"))?;
     validate_campaign_id(campaign_id)?;
-    if sequence_text.len() < 6
-        || !sequence_text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())
-    {
+    if sequence_text.len() < 6 || !sequence_text.bytes().all(|byte| byte.is_ascii_digit()) {
         bail!("endurance import sequence must be a zero-padded decimal number");
     }
     let sequence: u64 = sequence_text.parse()?;
