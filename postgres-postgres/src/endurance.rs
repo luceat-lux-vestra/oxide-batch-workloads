@@ -155,7 +155,7 @@ mod tests {
     };
 
     #[test]
-    fn deterministic_schedule_covers_frozen_boundaries() {
+    fn deterministic_schedule_covers_frozen_boundaries() -> anyhow::Result<()> {
         let cases = [
             (23, EnduranceReader::Cursor, EnduranceFailure::Clean),
             (24, EnduranceReader::Paging, EnduranceFailure::BeforeCommit),
@@ -169,25 +169,26 @@ mod tests {
         ];
 
         for (sequence, reader, failure) in cases {
-            let plan = plan_iteration("s10-baseline", sequence).expect("valid plan");
+            let plan = plan_iteration("s10-baseline", sequence)?;
             assert_eq!(plan.sequence, sequence);
             assert_eq!(plan.reader, reader);
             assert_eq!(plan.failure, failure);
         }
+
+        Ok(())
     }
 
     #[test]
-    fn import_identity_is_stable_and_sequence_scoped() {
-        let first = plan_iteration("s10-baseline", 1).expect("valid first plan");
-        let second = plan_iteration("s10-baseline", 2).expect("valid second plan");
+    fn import_identity_is_stable_and_sequence_scoped() -> anyhow::Result<()> {
+        let first = plan_iteration("s10-baseline", 1)?;
+        let second = plan_iteration("s10-baseline", 2)?;
 
         assert_eq!(first.import_name, "endurance_s10-baseline_000001_cursor");
         assert_eq!(second.import_name, "endurance_s10-baseline_000002_paging");
         assert_ne!(first.import_name, second.import_name);
-        assert_eq!(
-            first,
-            plan_iteration("s10-baseline", 1).expect("same input is deterministic")
-        );
+        assert_eq!(first, plan_iteration("s10-baseline", 1)?);
+
+        Ok(())
     }
 
     #[test]
@@ -200,15 +201,15 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_identity_accepts_only_canonical_endurance_names() {
-        let canonical = plan_iteration("s10-baseline", 24)
-            .expect("valid plan")
-            .import_name;
+    fn cleanup_identity_accepts_only_canonical_endurance_names() -> anyhow::Result<()> {
+        let canonical = plan_iteration("s10-baseline", 24)?.import_name;
         assert!(validate_endurance_import_name(&canonical).is_ok());
 
         assert!(validate_endurance_import_name("customers_transform").is_err());
         assert!(validate_endurance_import_name("endurance_s10-baseline_24_paging").is_err());
         assert!(validate_endurance_import_name("endurance_s10-baseline_000024_cursor").is_err());
         assert!(validate_endurance_import_name("endurance_s10-baseline_000000_paging").is_err());
+
+        Ok(())
     }
 }
