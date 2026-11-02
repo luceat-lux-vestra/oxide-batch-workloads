@@ -256,6 +256,7 @@ pub async fn execute_recorded_iteration(
     campaign_id: &str,
     sequence: u64,
 ) -> Result<RecordedIterationOutput> {
+    let _ = plan_iteration(campaign_id, sequence)?;
     let store = EvidenceStore::open(evidence_root, campaign_id, workload_binary)?;
     match execute_recorded_iteration_in_store(
         &store,
