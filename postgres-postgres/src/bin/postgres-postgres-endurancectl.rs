@@ -4,16 +4,16 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
+use postgres_postgres::endurance::resume::reconcile_resume_status;
 use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration;
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
 /// Campaign #203 bounded control surface for deterministic endurance setup,
 /// one clean logical iteration, one scheduled crash/recovery iteration, and
-/// one evidence-persisted bounded iteration, and one resource-sampled recorded
-/// iteration.
+/// one evidence-persisted bounded iteration, one resource-sampled recorded
+/// iteration, and read-only durable resume-frontier inspection.
 ///
-/// Long-running loops and resume state are intentionally absent until later
-/// campaign slices.
+/// Long-running loops are intentionally absent until later campaign slices.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
@@ -81,6 +81,14 @@ enum Command {
         sequence: u64,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
+    },
+    /// Inspect existing durable evidence and report the next safe sequence
+    /// without executing a workload process or mutating campaign evidence.
+    ResumeStatus {
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
     },
 }
 
@@ -170,6 +178,16 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::ResumeStatus {
+            evidence_root,
+            campaign_id,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let status =
+                reconcile_resume_status(&evidence_root, &campaign_id, &workload_binary)?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
             Ok(())
         }
     }
