@@ -237,12 +237,12 @@ impl IterationObserver for EvidenceObserver<'_> {
     }
 }
 
-struct CombinedObserver<'a> {
-    evidence: EvidenceObserver<'a>,
-    extra: &'a mut dyn IterationObserver,
+struct CombinedObserver<'store, 'extra> {
+    evidence: EvidenceObserver<'store>,
+    extra: &'extra mut dyn IterationObserver,
 }
 
-impl IterationObserver for CombinedObserver<'_> {
+impl IterationObserver for CombinedObserver<'_, '_> {
     fn record(&mut self, phase: &'static str, detail: Value) -> Result<()> {
         self.evidence.record(phase, detail.clone())?;
         self.extra.record(phase, detail)
@@ -387,7 +387,9 @@ pub(crate) fn finalize_failure(
 
 fn classify_failure(error: &anyhow::Error) -> FailureClass {
     let message = format!("{error:#}");
-    if message.contains("verify child failed") {
+    if message.contains("resource sampler") {
+        FailureClass::HarnessEnvironment
+    } else if message.contains("verify child failed") {
         FailureClass::Verification
     } else if message.contains("run child failed")
         || message.contains("recover child failed")
