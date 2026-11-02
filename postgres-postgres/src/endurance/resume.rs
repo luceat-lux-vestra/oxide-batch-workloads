@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
-use std::ops::Bound::{Excluded, Unbounded};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
+use std::ops::Bound::{Excluded, Unbounded};
 use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::evidence::load_existing_campaign_readonly;
 use super::{
@@ -68,6 +69,7 @@ struct IterationRecord {
     campaign_id: String,
     sequence: u64,
     terminal: String,
+    execution: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,8 +86,11 @@ pub fn reconcile_resume_status(
     campaign_id: &str,
     workload_binary: &Path,
 ) -> Result<ResumeStatus> {
-    let campaign =
-        match load_existing_campaign_readonly(evidence_root, campaign_id, workload_binary) {
+    let campaign = match load_existing_campaign_readonly(
+        evidence_root,
+        campaign_id,
+        workload_binary,
+    ) {
         Ok(campaign) => campaign,
         Err(error) => {
             return Ok(inconsistent(
@@ -251,6 +256,23 @@ fn scan_iterations(
             return Err(format!(
                 "iteration singleton must be terminal success, found {:?}: {}",
                 record.terminal,
+                path.display()
+            ));
+        }
+        let execution_sequence = record
+            .execution
+            .get("result")
+            .and_then(|result| result.get("sequence"))
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                format!(
+                    "iteration execution is missing numeric result.sequence: {}",
+                    path.display()
+                )
+            })?;
+        if execution_sequence != sequence {
+            return Err(format!(
+                "iteration execution sequence {execution_sequence} disagrees with {sequence}: {}",
                 path.display()
             ));
         }
@@ -426,8 +448,7 @@ fn reconcile_sequences(
                     frontier,
                     Some(sequence),
                     format!(
-                        "evidence gap at sequence {sequence}; higher sequence {higher} already \
-                         exists"
+                        "evidence gap at sequence {sequence}; higher sequence {higher} exists"
                     ),
                 ));
             }
@@ -462,8 +483,7 @@ fn reconcile_sequences(
                 frontier,
                 Some(sequence),
                 format!(
-                    "terminal-success lifecycle exists without iteration singleton for sequence \
-                     {sequence}"
+                    "terminal-success exists without iteration singleton for sequence {sequence}"
                 ),
             ));
         }
@@ -473,8 +493,7 @@ fn reconcile_sequences(
                 frontier,
                 Some(sequence),
                 format!(
-                    "iteration singleton exists without exactly one terminal-success lifecycle for \
-                     sequence {sequence}"
+                    "iteration singleton lacks one terminal-success event for sequence {sequence}"
                 ),
             ));
         }
@@ -522,8 +541,7 @@ fn reconcile_sequences(
                     frontier,
                     Some(sequence),
                     format!(
-                        "sequence {sequence} is incomplete but higher sequence {higher} evidence \
-                         exists"
+                        "sequence {sequence} is incomplete but higher sequence {higher} exists"
                     ),
                 ));
             }
