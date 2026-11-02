@@ -158,6 +158,10 @@ impl EvidenceStore {
         &self.events_path
     }
 
+    pub fn samples_path(&self) -> PathBuf {
+        self.campaign_dir.join("samples.jsonl")
+    }
+
     pub fn iteration_path(&self, sequence: u64) -> PathBuf {
         self.iterations_dir.join(format!("{sequence:06}.json"))
     }
@@ -172,21 +176,7 @@ impl EvidenceStore {
             "phase": phase,
             "detail": detail,
         });
-        let mut bytes = serde_json::to_vec(&record)?;
-        bytes.push(b'\n');
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.events_path)
-            .with_context(|| format!("append {}", self.events_path.display()))?;
-        file.write_all(&bytes)
-            .with_context(|| format!("write {}", self.events_path.display()))?;
-        file.flush()
-            .with_context(|| format!("flush {}", self.events_path.display()))?;
-        file.sync_data()
-            .with_context(|| format!("sync {}", self.events_path.display()))?;
-        Ok(())
+        append_jsonl(&self.events_path, &record)
     }
 
     fn write_success(&self, sequence: u64, execution: &RecordedExecutionResult) -> Result<PathBuf> {
@@ -247,6 +237,18 @@ impl IterationObserver for EvidenceObserver<'_> {
     }
 }
 
+struct CombinedObserver<'a> {
+    evidence: EvidenceObserver<'a>,
+    extra: &'a mut dyn IterationObserver,
+}
+
+impl IterationObserver for CombinedObserver<'_> {
+    fn record(&mut self, phase: &'static str, detail: Value) -> Result<()> {
+        self.evidence.record(phase, detail.clone())?;
+        self.extra.record(phase, detail)
+    }
+}
+
 pub async fn execute_recorded_iteration(
     workload_binary: &Path,
     database_url: &str,
@@ -254,20 +256,74 @@ pub async fn execute_recorded_iteration(
     campaign_id: &str,
     sequence: u64,
 ) -> Result<RecordedIterationOutput> {
-    let plan = plan_iteration(campaign_id, sequence)?;
     let store = EvidenceStore::open(evidence_root, campaign_id, workload_binary)?;
-    let mut observer = EvidenceObserver {
-        store: &store,
+    match execute_recorded_iteration_in_store(
+        &store,
+        workload_binary,
+        database_url,
+        campaign_id,
         sequence,
-    };
+        None,
+    )
+    .await
+    {
+        Ok(execution) => finalize_success(&store, campaign_id, sequence, execution),
+        Err(error) => {
+            finalize_failure(&store, database_url, sequence, &error)?;
+            Err(error)
+        }
+    }
+}
 
-    let execution_result: Result<RecordedExecutionResult> = match plan.failure {
+pub(crate) async fn execute_recorded_iteration_in_store(
+    store: &EvidenceStore,
+    workload_binary: &Path,
+    database_url: &str,
+    campaign_id: &str,
+    sequence: u64,
+    extra_observer: Option<&mut dyn IterationObserver>,
+) -> Result<RecordedExecutionResult> {
+    let mut evidence = EvidenceObserver { store, sequence };
+    match extra_observer {
+        Some(extra) => {
+            let mut observer = CombinedObserver { evidence, extra };
+            execute_recorded_execution(
+                workload_binary,
+                database_url,
+                campaign_id,
+                sequence,
+                &mut observer,
+            )
+            .await
+        }
+        None => {
+            execute_recorded_execution(
+                workload_binary,
+                database_url,
+                campaign_id,
+                sequence,
+                &mut evidence,
+            )
+            .await
+        }
+    }
+}
+
+async fn execute_recorded_execution(
+    workload_binary: &Path,
+    database_url: &str,
+    campaign_id: &str,
+    sequence: u64,
+    observer: &mut dyn IterationObserver,
+) -> Result<RecordedExecutionResult> {
+    let plan = plan_iteration(campaign_id, sequence)?;
+    match plan.failure {
         EnduranceFailure::Clean => execute_clean_iteration_observed(
             workload_binary,
             database_url,
             campaign_id,
             sequence,
-            &mut observer,
+            observer,
         )
         .await
         .map(RecordedExecutionResult::Clean),
@@ -277,48 +333,56 @@ pub async fn execute_recorded_iteration(
                 database_url,
                 campaign_id,
                 sequence,
-                &mut observer,
+                observer,
             )
             .await
             .map(|result| RecordedExecutionResult::Crash(Box::new(result)))
         }
-    };
-
-    match execution_result {
-        Ok(execution) => {
-            let iteration_path = store.write_success(sequence, &execution)?;
-            store.record_event(
-                sequence,
-                "iteration-terminal-success",
-                json!({
-                    "iteration_path": iteration_path.display().to_string(),
-                }),
-            )?;
-
-            Ok(RecordedIterationOutput {
-                campaign_id: campaign_id.to_owned(),
-                sequence,
-                campaign_dir: store.campaign_dir().display().to_string(),
-                events_path: store.events_path().display().to_string(),
-                iteration_path: iteration_path.display().to_string(),
-                execution,
-            })
-        }
-        Err(error) => {
-            let class = classify_failure(&error);
-            let redacted = redact_database_url(&format!("{error:#}"), database_url);
-            let failure_path = store.write_failure(sequence, &class, &redacted)?;
-            store.record_event(
-                sequence,
-                "iteration-terminal-failure",
-                json!({
-                    "failure_class": class,
-                    "failure_path": failure_path.display().to_string(),
-                }),
-            )?;
-            Err(error)
-        }
     }
+}
+
+pub(crate) fn finalize_success(
+    store: &EvidenceStore,
+    campaign_id: &str,
+    sequence: u64,
+    execution: RecordedExecutionResult,
+) -> Result<RecordedIterationOutput> {
+    let iteration_path = store.write_success(sequence, &execution)?;
+    store.record_event(
+        sequence,
+        "iteration-terminal-success",
+        json!({
+            "iteration_path": iteration_path.display().to_string(),
+        }),
+    )?;
+
+    Ok(RecordedIterationOutput {
+        campaign_id: campaign_id.to_owned(),
+        sequence,
+        campaign_dir: store.campaign_dir().display().to_string(),
+        events_path: store.events_path().display().to_string(),
+        iteration_path: iteration_path.display().to_string(),
+        execution,
+    })
+}
+
+pub(crate) fn finalize_failure(
+    store: &EvidenceStore,
+    database_url: &str,
+    sequence: u64,
+    error: &anyhow::Error,
+) -> Result<()> {
+    let class = classify_failure(error);
+    let redacted = redact_database_url(&format!("{error:#}"), database_url);
+    let failure_path = store.write_failure(sequence, &class, &redacted)?;
+    store.record_event(
+        sequence,
+        "iteration-terminal-failure",
+        json!({
+            "failure_class": class,
+            "failure_path": failure_path.display().to_string(),
+        }),
+    )
 }
 
 fn classify_failure(error: &anyhow::Error) -> FailureClass {
@@ -392,6 +456,24 @@ fn binary_identity(path: &Path) -> Result<BinaryIdentity> {
     })
 }
 
+pub(crate) fn append_jsonl(path: &Path, value: &impl Serialize) -> Result<()> {
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("append {}", path.display()))?;
+    file.write_all(&bytes)
+        .with_context(|| format!("write {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush {}", path.display()))?;
+    file.sync_data()
+        .with_context(|| format!("sync {}", path.display()))?;
+    Ok(())
+}
+
 fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path
         .parent()
@@ -442,7 +524,7 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     write_result
 }
 
-fn now_unix_nanos() -> Result<u64> {
+pub(crate) fn now_unix_nanos() -> Result<u64> {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("system clock is before UNIX epoch")?
