@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use tokio::task::JoinHandle;
 use tokio::time::{sleep, Instant};
 
 use super::evidence::{
@@ -278,6 +279,38 @@ struct SamplerContext {
     interval_millis: u64,
 }
 
+struct SamplerTask {
+    handle: Option<JoinHandle<Result<u64>>>,
+}
+
+impl SamplerTask {
+    fn spawn(context: SamplerContext, pool: PgPool) -> Self {
+        Self {
+            handle: Some(tokio::spawn(run_sampler(context, pool))),
+        }
+    }
+
+    async fn join(&mut self) -> Result<u64> {
+        let result = match self.handle.as_mut() {
+            Some(handle) => match handle.await {
+                Ok(result) => result,
+                Err(error) => Err(anyhow!("resource sampler task join failed: {error}")),
+            },
+            None => Err(anyhow!("resource sampler task was already joined")),
+        };
+        self.handle = None;
+        result
+    }
+}
+
+impl Drop for SamplerTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
 pub async fn execute_sampled_recorded_iteration(
     workload_binary: &Path,
     database_url: &str,
@@ -343,7 +376,7 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
         interval: sample_interval,
         interval_millis,
     };
-    let sampler = tokio::spawn(run_sampler(context, pool));
+    let mut sampler = SamplerTask::spawn(context, pool);
 
     let execution = execute_recorded_iteration_in_store(
         &store,
@@ -357,13 +390,9 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
 
     let terminal_result = observer.enqueue_terminal(execution.is_ok());
     let stop_result = observer.stop();
-    let (samples_written, sampler_error) = match sampler.await {
-        Ok(Ok(samples_written)) => (Some(samples_written), None),
-        Ok(Err(error)) => (None, Some(error)),
-        Err(error) => (
-            None,
-            Some(anyhow!("resource sampler task join failed: {error}")),
-        ),
+    let (samples_written, sampler_error) = match sampler.join().await {
+        Ok(samples_written) => (Some(samples_written), None),
+        Err(error) => (None, Some(error)),
     };
 
     if let Some(sampling_error) = terminal_result.err().or(stop_result.err()).or(sampler_error) {
@@ -402,14 +431,13 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
 
 async fn run_sampler(context: SamplerContext, pool: PgPool) -> Result<u64> {
     let result = run_sampler_inner(&context, &pool).await;
-    pool.close().await;
-
     if let Err(error) = &result {
         if let Ok(mut state) = context.state.lock() {
             state.failure = Some(format!("{error:#}"));
             state.stop = true;
         }
     }
+    pool.close().await;
     result
 }
 
