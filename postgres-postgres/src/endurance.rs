@@ -2,11 +2,12 @@
 //!
 //! This module contains deterministic planning, bounded clean and crash/recovery
 //! iteration execution, durable evidence persistence, bounded resource sampling,
-//! and workload-owned business cleanup. Long-running loops and resume state belong
-//! to later campaign slices.
+//! read-only durable resume reconciliation, and workload-owned business cleanup.
+//! Long-running loops belong to later campaign slices.
 
 pub mod crash;
 pub mod evidence;
+pub mod resume;
 pub mod sampling;
 
 use std::path::Path;
