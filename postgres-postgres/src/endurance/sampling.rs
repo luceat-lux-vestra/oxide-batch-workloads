@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::process::Command as StdCommand;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -133,6 +135,7 @@ struct SamplerState {
     active: Option<ProcessTarget>,
     boundaries: VecDeque<BoundaryRequest>,
     failure: Option<String>,
+    started: bool,
     stop: bool,
 }
 
@@ -226,6 +229,9 @@ impl SamplingObserver {
     fn enqueue_boundary(&self, kind: &'static str) -> Result<()> {
         let mut state = lock_state(&self.state)?;
         fail_if_sampler_failed(&state)?;
+        if kind == "sampler-start" {
+            state.started = true;
+        }
         state
             .boundaries
             .push_back(BoundaryRequest { kind, process: None });
@@ -351,18 +357,34 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
 
     let terminal_result = observer.enqueue_terminal(execution.is_ok());
     let stop_result = observer.stop();
-    let sampler_result = match sampler.await {
-        Ok(result) => result,
-        Err(error) => Err(anyhow!("resource sampler task join failed: {error}")),
+    let (samples_written, sampler_error) = match sampler.await {
+        Ok(Ok(samples_written)) => (Some(samples_written), None),
+        Ok(Err(error)) => (None, Some(error)),
+        Err(error) => (
+            None,
+            Some(anyhow!("resource sampler task join failed: {error}")),
+        ),
     };
 
-    let sampling_error = terminal_result
-        .err()
-        .or_else(|| stop_result.err())
-        .or_else(|| sampler_result.as_ref().err().map(|error| anyhow!("{error:#}")));
+    if let Some(sampling_error) = terminal_result.err().or(stop_result.err()).or(sampler_error) {
+        let error = match execution {
+            Ok(_) => sampling_error,
+            Err(execution_error) => anyhow!(
+                "resource sampler failed: {sampling_error:#}; bounded iteration also failed: {execution_error:#}"
+            ),
+        };
+        finalize_failure(&store, database_url, sequence, &error)?;
+        return Err(error);
+    }
 
-    match (execution, sampling_error, sampler_result) {
-        (Ok(execution), None, Ok(samples_written)) => {
+    let Some(samples_written) = samples_written else {
+        let error = anyhow!("resource sampler completed without a sample-count result");
+        finalize_failure(&store, database_url, sequence, &error)?;
+        return Err(error);
+    };
+
+    match execution {
+        Ok(execution) => {
             let recorded = finalize_success(&store, campaign_id, sequence, execution)?;
             Ok(SampledRecordedIterationOutput {
                 recorded,
@@ -371,31 +393,9 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
                 samples_written,
             })
         }
-        (Ok(_), Some(sampling_error), _) => {
-            finalize_failure(&store, database_url, sequence, &sampling_error)?;
-            Err(sampling_error)
-        }
-        (Err(execution_error), Some(sampling_error), _) => {
-            let combined = anyhow!(
-                "resource sampler failed: {sampling_error:#}; bounded iteration also failed: {execution_error:#}"
-            );
-            finalize_failure(&store, database_url, sequence, &combined)?;
-            Err(combined)
-        }
-        (Err(execution_error), None, Ok(_)) => {
-            finalize_failure(&store, database_url, sequence, &execution_error)?;
-            Err(execution_error)
-        }
-        (Ok(_), None, Err(sampling_error)) => {
-            finalize_failure(&store, database_url, sequence, &sampling_error)?;
-            Err(sampling_error)
-        }
-        (Err(execution_error), None, Err(sampling_error)) => {
-            let combined = anyhow!(
-                "resource sampler failed: {sampling_error:#}; bounded iteration also failed: {execution_error:#}"
-            );
-            finalize_failure(&store, database_url, sequence, &combined)?;
-            Err(combined)
+        Err(error) => {
+            finalize_failure(&store, database_url, sequence, &error)?;
+            Err(error)
         }
     }
 }
@@ -418,10 +418,15 @@ async fn run_sampler_inner(context: &SamplerContext, pool: &PgPool) -> Result<u6
     let mut next_periodic = Instant::now() + context.interval;
 
     loop {
-        let (boundaries, active, stop) = {
+        let (boundaries, active, started, stop) = {
             let mut state = lock_state(&context.state)?;
             let boundaries = state.boundaries.drain(..).collect::<Vec<_>>();
-            (boundaries, state.active.clone(), state.stop)
+            (
+                boundaries,
+                state.active.clone(),
+                state.started,
+                state.stop,
+            )
         };
 
         for boundary in boundaries {
@@ -430,7 +435,7 @@ async fn run_sampler_inner(context: &SamplerContext, pool: &PgPool) -> Result<u6
         }
 
         let now = Instant::now();
-        if !stop && now >= next_periodic {
+        if started && !stop && now >= next_periodic {
             let process = active
                 .as_ref()
                 .map(|target| context.probe.process(target.pid, &target.role))
