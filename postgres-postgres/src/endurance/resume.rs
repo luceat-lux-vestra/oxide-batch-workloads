@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::Bound::{Excluded, Unbounded};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -419,7 +420,7 @@ fn reconcile_sequences(
 
     loop {
         let Some(current) = evidence.get(&sequence) else {
-            if let Some((&higher, _)) = evidence.range((sequence + 1)..).next() {
+            if let Some((&higher, _)) = evidence.range((Excluded(sequence), Unbounded)).next() {
                 return Ok(inconsistent(
                     campaign_id,
                     frontier,
@@ -476,7 +477,7 @@ fn reconcile_sequences(
         }
 
         if has_failure {
-            if let Some((&higher, _)) = evidence.range((sequence + 1)..).next() {
+            if let Some((&higher, _)) = evidence.range((Excluded(sequence), Unbounded)).next() {
                 return Ok(inconsistent(
                     campaign_id,
                     frontier,
@@ -512,7 +513,7 @@ fn reconcile_sequences(
         }
 
         if current.lifecycle_events > 0 {
-            if let Some((&higher, _)) = evidence.range((sequence + 1)..).next() {
+            if let Some((&higher, _)) = evidence.range((Excluded(sequence), Unbounded)).next() {
                 return Ok(inconsistent(
                     campaign_id,
                     frontier,
