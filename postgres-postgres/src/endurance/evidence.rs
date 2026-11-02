@@ -226,6 +226,50 @@ impl EvidenceStore {
     }
 }
 
+pub(crate) fn load_existing_campaign_readonly(
+    evidence_root: &Path,
+    campaign_id: &str,
+    workload_binary: &Path,
+) -> Result<CampaignRecord> {
+    let _ = plan_iteration(campaign_id, 1)?;
+
+    let campaign_path = evidence_root.join(campaign_id).join("campaign.json");
+    if !campaign_path.is_file() {
+        bail!(
+            "existing campaign metadata is missing: {}",
+            campaign_path.display()
+        );
+    }
+
+    let existing: CampaignRecord = serde_json::from_reader(
+        File::open(&campaign_path).with_context(|| format!("open {}", campaign_path.display()))?,
+    )
+    .with_context(|| format!("parse {}", campaign_path.display()))?;
+
+    let expected = CampaignRecord {
+        schema: CAMPAIGN_SCHEMA.to_owned(),
+        schema_version: SCHEMA_VERSION,
+        created_at_unix_nanos_utc: existing.created_at_unix_nanos_utc,
+        campaign_id: campaign_id.to_owned(),
+        workload: WORKLOAD_NAME.to_owned(),
+        oxide_batch_version: OXIDE_BATCH_VERSION.to_owned(),
+        source_rows: CANONICAL_SOURCE_ROWS,
+        seed: CANONICAL_SEED,
+        chunk_size: CANONICAL_CHUNK_SIZE,
+        cursor_fetch_size: CANONICAL_CURSOR_FETCH_SIZE,
+        paging_page_size: CANONICAL_PAGING_PAGE_SIZE,
+        workload_binary: binary_identity(workload_binary)?,
+    };
+    if !same_campaign_identity(&existing, &expected) {
+        bail!(
+            "existing campaign metadata conflicts with requested campaign identity: {}",
+            campaign_path.display()
+        );
+    }
+
+    Ok(existing)
+}
+
 struct EvidenceObserver<'a> {
     store: &'a EvidenceStore,
     sequence: u64,
