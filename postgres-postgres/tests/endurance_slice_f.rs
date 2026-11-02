@@ -119,10 +119,8 @@ fn fresh_campaign_is_ready_for_one_samples_are_observational_and_inspection_is_r
     let store = new_store(&root, &campaign_id);
     fs::write(
         store.samples_path(),
-        concat!(
-            "{"schema":"oxide-batch-workloads.endurance-sample",",
-            ""schema_version":1,"sequence":999,"sample_kind":"periodic"}\n"
-        ),
+        br#"{"schema":"oxide-batch-workloads.endurance-sample","schema_version":1,"sequence":999,"sample_kind":"periodic"}
+"#,
     )
     .expect("write observational samples");
 

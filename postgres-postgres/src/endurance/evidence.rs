@@ -242,8 +242,7 @@ pub(crate) fn load_existing_campaign_readonly(
     }
 
     let existing: CampaignRecord = serde_json::from_reader(
-        File::open(&campaign_path)
-            .with_context(|| format!("open {}", campaign_path.display()))?,
+        File::open(&campaign_path).with_context(|| format!("open {}", campaign_path.display()))?,
     )
     .with_context(|| format!("parse {}", campaign_path.display()))?;
 

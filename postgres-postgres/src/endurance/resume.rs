@@ -86,21 +86,18 @@ pub fn reconcile_resume_status(
     campaign_id: &str,
     workload_binary: &Path,
 ) -> Result<ResumeStatus> {
-    let campaign = match load_existing_campaign_readonly(
-        evidence_root,
-        campaign_id,
-        workload_binary,
-    ) {
-        Ok(campaign) => campaign,
-        Err(error) => {
-            return Ok(inconsistent(
-                campaign_id,
-                0,
-                None,
-                format!("campaign identity/provenance validation failed: {error:#}"),
-            ));
-        }
-    };
+    let campaign =
+        match load_existing_campaign_readonly(evidence_root, campaign_id, workload_binary) {
+            Ok(campaign) => campaign,
+            Err(error) => {
+                return Ok(inconsistent(
+                    campaign_id,
+                    0,
+                    None,
+                    format!("campaign identity/provenance validation failed: {error:#}"),
+                ));
+            }
+        };
 
     if campaign.workload != WORKLOAD_NAME
         || campaign.oxide_batch_version != OXIDE_BATCH_VERSION
@@ -447,9 +444,7 @@ fn reconcile_sequences(
                     campaign_id,
                     frontier,
                     Some(sequence),
-                    format!(
-                        "evidence gap at sequence {sequence}; higher sequence {higher} exists"
-                    ),
+                    format!("evidence gap at sequence {sequence}; higher sequence {higher} exists"),
                 ));
             }
             return ready(campaign_id, frontier, sequence);
@@ -464,8 +459,7 @@ fn reconcile_sequences(
             ));
         }
 
-        let has_success =
-            current.terminal_success_events == 1 || current.iteration_success;
+        let has_success = current.terminal_success_events == 1 || current.iteration_success;
         let has_failure = current.terminal_failure_events == 1 || current.failure_files > 0;
 
         if has_success && has_failure {

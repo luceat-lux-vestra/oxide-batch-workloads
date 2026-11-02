@@ -185,8 +185,7 @@ async fn main() -> anyhow::Result<()> {
             campaign_id,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let status =
-                reconcile_resume_status(&evidence_root, &campaign_id, &workload_binary)?;
+            let status = reconcile_resume_status(&evidence_root, &campaign_id, &workload_binary)?;
             println!("{}", serde_json::to_string_pretty(&status)?);
             Ok(())
         }
