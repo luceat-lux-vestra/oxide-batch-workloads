@@ -84,8 +84,8 @@ pub fn reconcile_resume_status(
     campaign_id: &str,
     workload_binary: &Path,
 ) -> Result<ResumeStatus> {
-    let campaign = match load_existing_campaign_readonly(evidence_root, campaign_id, workload_binary)
-    {
+    let campaign =
+        match load_existing_campaign_readonly(evidence_root, campaign_id, workload_binary) {
         Ok(campaign) => campaign,
         Err(error) => {
             return Ok(inconsistent(
@@ -426,7 +426,8 @@ fn reconcile_sequences(
                     frontier,
                     Some(sequence),
                     format!(
-                        "evidence gap at sequence {sequence}; higher sequence {higher} already exists"
+                        "evidence gap at sequence {sequence}; higher sequence {higher} already \
+                         exists"
                     ),
                 ));
             }
@@ -461,7 +462,8 @@ fn reconcile_sequences(
                 frontier,
                 Some(sequence),
                 format!(
-                    "terminal-success lifecycle exists without iteration singleton for sequence {sequence}"
+                    "terminal-success lifecycle exists without iteration singleton for sequence \
+                     {sequence}"
                 ),
             ));
         }
@@ -471,7 +473,8 @@ fn reconcile_sequences(
                 frontier,
                 Some(sequence),
                 format!(
-                    "iteration singleton exists without exactly one terminal-success lifecycle for sequence {sequence}"
+                    "iteration singleton exists without exactly one terminal-success lifecycle for \
+                     sequence {sequence}"
                 ),
             ));
         }
@@ -519,7 +522,8 @@ fn reconcile_sequences(
                     frontier,
                     Some(sequence),
                     format!(
-                        "sequence {sequence} is incomplete but higher sequence {higher} evidence exists"
+                        "sequence {sequence} is incomplete but higher sequence {higher} evidence \
+                         exists"
                     ),
                 ));
             }
