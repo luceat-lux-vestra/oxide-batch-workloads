@@ -41,10 +41,7 @@ fn read_samples(path: &Path) -> Vec<Value> {
 }
 
 fn assert_common_sample(sample: &Value, campaign_id: &str, sequence: u64) {
-    assert_eq!(
-        sample["schema"],
-        "oxide-batch-workloads.endurance-sample"
-    );
+    assert_eq!(sample["schema"], "oxide-batch-workloads.endurance-sample");
     assert_eq!(sample["schema_version"], 1);
     assert_eq!(sample["campaign_id"], campaign_id);
     assert_eq!(sample["sequence"], sequence);
@@ -52,21 +49,15 @@ fn assert_common_sample(sample: &Value, campaign_id: &str, sequence: u64) {
     assert!(sample["timestamp_unix_nanos_utc"].as_u64().is_some());
     assert!(sample["sample_kind"].as_str().is_some());
 
-    assert!(
-        sample["postgres"]["total_connections"]
-            .as_i64()
-            .is_some_and(|value| value >= 1)
-    );
-    assert!(
-        sample["postgres"]["active_connections"]
-            .as_i64()
-            .is_some_and(|value| value >= 1)
-    );
-    assert!(
-        sample["postgres"]["database_size_bytes"]
-            .as_i64()
-            .is_some_and(|value| value > 0)
-    );
+    assert!(sample["postgres"]["total_connections"]
+        .as_i64()
+        .is_some_and(|value| value >= 1));
+    assert!(sample["postgres"]["active_connections"]
+        .as_i64()
+        .is_some_and(|value| value >= 1));
+    assert!(sample["postgres"]["database_size_bytes"]
+        .as_i64()
+        .is_some_and(|value| value > 0));
 
     for field in ["job_instances", "job_executions", "step_executions"] {
         assert!(
@@ -90,11 +81,9 @@ fn assert_common_sample(sample: &Value, campaign_id: &str, sequence: u64) {
     }
 
     let filesystem = &sample["filesystem"];
-    assert!(
-        filesystem["total_bytes"]
-            .as_u64()
-            .is_some_and(|value| value > 0)
-    );
+    assert!(filesystem["total_bytes"]
+        .as_u64()
+        .is_some_and(|value| value > 0));
     assert!(filesystem["used_bytes"].as_u64().is_some());
     assert!(filesystem["available_bytes"].as_u64().is_some());
 }
@@ -144,21 +133,15 @@ async fn sampled_clean_iterations_append_measurements_and_stop_after_return() {
     assert!(rss_recorded || explicit_unavailable);
     assert!(cpu_recorded || explicit_unavailable);
 
-    assert!(
-        first_samples
-            .iter()
-            .any(|sample| sample["sample_kind"] == "sampler-start")
-    );
-    assert!(
-        first_samples
-            .iter()
-            .any(|sample| sample["sample_kind"] == "post-cleanup")
-    );
-    assert!(
-        first_samples
-            .iter()
-            .any(|sample| sample["sample_kind"] == "terminal-success")
-    );
+    assert!(first_samples
+        .iter()
+        .any(|sample| sample["sample_kind"] == "sampler-start"));
+    assert!(first_samples
+        .iter()
+        .any(|sample| sample["sample_kind"] == "post-cleanup"));
+    assert!(first_samples
+        .iter()
+        .any(|sample| sample["sample_kind"] == "terminal-success"));
     assert!(
         first_samples.iter().any(|sample| {
             sample["oxide_batch"]["job_instances"]
@@ -188,11 +171,9 @@ async fn sampled_clean_iterations_append_measurements_and_stop_after_return() {
     );
     let all_samples = read_samples(&samples_path);
     assert!(all_samples.len() > first_samples.len());
-    assert!(
-        all_samples
-            .iter()
-            .any(|sample| sample["sequence"] == 2 && sample["sample_kind"] == "terminal-success")
-    );
+    assert!(all_samples
+        .iter()
+        .any(|sample| sample["sequence"] == 2 && sample["sample_kind"] == "terminal-success"));
 
     let stable_text = fs::read_to_string(&samples_path).expect("snapshot stopped sampler output");
     tokio::time::sleep(Duration::from_millis(40)).await;
@@ -342,7 +323,9 @@ async fn sampled_execution_failure_stops_sampler_and_preserves_failure_evidence(
     let samples = read_samples(&samples_path);
     assert!(!samples.is_empty());
     assert_eq!(
-        samples.last().and_then(|sample| sample["sample_kind"].as_str()),
+        samples
+            .last()
+            .and_then(|sample| sample["sample_kind"].as_str()),
         Some("terminal-failure")
     );
 

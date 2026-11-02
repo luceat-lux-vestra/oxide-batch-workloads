@@ -223,7 +223,9 @@ impl SamplingObserver {
             .transpose()?;
         let mut state = lock_state(&self.state)?;
         fail_if_sampler_failed(&state)?;
-        state.boundaries.push_back(BoundaryRequest { kind, process });
+        state
+            .boundaries
+            .push_back(BoundaryRequest { kind, process });
         Ok(())
     }
 
@@ -233,9 +235,10 @@ impl SamplingObserver {
         if kind == "sampler-start" {
             state.started = true;
         }
-        state
-            .boundaries
-            .push_back(BoundaryRequest { kind, process: None });
+        state.boundaries.push_back(BoundaryRequest {
+            kind,
+            process: None,
+        });
         Ok(())
     }
 }
@@ -395,7 +398,11 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
         Err(error) => (None, Some(error)),
     };
 
-    if let Some(sampling_error) = terminal_result.err().or(stop_result.err()).or(sampler_error) {
+    if let Some(sampling_error) = terminal_result
+        .err()
+        .or(stop_result.err())
+        .or(sampler_error)
+    {
         let error = match execution {
             Ok(_) => sampling_error,
             Err(execution_error) => anyhow!(
@@ -449,12 +456,7 @@ async fn run_sampler_inner(context: &SamplerContext, pool: &PgPool) -> Result<u6
         let (boundaries, active, started, stop) = {
             let mut state = lock_state(&context.state)?;
             let boundaries = state.boundaries.drain(..).collect::<Vec<_>>();
-            (
-                boundaries,
-                state.active.clone(),
-                state.started,
-                state.stop,
-            )
+            (boundaries, state.active.clone(), state.started, state.stop)
         };
 
         for boundary in boundaries {
@@ -609,7 +611,8 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
         Ok(stat) => (Some(parse_cpu_ticks(&stat)?), false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, true),
         Err(error) => {
-            return Err(error).with_context(|| format!("read process stat {}", stat_path.display()));
+            return Err(error)
+                .with_context(|| format!("read process stat {}", stat_path.display()));
         }
     };
 
@@ -661,8 +664,12 @@ fn parse_cpu_ticks(stat: &str) -> Result<u64> {
     if fields.len() <= 12 {
         bail!("proc stat does not contain utime/stime fields");
     }
-    let user_ticks = fields[11].parse::<u64>().context("parse proc utime ticks")?;
-    let system_ticks = fields[12].parse::<u64>().context("parse proc stime ticks")?;
+    let user_ticks = fields[11]
+        .parse::<u64>()
+        .context("parse proc utime ticks")?;
+    let system_ticks = fields[12]
+        .parse::<u64>()
+        .context("parse proc stime ticks")?;
     user_ticks
         .checked_add(system_ticks)
         .ok_or_else(|| anyhow!("process CPU tick sum overflow"))
