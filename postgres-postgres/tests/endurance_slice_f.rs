@@ -135,7 +135,10 @@ fn fresh_campaign_is_ready_for_one_samples_are_observational_and_inspection_is_r
     assert_eq!(first.state, ResumeState::Ready);
     assert_eq!(first.frontier_sequence, 0);
     assert_eq!(first.next_sequence, Some(1));
-    let plan = first.next_plan.as_ref().expect("ready status has next plan");
+    let plan = first
+        .next_plan
+        .as_ref()
+        .expect("ready status has next plan");
     assert_eq!(plan.sequence, 1);
     assert_eq!(plan.reader, EnduranceReader::Cursor);
     assert_eq!(plan.failure, EnduranceFailure::Clean);
@@ -195,12 +198,8 @@ fn failure_and_incomplete_frontiers_block_without_advancing() {
     write_success(&failure_store, 1, "clean");
     write_failure(&failure_store, 2);
 
-    let failed = reconcile_resume_status(
-        &failure_root,
-        &failure_campaign,
-        &workload_binary(),
-    )
-    .expect("reconcile failed frontier");
+    let failed = reconcile_resume_status(&failure_root, &failure_campaign, &workload_binary())
+        .expect("reconcile failed frontier");
     assert_eq!(failed.state, ResumeState::BlockedFailure);
     assert_eq!(failed.frontier_sequence, 1);
     assert_eq!(failed.blocked_sequence, Some(2));
@@ -217,12 +216,9 @@ fn failure_and_incomplete_frontiers_block_without_advancing() {
         .record_event(1, "iteration-started", json!({ "mode": "clean" }))
         .expect("record started event");
 
-    let incomplete = reconcile_resume_status(
-        &incomplete_root,
-        &incomplete_campaign,
-        &workload_binary(),
-    )
-    .expect("reconcile incomplete frontier");
+    let incomplete =
+        reconcile_resume_status(&incomplete_root, &incomplete_campaign, &workload_binary())
+            .expect("reconcile incomplete frontier");
     assert_eq!(incomplete.state, ResumeState::BlockedIncomplete);
     assert_eq!(incomplete.frontier_sequence, 0);
     assert_eq!(incomplete.blocked_sequence, Some(1));
@@ -256,10 +252,7 @@ fn singleton_event_disagreement_gap_and_duplicate_terminal_fail_closed() {
         &workload_binary(),
     )
     .expect("reconcile singleton/event disagreement");
-    assert_eq!(
-        disagreement.state,
-        ResumeState::BlockedInconsistentEvidence
-    );
+    assert_eq!(disagreement.state, ResumeState::BlockedInconsistentEvidence);
 
     let gap_root = temp_root("gap");
     let gap_campaign = format!("resumegap{}", support::nonce());
@@ -277,18 +270,16 @@ fn singleton_event_disagreement_gap_and_duplicate_terminal_fail_closed() {
     let duplicate_store = new_store(&duplicate_root, &duplicate_campaign);
     write_success(&duplicate_store, 1, "clean");
     duplicate_store
-        .record_event(1, "iteration-terminal-success", json!({ "duplicate": true }))
+        .record_event(
+            1,
+            "iteration-terminal-success",
+            json!({ "duplicate": true }),
+        )
         .expect("record duplicate success terminal");
-    let duplicate = reconcile_resume_status(
-        &duplicate_root,
-        &duplicate_campaign,
-        &workload_binary(),
-    )
-    .expect("reconcile duplicate terminal");
-    assert_eq!(
-        duplicate.state,
-        ResumeState::BlockedInconsistentEvidence
-    );
+    let duplicate =
+        reconcile_resume_status(&duplicate_root, &duplicate_campaign, &workload_binary())
+            .expect("reconcile duplicate terminal");
+    assert_eq!(duplicate.state, ResumeState::BlockedInconsistentEvidence);
 
     fs::remove_dir_all(disagreement_root).expect("remove disagreement evidence");
     fs::remove_dir_all(gap_root).expect("remove gap evidence");
@@ -308,32 +299,19 @@ fn malformed_or_conflicting_evidence_fails_closed() {
         b"{}",
     )
     .expect("write malformed failure evidence");
-    let malformed = reconcile_resume_status(
-        &malformed_root,
-        &malformed_campaign,
-        &workload_binary(),
-    )
-    .expect("reconcile malformed evidence");
-    assert_eq!(
-        malformed.state,
-        ResumeState::BlockedInconsistentEvidence
-    );
+    let malformed =
+        reconcile_resume_status(&malformed_root, &malformed_campaign, &workload_binary())
+            .expect("reconcile malformed evidence");
+    assert_eq!(malformed.state, ResumeState::BlockedInconsistentEvidence);
 
     let conflict_root = temp_root("conflict");
     let conflict_campaign = format!("resumeconflict{}", support::nonce());
     let conflict_store = new_store(&conflict_root, &conflict_campaign);
     write_success(&conflict_store, 1, "clean");
     write_failure(&conflict_store, 1);
-    let conflict = reconcile_resume_status(
-        &conflict_root,
-        &conflict_campaign,
-        &workload_binary(),
-    )
-    .expect("reconcile conflicting terminal evidence");
-    assert_eq!(
-        conflict.state,
-        ResumeState::BlockedInconsistentEvidence
-    );
+    let conflict = reconcile_resume_status(&conflict_root, &conflict_campaign, &workload_binary())
+        .expect("reconcile conflicting terminal evidence");
+    assert_eq!(conflict.state, ResumeState::BlockedInconsistentEvidence);
 
     fs::remove_dir_all(malformed_root).expect("remove malformed evidence");
     fs::remove_dir_all(conflict_root).expect("remove conflict evidence");
