@@ -4,6 +4,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
+use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
 use postgres_postgres::endurance::resume::reconcile_resume_status;
 use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration;
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
@@ -11,7 +12,8 @@ use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, pl
 /// Campaign #203 bounded control surface for deterministic endurance setup,
 /// one clean logical iteration, one scheduled crash/recovery iteration, and
 /// one evidence-persisted bounded iteration, one resource-sampled recorded
-/// iteration, and read-only durable resume-frontier inspection.
+/// iteration, one resume-selected single-step iteration, and read-only durable
+/// resume-frontier inspection.
 ///
 /// Long-running loops are intentionally absent until later campaign slices.
 #[derive(Parser)]
@@ -79,6 +81,18 @@ enum Command {
         campaign_id: String,
         #[arg(long)]
         sequence: u64,
+        #[arg(long, default_value_t = 1000)]
+        sample_interval_ms: u64,
+    },
+    /// Reconcile durable evidence and execute exactly one ready next sequence
+    /// through the existing sampled recorded-iteration path.
+    RunNext {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
     },
@@ -174,6 +188,24 @@ async fn main() -> anyhow::Result<()> {
                 &evidence_root,
                 &campaign_id,
                 sequence,
+                Duration::from_millis(sample_interval_ms),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::RunNext {
+            database_url,
+            evidence_root,
+            campaign_id,
+            sample_interval_ms,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_next_sampled_recorded_iteration(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
                 Duration::from_millis(sample_interval_ms),
             )
             .await?;
