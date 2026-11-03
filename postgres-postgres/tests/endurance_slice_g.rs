@@ -14,7 +14,8 @@ use std::time::Duration;
 use postgres_postgres::endurance::evidence::EvidenceStore;
 use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
 use postgres_postgres::endurance::resume::{reconcile_resume_status, ResumeState};
-use postgres_postgres::endurance::CANONICAL_SEED;
+use postgres_postgres::endurance::{EnduranceFailure, EnduranceReader, CANONICAL_SEED};
+use serde_json::json;
 use support::SeedOptions;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
@@ -287,3 +288,167 @@ fn run_next_cli_exposes_no_arbitrary_sequence_argument() {
         "run-next must reject arbitrary sequence input: {stderr}"
     );
 }
+
+fn write_success(store: &EvidenceStore, sequence: u64) {
+    let record = json!({
+        "schema": "oxide-batch-workloads.endurance-iteration",
+        "schema_version": 1,
+        "timestamp_unix_nanos_utc": 1_000_000_u64 + sequence,
+        "campaign_id": store.campaign().campaign_id,
+        "sequence": sequence,
+        "terminal": "success",
+        "execution": {
+            "kind": "clean",
+            "result": {
+                "sequence": sequence
+            }
+        }
+    });
+    fs::write(
+        store.iteration_path(sequence),
+        serde_json::to_vec_pretty(&record).expect("serialize Slice G success"),
+    )
+    .expect("write Slice G success singleton");
+    store
+        .record_event(
+            sequence,
+            "iteration-terminal-success",
+            json!({ "test": "slice-g" }),
+        )
+        .expect("record Slice G terminal success");
+}
+
+#[tokio::test]
+async fn blocked_resume_states_execute_nothing_and_leave_evidence_unchanged() {
+    for case in ["failure", "incomplete", "inconsistent"] {
+        let root = temp_root(case);
+        let campaign_id = format!("sliceg{case}{}", support::nonce());
+        let binary = workload_binary();
+        let store =
+            EvidenceStore::open(&root, &campaign_id, &binary).expect("initialize blocked campaign");
+
+        match case {
+            "failure" => store
+                .record_event(
+                    1,
+                    "iteration-terminal-failure",
+                    json!({ "failure_class": "harness-environment" }),
+                )
+                .expect("record blocked failure"),
+            "incomplete" => store
+                .record_event(1, "iteration-started", json!({ "mode": "clean" }))
+                .expect("record incomplete lifecycle"),
+            "inconsistent" => {
+                store
+                    .record_event(1, "iteration-terminal-success", json!({ "duplicate": 1 }))
+                    .expect("record first duplicate terminal");
+                store
+                    .record_event(1, "iteration-terminal-success", json!({ "duplicate": 2 }))
+                    .expect("record second duplicate terminal");
+            }
+            _ => unreachable!(),
+        }
+
+        let before = snapshot_tree(&root);
+        let result = execute_next_sampled_recorded_iteration(
+            &binary,
+            "postgres://must-not-connect.invalid/blocked",
+            &root,
+            &campaign_id,
+            SAMPLE_INTERVAL,
+        )
+        .await
+        .expect("blocked state must return without touching the executor or database");
+        let after = snapshot_tree(&root);
+
+        assert_ne!(result.pre_execution.state, ResumeState::Ready);
+        assert_eq!(result.selected_sequence, None);
+        assert!(result.selected_plan.is_none());
+        assert!(result.execution.is_none());
+        assert_eq!(
+            before, after,
+            "blocked {case} must remain byte-for-byte read-only"
+        );
+
+        fs::remove_dir_all(root).expect("remove Slice G blocked evidence");
+    }
+}
+
+#[tokio::test]
+async fn scheduled_resume_boundaries_use_existing_crash_plans_and_execute_one_sequence() {
+    support::migrate();
+    support::reset();
+    support::seed(SeedOptions {
+        rows: 3_500,
+        seed: CANONICAL_SEED,
+    });
+
+    let binary = workload_binary();
+    let database_url = support::database_url();
+    let cases = [
+        (
+            23_u64,
+            24_u64,
+            EnduranceReader::Paging,
+            EnduranceFailure::BeforeCommit,
+        ),
+        (
+            48_u64,
+            49_u64,
+            EnduranceReader::Cursor,
+            EnduranceFailure::AfterCommit,
+        ),
+    ];
+
+    for (frontier, sequence, reader, failure) in cases {
+        let root = temp_root(&format!("boundary-{sequence}"));
+        let campaign_id = format!("slicegboundary{sequence}{}", support::nonce());
+        let store =
+            EvidenceStore::open(&root, &campaign_id, &binary).expect("initialize boundary campaign");
+        for completed in 1..=frontier {
+            write_success(&store, completed);
+        }
+
+        let result = execute_next_sampled_recorded_iteration(
+            &binary,
+            &database_url,
+            &root,
+            &campaign_id,
+            SAMPLE_INTERVAL,
+        )
+        .await
+        .expect("execute resume-selected scheduled crash boundary");
+
+        assert_eq!(result.pre_execution.state, ResumeState::Ready);
+        assert_eq!(result.selected_sequence, Some(sequence));
+        let plan = result.selected_plan.as_ref().expect("selected scheduled plan");
+        assert_eq!(plan.sequence, sequence);
+        assert_eq!(plan.reader, reader);
+        assert_eq!(plan.failure, failure);
+        assert_eq!(
+            result
+                .execution
+                .as_ref()
+                .expect("scheduled execution result")
+                .recorded
+                .sequence,
+            sequence
+        );
+        assert!(root
+            .join(&campaign_id)
+            .join(format!("iterations/{sequence:06}.json"))
+            .is_file());
+        assert!(!root
+            .join(&campaign_id)
+            .join(format!("iterations/{:06}.json", sequence + 1))
+            .exists());
+
+        let after = reconcile_resume_status(&root, &campaign_id, &binary)
+            .expect("reconcile after scheduled Slice G invocation");
+        assert_eq!(after.state, ResumeState::Ready);
+        assert_eq!(after.next_sequence, Some(sequence + 1));
+
+        fs::remove_dir_all(root).expect("remove Slice G boundary evidence");
+    }
+}
+
