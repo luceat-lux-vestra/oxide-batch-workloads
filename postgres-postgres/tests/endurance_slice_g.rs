@@ -93,7 +93,10 @@ async fn successful_invocations_advance_exactly_one_sequence_each_and_stay_secre
     .expect("execute Slice G sequence 1");
     assert_eq!(first.pre_execution.state, ResumeState::Ready);
     assert_eq!(first.selected_sequence, Some(1));
-    let first_plan = first.selected_plan.as_ref().expect("sequence 1 selected plan");
+    let first_plan = first
+        .selected_plan
+        .as_ref()
+        .expect("sequence 1 selected plan");
     assert_eq!(first_plan.sequence, 1);
     assert_eq!(
         first

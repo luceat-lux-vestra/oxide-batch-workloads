@@ -6,9 +6,7 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
-use super::sampling::{
-    execute_sampled_recorded_iteration, SampledRecordedIterationOutput,
-};
+use super::sampling::{execute_sampled_recorded_iteration, SampledRecordedIterationOutput};
 use super::IterationPlan;
 
 const RUN_NEXT_SCHEMA: &str = "oxide-batch-workloads.endurance-run-next";
@@ -61,8 +59,7 @@ where
     F: FnOnce(IterationPlan) -> Fut,
     Fut: Future<Output = Result<SampledRecordedIterationOutput>>,
 {
-    let pre_execution =
-        reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
+    let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
 
     if pre_execution.state != ResumeState::Ready {
         return Ok(RunNextResult {
@@ -212,18 +209,11 @@ mod tests {
         let captured = Arc::new(Mutex::new(None));
         let calls_for_executor = calls.clone();
         let captured_for_executor = captured.clone();
-        let error = execute_next_with(
-            &workload_binary(),
-            &root,
-            &campaign_id,
-            move |plan| {
-                calls_for_executor.fetch_add(1, Ordering::SeqCst);
-                *captured_for_executor.lock().expect("lock captured plan") = Some(plan);
-                async {
-                    Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel executor stop"))
-                }
-            },
-        )
+        let error = execute_next_with(&workload_binary(), &root, &campaign_id, move |plan| {
+            calls_for_executor.fetch_add(1, Ordering::SeqCst);
+            *captured_for_executor.lock().expect("lock captured plan") = Some(plan);
+            async { Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel executor stop")) }
+        })
         .await
         .expect_err("sentinel executor must stop fresh handoff");
         assert!(error.to_string().contains("sentinel executor stop"));
@@ -244,18 +234,11 @@ mod tests {
         calls.store(0, Ordering::SeqCst);
         let captured_for_executor = captured.clone();
         let calls_for_executor = calls.clone();
-        let error = execute_next_with(
-            &workload_binary(),
-            &root,
-            &campaign_id,
-            move |plan| {
-                calls_for_executor.fetch_add(1, Ordering::SeqCst);
-                *captured_for_executor.lock().expect("lock crash plan") = Some(plan);
-                async {
-                    Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel crash stop"))
-                }
-            },
-        )
+        let error = execute_next_with(&workload_binary(), &root, &campaign_id, move |plan| {
+            calls_for_executor.fetch_add(1, Ordering::SeqCst);
+            *captured_for_executor.lock().expect("lock crash plan") = Some(plan);
+            async { Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel crash stop")) }
+        })
         .await
         .expect_err("sentinel executor must stop crash handoff");
         assert!(error.to_string().contains("sentinel crash stop"));
@@ -276,18 +259,15 @@ mod tests {
         calls.store(0, Ordering::SeqCst);
         let captured_for_executor = captured.clone();
         let calls_for_executor = calls.clone();
-        let error = execute_next_with(
-            &workload_binary(),
-            &root,
-            &campaign_id,
-            move |plan| {
-                calls_for_executor.fetch_add(1, Ordering::SeqCst);
-                *captured_for_executor.lock().expect("lock after-commit plan") = Some(plan);
-                async {
-                    Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel after-commit stop"))
-                }
-            },
-        )
+        let error = execute_next_with(&workload_binary(), &root, &campaign_id, move |plan| {
+            calls_for_executor.fetch_add(1, Ordering::SeqCst);
+            *captured_for_executor
+                .lock()
+                .expect("lock after-commit plan") = Some(plan);
+            async {
+                Err::<SampledRecordedIterationOutput, _>(anyhow!("sentinel after-commit stop"))
+            }
+        })
         .await
         .expect_err("sentinel executor must stop after-commit handoff");
         assert!(error.to_string().contains("sentinel after-commit stop"));
@@ -308,10 +288,7 @@ mod tests {
     async fn blocked_resume_states_never_invoke_executor_or_mutate_evidence() {
         for case in ["failure", "incomplete", "inconsistent"] {
             let root = temp_root(case);
-            let campaign_id = format!(
-                "sliceg{case}{}",
-                NONCE.fetch_add(1, Ordering::Relaxed)
-            );
+            let campaign_id = format!("sliceg{case}{}", NONCE.fetch_add(1, Ordering::Relaxed));
             let store = new_store(&root, &campaign_id);
             match case {
                 "failure" => store
@@ -338,29 +315,30 @@ mod tests {
             let before = snapshot_tree(&root);
             let calls = Arc::new(AtomicUsize::new(0));
             let calls_for_executor = calls.clone();
-            let result = execute_next_with(
-                &workload_binary(),
-                &root,
-                &campaign_id,
-                move |_| {
-                    calls_for_executor.fetch_add(1, Ordering::SeqCst);
-                    async {
-                        Err::<SampledRecordedIterationOutput, _>(anyhow!(
-                            "blocked executor must not run"
-                        ))
-                    }
-                },
-            )
+            let result = execute_next_with(&workload_binary(), &root, &campaign_id, move |_| {
+                calls_for_executor.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err::<SampledRecordedIterationOutput, _>(anyhow!(
+                        "blocked executor must not run"
+                    ))
+                }
+            })
             .await
             .expect("blocked state returns structured result");
             let after = snapshot_tree(&root);
 
-            assert_ne!(result.pre_execution.state, crate::endurance::resume::ResumeState::Ready);
+            assert_ne!(
+                result.pre_execution.state,
+                crate::endurance::resume::ResumeState::Ready
+            );
             assert_eq!(result.selected_sequence, None);
             assert!(result.selected_plan.is_none());
             assert!(result.execution.is_none());
             assert_eq!(calls.load(Ordering::SeqCst), 0);
-            assert_eq!(before, after, "blocked {case} must remain byte-for-byte read-only");
+            assert_eq!(
+                before, after,
+                "blocked {case} must remain byte-for-byte read-only"
+            );
 
             fs::remove_dir_all(root).expect("remove Slice G blocked unit evidence");
         }
