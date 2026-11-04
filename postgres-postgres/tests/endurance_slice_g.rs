@@ -403,8 +403,8 @@ async fn scheduled_resume_boundaries_use_existing_crash_plans_and_execute_one_se
     for (frontier, sequence, reader, failure) in cases {
         let root = temp_root(&format!("boundary-{sequence}"));
         let campaign_id = format!("slicegboundary{sequence}{}", support::nonce());
-        let store =
-            EvidenceStore::open(&root, &campaign_id, &binary).expect("initialize boundary campaign");
+        let store = EvidenceStore::open(&root, &campaign_id, &binary)
+            .expect("initialize boundary campaign");
         for completed in 1..=frontier {
             write_success(&store, completed);
         }
@@ -421,7 +421,10 @@ async fn scheduled_resume_boundaries_use_existing_crash_plans_and_execute_one_se
 
         assert_eq!(result.pre_execution.state, ResumeState::Ready);
         assert_eq!(result.selected_sequence, Some(sequence));
-        let plan = result.selected_plan.as_ref().expect("selected scheduled plan");
+        let plan = result
+            .selected_plan
+            .as_ref()
+            .expect("selected scheduled plan");
         assert_eq!(plan.sequence, sequence);
         assert_eq!(plan.reader, reader);
         assert_eq!(plan.failure, failure);
@@ -451,4 +454,3 @@ async fn scheduled_resume_boundaries_use_existing_crash_plans_and_execute_one_se
         fs::remove_dir_all(root).expect("remove Slice G boundary evidence");
     }
 }
-
