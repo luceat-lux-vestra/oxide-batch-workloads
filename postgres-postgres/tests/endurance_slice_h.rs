@@ -104,8 +104,7 @@ fn iteration_kind(root: &Path, campaign_id: &str, sequence: u64) -> String {
         .join(campaign_id)
         .join(format!("iterations/{sequence:06}.json"));
     let bytes = fs::read(path).expect("read Slice H iteration evidence");
-    let value: Value =
-        serde_json::from_slice(&bytes).expect("parse Slice H iteration evidence");
+    let value: Value = serde_json::from_slice(&bytes).expect("parse Slice H iteration evidence");
     value
         .get("execution")
         .and_then(|execution| execution.get("kind"))
@@ -246,16 +245,10 @@ async fn bounded_batches_cross_both_scheduled_crash_boundaries_without_overrun()
             plan_iteration(&campaign_id, crash_sequence).expect("resolve scheduled crash plan");
         assert_eq!(plan.reader, reader);
         assert_eq!(plan.failure, failure);
-        assert_eq!(
-            iteration_kind(&root, &campaign_id, crash_sequence),
-            "crash"
-        );
+        assert_eq!(iteration_kind(&root, &campaign_id, crash_sequence), "crash");
         assert!(!root
             .join(&campaign_id)
-            .join(format!(
-                "iterations/{:06}.json",
-                expected_sequences[1] + 1
-            ))
+            .join(format!("iterations/{:06}.json", expected_sequences[1] + 1))
             .exists());
 
         fs::remove_dir_all(root).expect("remove Slice H boundary evidence");
@@ -416,7 +409,10 @@ async fn zero_iteration_count_fails_before_campaign_mutation() {
             .contains("requested iterations must be greater than zero"),
         "unexpected zero-count error: {error:#}"
     );
-    assert!(!root.exists(), "zero-count failure must not create evidence");
+    assert!(
+        !root.exists(),
+        "zero-count failure must not create evidence"
+    );
 }
 
 #[test]
