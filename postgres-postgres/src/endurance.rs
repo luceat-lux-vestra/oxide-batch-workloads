@@ -3,9 +3,10 @@
 //! This module contains deterministic planning, bounded clean and crash/recovery
 //! iteration execution, durable evidence persistence, bounded resource sampling,
 //! read-only durable resume reconciliation, single-step resume-selected progression,
-//! and workload-owned business cleanup.
-//! Long-running loops belong to later campaign slices.
+//! bounded finite multi-step progression, and workload-owned business cleanup.
+//! Unbounded or elapsed-time-driven loops belong to later campaign slices.
 
+pub mod batch;
 pub mod crash;
 pub mod evidence;
 pub mod progress;
