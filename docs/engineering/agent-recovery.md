@@ -100,6 +100,33 @@ For create operations, search/read before retrying. For ref movement, re-read an
 
 Current PR HEAD is authoritative. Any HEAD movement invalidates prior HEAD-specific CI/review/runtime evidence unless repository policy explicitly permits same-SHA reuse. Branch-history cleanup or any rewrite therefore requires fresh evidence for the new exact final HEAD.
 
+## Base advancement with unchanged HEAD
+
+This section clarifies evidence provenance when the PR HEAD is unchanged but `main` advances. It does not weaken oxide-batch-workloads' exact-HEAD rule, live merge gate, published-release provenance, workload-contract, restart/recovery, or evidence obligations.
+
+Classify movement before deciding what prior evidence still proves:
+
+1. **PR HEAD moved** — prior HEAD-specific CI/review/runtime/workload evidence is invalid. Validate the new exact final HEAD.
+2. **PR HEAD unchanged; base unchanged** — apply the ordinary exact-HEAD merge gate.
+3. **PR HEAD unchanged; base advanced** — prior evidence may still support claims that depend only on the unchanged HEAD, but it does not by itself prove the newly composed base+HEAD result or authorize merge.
+4. **Material authority or semantic interaction is unavailable or `UNKNOWN`** — fail closed and refresh/revalidate.
+
+Before relying on same-HEAD evidence after base advancement, fresh-read the current PR HEAD, `main`, merge-base, live ruleset, required checks, review threads, and mergeability. Determine whether the evidence was produced for the unchanged HEAD itself or for an old synthetic merge/base+HEAD composition.
+
+For oxide-batch-workloads specifically, the live `Protect main` ruleset requires the GitHub Actions `Merge Gate` with strict required-status-check enforcement. `AGENTS.md` also requires exact published OxideBatch and lockfile provenance, exact-final-HEAD required CI, restart/recovery correctness, and reproducible evidence. Those stricter requirements remain authoritative. Same-HEAD evidence reuse therefore never authorizes an out-of-date or otherwise invalid current composition and never weakens workload or evidence claims.
+
+Evidence reuse is claim-scoped, not blanket merge or evidence authorization:
+
+- exact-HEAD evidence may remain useful when its producer and claim are independent of the base movement;
+- evidence tied to an old synthetic merge result or old base+HEAD tree is not proof for the newly composed tree;
+- different filenames alone do not establish semantic independence;
+- published OxideBatch version/registry/lockfile provenance, workload contract, transaction/restart semantics, database schema or fixtures, retained evidence, benchmark/comparative controls, workflow/hardening policy, generated evidence, runtime/toolchain, or other cross-cutting interactions require revalidation when material;
+- conflicts, changed required checks, policy/ruleset drift, or unresolved material interaction require fresh validation rather than reuse.
+
+If bringing the branch up to date, rebasing, conflict resolution, history cleanup, evidence regeneration, or any other action changes the PR HEAD, the resulting SHA becomes a new exact-HEAD proof unit and all prior HEAD-specific PASS evidence is invalid.
+
+Do not change CI workflows, `.github/repository-settings-policy.json`, evidence contracts, release policy, retained evidence, benchmark controls, or live rulesets merely to make prior evidence reusable.
+
 ## Failure handling
 
 - Read-only interruption: fresh-read and continue.
