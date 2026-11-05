@@ -1,7 +1,7 @@
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -72,7 +72,7 @@ fn write_success(store: &EvidenceStore, sequence: u64) {
                 "import_name": plan.import_name,
                 "chunk_size": 1000,
                 "fetch_size": if sequence % 2 == 1 { Some(500) } else { None::<usize> },
-                "page_size": if sequence % 2 == 0 { Some(750) } else { None::<usize> },
+                "page_size": if sequence.is_multiple_of(2) { Some(750) } else { None::<usize> },
                 "run": child(true),
                 "verification": child(true),
                 "cleanup_deleted_rows": 200000
@@ -88,7 +88,7 @@ fn write_success(store: &EvidenceStore, sequence: u64) {
                 "import_name": plan.import_name,
                 "chunk_size": 1000,
                 "fetch_size": if sequence % 2 == 1 { Some(500) } else { None::<usize> },
-                "page_size": if sequence % 2 == 0 { Some(750) } else { None::<usize> },
+                "page_size": if sequence.is_multiple_of(2) { Some(750) } else { None::<usize> },
                 "fail_at_chunk": 3,
                 "crash": {
                     "pid": 100,
