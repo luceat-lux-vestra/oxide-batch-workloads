@@ -30,28 +30,42 @@ pub async fn execute_next_sampled_recorded_iteration(
     campaign_id: &str,
     sample_interval: Duration,
 ) -> Result<RunNextResult> {
-    execute_next_with(
+    let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
+    execute_selected_sampled_recorded_iteration(
         workload_binary,
+        database_url,
         evidence_root,
         campaign_id,
-        |plan| async move {
-            execute_sampled_recorded_iteration(
-                workload_binary,
-                database_url,
-                evidence_root,
-                campaign_id,
-                plan.sequence,
-                sample_interval,
-            )
-            .await
-        },
+        pre_execution,
+        sample_interval,
     )
     .await
 }
 
-async fn execute_next_with<F, Fut>(
+pub async fn execute_selected_sampled_recorded_iteration(
     workload_binary: &Path,
+    database_url: &str,
     evidence_root: &Path,
+    campaign_id: &str,
+    pre_execution: ResumeStatus,
+    sample_interval: Duration,
+) -> Result<RunNextResult> {
+    execute_selected_with(pre_execution, campaign_id, |plan| async move {
+        execute_sampled_recorded_iteration(
+            workload_binary,
+            database_url,
+            evidence_root,
+            campaign_id,
+            plan.sequence,
+            sample_interval,
+        )
+        .await
+    })
+    .await
+}
+
+async fn execute_selected_with<F, Fut>(
+    pre_execution: ResumeStatus,
     campaign_id: &str,
     executor: F,
 ) -> Result<RunNextResult>
@@ -59,7 +73,13 @@ where
     F: FnOnce(IterationPlan) -> Fut,
     Fut: Future<Output = Result<SampledRecordedIterationOutput>>,
 {
-    let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
+    if pre_execution.campaign_id != campaign_id {
+        bail!(
+            "resume status campaign {:?} disagrees with requested campaign {:?}",
+            pre_execution.campaign_id,
+            campaign_id
+        );
+    }
 
     if pre_execution.state != ResumeState::Ready {
         return Ok(RunNextResult {
