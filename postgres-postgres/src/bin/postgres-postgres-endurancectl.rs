@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::batch::execute_bounded_batch;
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
+use postgres_postgres::endurance::guarded_batch::execute_guarded_bounded_batch;
 use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
 use postgres_postgres::endurance::resume::reconcile_resume_status;
 use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration;
@@ -14,8 +15,8 @@ use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, pl
 /// one clean logical iteration, one scheduled crash/recovery iteration, and
 /// one evidence-persisted bounded iteration, one resource-sampled recorded
 /// iteration, one resume-selected single-step iteration, one explicit finite
-/// batch of resume-selected iterations, and read-only durable frontier
-/// inspection.
+/// batch of resume-selected iterations, one externally guarded finite batch,
+/// and read-only durable frontier inspection.
 ///
 /// Unbounded and elapsed-time-driven loops remain absent until later slices.
 #[derive(Parser)]
@@ -110,6 +111,22 @@ enum Command {
         iterations: u64,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
+    },
+    /// Execute a finite durable-resume-selected batch with a fail-closed
+    /// external guard before every logical iteration.
+    RunGuardedBatch {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
+        #[arg(long)]
+        iterations: u64,
+        #[arg(long, default_value_t = 1000)]
+        sample_interval_ms: u64,
+        #[arg(long)]
+        pre_iteration_guard: PathBuf,
     },
     /// Inspect existing durable evidence and report the next safe sequence
     /// without executing a workload process or mutating campaign evidence.
@@ -242,6 +259,28 @@ async fn main() -> anyhow::Result<()> {
                 &campaign_id,
                 iterations,
                 Duration::from_millis(sample_interval_ms),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::RunGuardedBatch {
+            database_url,
+            evidence_root,
+            campaign_id,
+            iterations,
+            sample_interval_ms,
+            pre_iteration_guard,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_guarded_bounded_batch(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
+                iterations,
+                Duration::from_millis(sample_interval_ms),
+                &pre_iteration_guard,
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
