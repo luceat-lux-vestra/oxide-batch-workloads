@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use postgres_postgres::endurance::batch::execute_bounded_batch;
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
 use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
@@ -12,10 +13,11 @@ use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, pl
 /// Campaign #203 bounded control surface for deterministic endurance setup,
 /// one clean logical iteration, one scheduled crash/recovery iteration, and
 /// one evidence-persisted bounded iteration, one resource-sampled recorded
-/// iteration, one resume-selected single-step iteration, and read-only durable
-/// resume-frontier inspection.
+/// iteration, one resume-selected single-step iteration, one explicit finite
+/// batch of resume-selected iterations, and read-only durable frontier
+/// inspection.
 ///
-/// Long-running loops are intentionally absent until later campaign slices.
+/// Unbounded and elapsed-time-driven loops remain absent until later slices.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
@@ -93,6 +95,19 @@ enum Command {
         evidence_root: PathBuf,
         #[arg(long)]
         campaign_id: String,
+        #[arg(long, default_value_t = 1000)]
+        sample_interval_ms: u64,
+    },
+    /// Execute an explicit finite number of durable-resume-selected iterations.
+    RunBatch {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
+        #[arg(long)]
+        iterations: u64,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
     },
@@ -206,6 +221,26 @@ async fn main() -> anyhow::Result<()> {
                 &database_url,
                 &evidence_root,
                 &campaign_id,
+                Duration::from_millis(sample_interval_ms),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::RunBatch {
+            database_url,
+            evidence_root,
+            campaign_id,
+            iterations,
+            sample_interval_ms,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_bounded_batch(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
+                iterations,
                 Duration::from_millis(sample_interval_ms),
             )
             .await?;
