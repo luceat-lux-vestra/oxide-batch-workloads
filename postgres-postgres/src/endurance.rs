@@ -4,8 +4,9 @@
 //! iteration execution, durable evidence persistence, bounded resource sampling,
 //! read-only durable resume reconciliation, single-step resume-selected progression,
 //! bounded finite multi-step progression, fail-closed external guard integration,
-//! acceptance-bounded dual-floor campaign control, and workload-owned business cleanup.
-//! Unbounded daemon/service lifecycle remains outside this module.
+//! acceptance-bounded dual-floor campaign control, final evidence summary/reconciliation,
+//! and workload-owned business cleanup. Unbounded daemon/service lifecycle remains outside
+//! this module.
 
 pub mod batch;
 pub mod campaign;
@@ -15,6 +16,7 @@ pub mod guarded_batch;
 pub mod progress;
 pub mod resume;
 pub mod sampling;
+pub mod summary;
 
 use std::path::Path;
 use std::process::{Output, Stdio};
