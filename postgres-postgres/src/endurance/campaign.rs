@@ -472,7 +472,7 @@ mod tests {
         };
         let mut steps = VecDeque::from([successful_step(98), successful_step(99)]);
 
-        let result = run_acceptance_loop(
+        let result = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             ready_status(98),
@@ -487,7 +487,10 @@ mod tests {
             },
         )
         .await
-        .expect("controller should reach both floors");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("controller should reach both floors: {error:#}"),
+        };
 
         assert_eq!(
             result.stop_reason,
@@ -505,7 +508,7 @@ mod tests {
             minimum_completed_iterations: 1,
         };
 
-        let blocked = run_acceptance_loop(
+        let blocked = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             blocked_status(0),
@@ -514,11 +517,14 @@ mod tests {
             || ready(Err(anyhow!("resume block must not execute a step"))),
         )
         .await
-        .expect("resume block should be structured");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("resume block should be structured: {error:#}"),
+        };
         assert_eq!(blocked.stop_reason, CampaignStopReason::ResumeBlocked);
 
         let mut steps = VecDeque::from([blocked_step(0, GuardedBatchStopReason::GuardBlocked)]);
-        let guard_blocked = run_acceptance_loop(
+        let guard_blocked = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             ready_status(0),
@@ -533,7 +539,10 @@ mod tests {
             },
         )
         .await
-        .expect("guard block should be structured");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("guard block should be structured: {error:#}"),
+        };
         assert_eq!(guard_blocked.stop_reason, CampaignStopReason::GuardBlocked);
         assert_eq!(guard_blocked.final_frontier_sequence, 0);
     }
