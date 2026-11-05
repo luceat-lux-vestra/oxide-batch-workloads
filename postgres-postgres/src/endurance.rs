@@ -4,10 +4,11 @@
 //! iteration execution, durable evidence persistence, bounded resource sampling,
 //! read-only durable resume reconciliation, single-step resume-selected progression,
 //! bounded finite multi-step progression, fail-closed external guard integration,
-//! and workload-owned business cleanup.
-//! Unbounded or elapsed-time-driven loops belong to later campaign slices.
+//! acceptance-bounded dual-floor campaign control, and workload-owned business cleanup.
+//! Unbounded daemon/service lifecycle remains outside this module.
 
 pub mod batch;
+pub mod campaign;
 pub mod crash;
 pub mod evidence;
 pub mod guarded_batch;
