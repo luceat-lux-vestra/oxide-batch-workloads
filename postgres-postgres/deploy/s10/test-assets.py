@@ -222,7 +222,7 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         assert args[0] == "run-campaign"
         assert args[args.index("--evidence-root") + 1] == str(evidence_root)
         assert args[args.index("--campaign-id") + 1] == "devicefixture"
-        assert args[args.index("--pre-iteration-guard") + 1] == str(pre_guard)
+        assert args[args.index("--pre-iteration-guard") + 1] == str(release / "bin" / "pre-iteration-guard")
 
         env["FAKE_CONTROLLER_EXIT"] = "0"
         run([current / "bin" / "device-control", "campaign"], env=env)
