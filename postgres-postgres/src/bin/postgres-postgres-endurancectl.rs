@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use postgres_postgres::endurance::batch::execute_bounded_batch;
+use postgres_postgres::endurance::campaign::execute_acceptance_campaign;
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
 use postgres_postgres::endurance::guarded_batch::execute_guarded_bounded_batch;
@@ -16,9 +17,10 @@ use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, pl
 /// one evidence-persisted bounded iteration, one resource-sampled recorded
 /// iteration, one resume-selected single-step iteration, one explicit finite
 /// batch of resume-selected iterations, one externally guarded finite batch,
-/// and read-only durable frontier inspection.
+/// one acceptance-bounded 24h/100-iteration campaign controller, and read-only
+/// durable frontier inspection.
 ///
-/// Unbounded and elapsed-time-driven loops remain absent until later slices.
+/// Unbounded daemon/service lifecycle remains outside this control surface.
 #[derive(Parser)]
 #[command(name = "postgres-postgres-endurancectl")]
 struct Cli {
@@ -123,6 +125,20 @@ enum Command {
         campaign_id: String,
         #[arg(long)]
         iterations: u64,
+        #[arg(long, default_value_t = 1000)]
+        sample_interval_ms: u64,
+        #[arg(long)]
+        pre_iteration_guard: PathBuf,
+    },
+    /// Run until both canonical campaign acceptance floors are satisfied:
+    /// elapsed >= 24 hours and completed logical iterations >= 100.
+    RunCampaign {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
         #[arg(long)]
@@ -279,6 +295,26 @@ async fn main() -> anyhow::Result<()> {
                 &evidence_root,
                 &campaign_id,
                 iterations,
+                Duration::from_millis(sample_interval_ms),
+                &pre_iteration_guard,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::RunCampaign {
+            database_url,
+            evidence_root,
+            campaign_id,
+            sample_interval_ms,
+            pre_iteration_guard,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = execute_acceptance_campaign(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
                 Duration::from_millis(sample_interval_ms),
                 &pre_iteration_guard,
             )
