@@ -9,9 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 
-use super::campaign::{
-    CANONICAL_MINIMUM_COMPLETED_ITERATIONS, CANONICAL_MINIMUM_ELAPSED,
-};
+use super::campaign::{CANONICAL_MINIMUM_COMPLETED_ITERATIONS, CANONICAL_MINIMUM_ELAPSED};
 use super::evidence::{
     atomic_write_json, load_existing_campaign_readonly, now_unix_nanos, CampaignRecord,
 };
@@ -282,8 +280,11 @@ fn collect_evidence(
     let campaign_dir = evidence_root.join(campaign_id);
     let lifecycle = scan_events(&campaign_dir.join("events.jsonl"), campaign_id)?;
     let failures = scan_failures(&campaign_dir.join("failures"), campaign_id)?;
-    let (readers, executions, mut semantic_violations) =
-        scan_iterations(&campaign_dir.join("iterations"), campaign_id, resume.frontier_sequence)?;
+    let (readers, executions, mut semantic_violations) = scan_iterations(
+        &campaign_dir.join("iterations"),
+        campaign_id,
+        resume.frontier_sequence,
+    )?;
     let resources = scan_samples(&campaign_dir.join("samples.jsonl"), campaign_id)?;
 
     if lifecycle.terminal_success != resume.frontier_sequence {
@@ -364,10 +365,7 @@ fn finalize_summary(
         );
     }
     if snapshot.resume.state != ResumeState::Ready {
-        push_reason(
-            &mut reason_codes,
-            SummaryReasonCode::DurableResumeNotReady,
-        );
+        push_reason(&mut reason_codes, SummaryReasonCode::DurableResumeNotReady);
     }
     if !database.missing_logical_identities.is_empty() {
         push_reason(
@@ -430,8 +428,9 @@ fn push_reason(reason_codes: &mut Vec<SummaryReasonCode>, reason: SummaryReasonC
 }
 
 fn duration_nanos(duration: Duration) -> Result<u64> {
-    u64::try_from(duration.as_nanos())
-        .map_err(|_| anyhow::anyhow!("summary minimum elapsed duration does not fit u64 nanoseconds"))
+    u64::try_from(duration.as_nanos()).map_err(|_| {
+        anyhow::anyhow!("summary minimum elapsed duration does not fit u64 nanoseconds")
+    })
 }
 
 fn scan_events(path: &Path, campaign_id: &str) -> Result<LifecycleCounts> {
@@ -439,10 +438,12 @@ fn scan_events(path: &Path, campaign_id: &str) -> Result<LifecycleCounts> {
     let mut counts = LifecycleCounts::default();
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line_number = index + 1;
-        let line =
-            line.with_context(|| format!("read {} line {line_number}", path.display()))?;
+        let line = line.with_context(|| format!("read {} line {line_number}", path.display()))?;
         if line.trim().is_empty() {
-            bail!("{} line {line_number} is unexpectedly blank", path.display());
+            bail!(
+                "{} line {line_number} is unexpectedly blank",
+                path.display()
+            );
         }
         let value: Value = serde_json::from_str(&line)
             .with_context(|| format!("parse {} line {line_number}", path.display()))?;
@@ -478,7 +479,10 @@ fn scan_failures(dir: &Path, campaign_id: &str) -> Result<FailureCounts> {
             );
         }
         if string_at(&value, "/terminal", &source)? != "failure" {
-            bail!("failure artifact is not terminal=failure: {}", path.display());
+            bail!(
+                "failure artifact is not terminal=failure: {}",
+                path.display()
+            );
         }
 
         counts.total += 1;
@@ -519,7 +523,10 @@ fn scan_iterations(
             );
         }
         if string_at(&value, "/terminal", &source)? != "success" {
-            bail!("iteration singleton is not terminal=success: {}", path.display());
+            bail!(
+                "iteration singleton is not terminal=success: {}",
+                path.display()
+            );
         }
 
         let plan = plan_iteration(campaign_id, sequence)?;
@@ -534,9 +541,7 @@ fn scan_iterations(
         match reader {
             "cursor" => readers.cursor += 1,
             "paging" => readers.paging += 1,
-            other => violations.push(format!(
-                "sequence {sequence}: unsupported reader {other:?}"
-            )),
+            other => violations.push(format!("sequence {sequence}: unsupported reader {other:?}")),
         }
         if reader != plan.reader.as_str() {
             violations.push(format!(
@@ -584,8 +589,7 @@ fn scan_iterations(
                 let _ = u64_at(&value, "/execution/result/cleanup_deleted_rows", &source)?;
             }
             "crash" => {
-                let actual_failure =
-                    string_at(&value, "/execution/result/failure", &source)?;
+                let actual_failure = string_at(&value, "/execution/result/failure", &source)?;
                 let expected_failure = failure_name(plan.failure);
                 if actual_failure != expected_failure {
                     violations.push(format!(
@@ -664,8 +668,11 @@ fn scan_iterations(
                 )?;
                 let _ = u64_at(&value, "/execution/result/cleanup_deleted_rows", &source)?;
 
-                let post_crash_status =
-                    string_at(&value, "/execution/result/post_crash/execution_status", &source)?;
+                let post_crash_status = string_at(
+                    &value,
+                    "/execution/result/post_crash/execution_status",
+                    &source,
+                )?;
                 if !is_recovery_required_status(post_crash_status) {
                     violations.push(format!(
                         "sequence {sequence}: post-crash status {post_crash_status:?} is not recovery-required"
@@ -710,10 +717,12 @@ fn scan_samples(path: &Path, campaign_id: &str) -> Result<ResourceSummary> {
 
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line_number = index + 1;
-        let line =
-            line.with_context(|| format!("read {} line {line_number}", path.display()))?;
+        let line = line.with_context(|| format!("read {} line {line_number}", path.display()))?;
         if line.trim().is_empty() {
-            bail!("{} line {line_number} is unexpectedly blank", path.display());
+            bail!(
+                "{} line {line_number} is unexpectedly blank",
+                path.display()
+            );
         }
         let value: Value = serde_json::from_str(&line)
             .with_context(|| format!("parse {} line {line_number}", path.display()))?;
@@ -755,36 +764,42 @@ fn scan_samples(path: &Path, campaign_id: &str) -> Result<ResourceSummary> {
             }
         }
 
-        summary
-            .postgres_total_connections
-            .observe(i64_at(&value, "/postgres/total_connections", &source)?);
-        summary
-            .postgres_active_connections
-            .observe(i64_at(&value, "/postgres/active_connections", &source)?);
-        summary
-            .database_size_bytes
-            .observe(i64_at(&value, "/postgres/database_size_bytes", &source)?);
+        summary.postgres_total_connections.observe(i64_at(
+            &value,
+            "/postgres/total_connections",
+            &source,
+        )?);
+        summary.postgres_active_connections.observe(i64_at(
+            &value,
+            "/postgres/active_connections",
+            &source,
+        )?);
+        summary.database_size_bytes.observe(i64_at(
+            &value,
+            "/postgres/database_size_bytes",
+            &source,
+        )?);
 
-        summary
-            .oxide_batch
-            .job_instances
-            .observe(i64_at(&value, "/oxide_batch/job_instances", &source)?);
-        summary
-            .oxide_batch
-            .job_executions
-            .observe(i64_at(&value, "/oxide_batch/job_executions", &source)?);
-        summary
-            .oxide_batch
-            .step_executions
-            .observe(i64_at(&value, "/oxide_batch/step_executions", &source)?);
-        summary
-            .oxide_batch
-            .job_instance_table_bytes
-            .observe(i64_at(
-                &value,
-                "/oxide_batch/job_instance_table_bytes",
-                &source,
-            )?);
+        summary.oxide_batch.job_instances.observe(i64_at(
+            &value,
+            "/oxide_batch/job_instances",
+            &source,
+        )?);
+        summary.oxide_batch.job_executions.observe(i64_at(
+            &value,
+            "/oxide_batch/job_executions",
+            &source,
+        )?);
+        summary.oxide_batch.step_executions.observe(i64_at(
+            &value,
+            "/oxide_batch/step_executions",
+            &source,
+        )?);
+        summary.oxide_batch.job_instance_table_bytes.observe(i64_at(
+            &value,
+            "/oxide_batch/job_instance_table_bytes",
+            &source,
+        )?);
         summary
             .oxide_batch
             .job_execution_table_bytes
@@ -895,21 +910,15 @@ fn validate_common(
 ) -> Result<()> {
     let schema = string_at(value, "/schema", source)?;
     if schema != expected_schema {
-        bail!(
-            "{source} has schema {schema:?}, expected {expected_schema:?}"
-        );
+        bail!("{source} has schema {schema:?}, expected {expected_schema:?}");
     }
     let schema_version = u64_at(value, "/schema_version", source)?;
     if schema_version != u64::from(SCHEMA_VERSION) {
-        bail!(
-            "{source} has schema version {schema_version}, expected {SCHEMA_VERSION}"
-        );
+        bail!("{source} has schema version {schema_version}, expected {SCHEMA_VERSION}");
     }
     let record_campaign_id = string_at(value, "/campaign_id", source)?;
     if record_campaign_id != campaign_id {
-        bail!(
-            "{source} has campaign id {record_campaign_id:?}, expected {campaign_id:?}"
-        );
+        bail!("{source} has campaign id {record_campaign_id:?}, expected {campaign_id:?}");
     }
     Ok(())
 }

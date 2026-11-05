@@ -339,9 +339,13 @@ async fn main() -> anyhow::Result<()> {
             campaign_id,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let result =
-                summarize_campaign(&workload_binary, &database_url, &evidence_root, &campaign_id)
-                    .await?;
+            let result = summarize_campaign(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
+            )
+            .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             if result.verdict == SummaryVerdict::Rejected {
                 anyhow::bail!(

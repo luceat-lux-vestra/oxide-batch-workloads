@@ -288,15 +288,17 @@ fn accepted_fixture_reconciles_schedule_resources_and_atomic_summary() {
         Some(&4096)
     );
     assert_eq!(summary.resources.database_size_bytes.delta, Some(20));
-    assert_eq!(summary.resources.filesystem_available_bytes.minimum, Some(850));
+    assert_eq!(
+        summary.resources.filesystem_available_bytes.minimum,
+        Some(850)
+    );
     assert_eq!(summary.campaign.oxide_batch_version, "0.6.0");
 
     let summary_path = root.join(&campaign_id).join("summary.json");
     assert!(summary_path.is_file());
-    let persisted: Value = serde_json::from_slice(
-        &fs::read(&summary_path).expect("read persisted summary"),
-    )
-    .expect("parse persisted summary");
+    let persisted: Value =
+        serde_json::from_slice(&fs::read(&summary_path).expect("read persisted summary"))
+            .expect("parse persisted summary");
     assert_eq!(persisted["verdict"], "accepted");
 
     assert_eq!(
@@ -378,9 +380,8 @@ fn floor_and_crash_count_failures_are_explicit_rejection_reasons() {
 fn semantic_schedule_mismatch_is_rejected_without_becoming_framework_attribution() {
     let (root, campaign_id) = success_fixture("semantic", 1);
     let path = root.join(&campaign_id).join("iterations/000001.json");
-    let mut value: Value =
-        serde_json::from_slice(&fs::read(&path).expect("read semantic fixture"))
-            .expect("parse semantic fixture");
+    let mut value: Value = serde_json::from_slice(&fs::read(&path).expect("read semantic fixture"))
+        .expect("parse semantic fixture");
     value["execution"]["result"]["reader"] = json!("paging");
     fs::write(
         &path,
@@ -467,8 +468,8 @@ fn durable_failure_and_gap_states_fail_closed() {
 
     let gap_root = temp_root("gap");
     let gap_campaign = format!("summarygap{}", unique_nanos());
-    let gap_store = EvidenceStore::open(&gap_root, &gap_campaign, &binary)
-        .expect("initialize gap fixture");
+    let gap_store =
+        EvidenceStore::open(&gap_root, &gap_campaign, &binary).expect("initialize gap fixture");
     rewrite_campaign_start(&gap_store);
     write_success(&gap_store, 2);
     write_samples(&gap_store);
@@ -554,7 +555,10 @@ fn summarize_campaign_cli_rejects_sequence_and_floor_overrides() {
             .output()
             .expect("invoke summary CLI with forbidden override");
 
-        assert!(!output.status.success(), "{forbidden} unexpectedly accepted");
+        assert!(
+            !output.status.success(),
+            "{forbidden} unexpectedly accepted"
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("unexpected argument"),
