@@ -99,8 +99,7 @@ pub async fn execute_acceptance_campaign_with_policy(
         let store = EvidenceStore::open(evidence_root, campaign_id, workload_binary)?;
         store.campaign().created_at_unix_nanos_utc
     };
-    let initial_resume =
-        reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
+    let initial_resume = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
 
     run_acceptance_loop(
         campaign_id,
@@ -151,7 +150,7 @@ where
 
     loop {
         let observed_at_unix_nanos_utc = now()?;
-        let elapsed_nanos = elapsed_nanos(
+        let elapsed_nanos = checked_elapsed_nanos(
             campaign_started_at_unix_nanos_utc,
             observed_at_unix_nanos_utc,
         )?;
@@ -233,7 +232,7 @@ where
             }
             GuardedBatchStopReason::ResumeBlocked => {
                 let observed_at_unix_nanos_utc = now()?;
-                let elapsed_nanos = elapsed_nanos(
+                let elapsed_nanos = checked_elapsed_nanos(
                     campaign_started_at_unix_nanos_utc,
                     observed_at_unix_nanos_utc,
                 )?;
@@ -250,7 +249,7 @@ where
             }
             GuardedBatchStopReason::GuardBlocked => {
                 let observed_at_unix_nanos_utc = now()?;
-                let elapsed_nanos = elapsed_nanos(
+                let elapsed_nanos = checked_elapsed_nanos(
                     campaign_started_at_unix_nanos_utc,
                     observed_at_unix_nanos_utc,
                 )?;
@@ -282,7 +281,7 @@ fn policy_minimum_elapsed_nanos(policy: CampaignAcceptancePolicy) -> Result<u64>
         .map_err(|_| anyhow::anyhow!("minimum elapsed duration does not fit u64 nanoseconds"))
 }
 
-fn elapsed_nanos(started_at: u64, observed_at: u64) -> Result<u64> {
+fn checked_elapsed_nanos(started_at: u64, observed_at: u64) -> Result<u64> {
     observed_at.checked_sub(started_at).ok_or_else(|| {
         anyhow::anyhow!(
             "observed campaign clock {observed_at} precedes durable campaign start {started_at}"
@@ -332,14 +331,10 @@ mod tests {
 
     use anyhow::{anyhow, Result};
 
-    use super::{
-        run_acceptance_loop, CampaignAcceptancePolicy, CampaignStopReason,
-    };
-    use crate::endurance::guarded_batch::{
-        GuardedBatchResult, GuardedBatchStopReason,
-    };
-    use crate::endurance::resume::{ResumeState, ResumeStatus};
+    use super::{run_acceptance_loop, CampaignAcceptancePolicy, CampaignStopReason};
+    use crate::endurance::guarded_batch::{GuardedBatchResult, GuardedBatchStopReason};
     use crate::endurance::plan_iteration;
+    use crate::endurance::resume::{ResumeState, ResumeStatus};
 
     const CAMPAIGN_ID: &str = "controlunit";
 
@@ -353,8 +348,7 @@ mod tests {
             frontier_sequence: frontier,
             next_sequence: Some(next_sequence),
             next_plan: Some(
-                plan_iteration(CAMPAIGN_ID, next_sequence)
-                    .expect("build unit-test next plan"),
+                plan_iteration(CAMPAIGN_ID, next_sequence).expect("build unit-test next plan"),
             ),
             blocked_sequence: None,
             reason: None,
@@ -408,7 +402,11 @@ mod tests {
 
     fn clock(values: impl IntoIterator<Item = u64>) -> impl FnMut() -> Result<u64> {
         let mut values = values.into_iter().collect::<VecDeque<_>>();
-        move || values.pop_front().ok_or_else(|| anyhow!("fake clock exhausted"))
+        move || {
+            values
+                .pop_front()
+                .ok_or_else(|| anyhow!("fake clock exhausted"))
+        }
     }
 
     #[tokio::test]
@@ -500,7 +498,10 @@ mod tests {
         .await
         .expect("controller should reach both floors");
 
-        assert_eq!(result.stop_reason, CampaignStopReason::AcceptanceFloorsSatisfied);
+        assert_eq!(
+            result.stop_reason,
+            CampaignStopReason::AcceptanceFloorsSatisfied
+        );
         assert_eq!(result.initial_frontier_sequence, 98);
         assert_eq!(result.final_frontier_sequence, 100);
         assert_eq!(result.iterations_completed_by_invocation, 2);
@@ -525,10 +526,7 @@ mod tests {
         .expect("resume block should be structured");
         assert_eq!(blocked.stop_reason, CampaignStopReason::ResumeBlocked);
 
-        let mut steps = VecDeque::from([blocked_step(
-            0,
-            GuardedBatchStopReason::GuardBlocked,
-        )]);
+        let mut steps = VecDeque::from([blocked_step(0, GuardedBatchStopReason::GuardBlocked)]);
         let guard_blocked = run_acceptance_loop(
             CAMPAIGN_ID,
             0,
@@ -557,19 +555,13 @@ mod tests {
         };
         let mut calls = 0_u64;
 
-        let error = run_acceptance_loop(
-            CAMPAIGN_ID,
-            0,
-            ready_status(0),
-            policy,
-            clock([0]),
-            || {
+        let error =
+            run_acceptance_loop(CAMPAIGN_ID, 0, ready_status(0), policy, clock([0]), || {
                 calls += 1;
                 ready(Err(anyhow!("selected iteration failed")))
-            },
-        )
-        .await
-        .expect_err("selected iteration failure must propagate");
+            })
+            .await
+            .expect_err("selected iteration failure must propagate");
 
         assert!(error.to_string().contains("selected iteration failed"));
         assert_eq!(calls, 1);
