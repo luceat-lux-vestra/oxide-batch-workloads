@@ -160,7 +160,6 @@ where
                 campaign_id,
                 campaign_started_at_unix_nanos_utc,
                 observed_at_unix_nanos_utc,
-                elapsed_nanos,
                 policy,
                 initial_frontier_sequence,
                 CampaignStopReason::ResumeBlocked,
@@ -176,7 +175,6 @@ where
                 campaign_id,
                 campaign_started_at_unix_nanos_utc,
                 observed_at_unix_nanos_utc,
-                elapsed_nanos,
                 policy,
                 initial_frontier_sequence,
                 CampaignStopReason::AcceptanceFloorsSatisfied,
@@ -232,15 +230,10 @@ where
             }
             GuardedBatchStopReason::ResumeBlocked => {
                 let observed_at_unix_nanos_utc = now()?;
-                let elapsed_nanos = checked_elapsed_nanos(
-                    campaign_started_at_unix_nanos_utc,
-                    observed_at_unix_nanos_utc,
-                )?;
                 return finish_result(
                     campaign_id,
                     campaign_started_at_unix_nanos_utc,
                     observed_at_unix_nanos_utc,
-                    elapsed_nanos,
                     policy,
                     initial_frontier_sequence,
                     CampaignStopReason::ResumeBlocked,
@@ -249,15 +242,10 @@ where
             }
             GuardedBatchStopReason::GuardBlocked => {
                 let observed_at_unix_nanos_utc = now()?;
-                let elapsed_nanos = checked_elapsed_nanos(
-                    campaign_started_at_unix_nanos_utc,
-                    observed_at_unix_nanos_utc,
-                )?;
                 return finish_result(
                     campaign_id,
                     campaign_started_at_unix_nanos_utc,
                     observed_at_unix_nanos_utc,
-                    elapsed_nanos,
                     policy,
                     initial_frontier_sequence,
                     CampaignStopReason::GuardBlocked,
@@ -293,12 +281,15 @@ fn finish_result(
     campaign_id: &str,
     campaign_started_at_unix_nanos_utc: u64,
     observed_at_unix_nanos_utc: u64,
-    elapsed_nanos: u64,
     policy: CampaignAcceptancePolicy,
     initial_frontier_sequence: u64,
     stop_reason: CampaignStopReason,
     terminal_resume_status: ResumeStatus,
 ) -> Result<CampaignRunResult> {
+    let elapsed_nanos = checked_elapsed_nanos(
+        campaign_started_at_unix_nanos_utc,
+        observed_at_unix_nanos_utc,
+    )?;
     let iterations_completed_by_invocation = terminal_resume_status
         .frontier_sequence
         .checked_sub(initial_frontier_sequence)
