@@ -73,7 +73,10 @@ fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 fn quoted(path: &Path) -> String {
     let text = path.to_string_lossy();
-    assert!(!text.contains('\''), "test helper path must not contain apostrophe");
+    assert!(
+        !text.contains('\''),
+        "test helper path must not contain apostrophe"
+    );
     format!("'{text}'")
 }
 
@@ -142,7 +145,10 @@ async fn allow_runs_once_per_iteration_and_independent_invocation_resumes() {
     .await
     .expect("execute first guarded Slice I batch");
 
-    assert_eq!(first.stop_reason, GuardedBatchStopReason::RequestedCountCompleted);
+    assert_eq!(
+        first.stop_reason,
+        GuardedBatchStopReason::RequestedCountCompleted
+    );
     assert_eq!(first.completed_sequences, vec![1, 2]);
     assert_eq!(first.completed_iterations, 2);
     assert_eq!(first.guard_attempts.len(), 2);
@@ -253,10 +259,7 @@ async fn first_step_guard_failures_are_fail_closed_and_do_not_mutate_evidence() 
             "nonzero" => write_guard_script(
                 &helper,
                 "guard;literal-metachar",
-                &format!(
-                    "echo '{0}'\necho '{0}' >&2\nexit 42",
-                    SECRET_MARKER
-                ),
+                &format!("echo '{0}'\necho '{0}' >&2\nexit 42", SECRET_MARKER),
             ),
             "signal" => write_guard_script(&helper, "signal-guard", "kill -TERM $$"),
             "missing" => helper.join("does-not-exist"),
@@ -335,8 +338,8 @@ async fn resume_block_prevents_guard_invocation() {
     );
     let campaign_id = format!("sliceiresumeblock{}", support::nonce());
     let binary = workload_binary();
-    let store =
-        EvidenceStore::open(&root, &campaign_id, &binary).expect("initialize resume-block campaign");
+    let store = EvidenceStore::open(&root, &campaign_id, &binary)
+        .expect("initialize resume-block campaign");
     store
         .record_event(
             1,
@@ -361,7 +364,10 @@ async fn resume_block_prevents_guard_invocation() {
     assert_eq!(result.stop_reason, GuardedBatchStopReason::ResumeBlocked);
     assert_eq!(result.completed_iterations, 0);
     assert!(result.guard_attempts.is_empty());
-    assert_eq!(result.terminal_resume_status.state, ResumeState::BlockedFailure);
+    assert_eq!(
+        result.terminal_resume_status.state,
+        ResumeState::BlockedFailure
+    );
     assert_eq!(invocation_count(&calls), 0);
     assert_eq!(before, snapshot_tree(&root));
 

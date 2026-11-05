@@ -78,8 +78,7 @@ pub async fn execute_guarded_bounded_batch(
     let mut stop_reason = GuardedBatchStopReason::RequestedCountCompleted;
 
     for _ in 0..requested_iterations {
-        let pre_execution =
-            reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
+        let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
         if starting_frontier_sequence.is_none() {
             starting_frontier_sequence = Some(pre_execution.frontier_sequence);
         }
@@ -132,9 +131,7 @@ pub async fn execute_guarded_bounded_batch(
         .await?;
 
         if step.selected_sequence != Some(selected_sequence) {
-            bail!(
-                "selected execution disagrees with guarded sequence {selected_sequence}"
-            );
+            bail!("selected execution disagrees with guarded sequence {selected_sequence}");
         }
         if step.execution.is_none() {
             bail!(
