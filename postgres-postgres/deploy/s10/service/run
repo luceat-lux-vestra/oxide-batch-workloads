@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+
+service_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+release_root=$(CDPATH= cd -- "$service_dir/.." && pwd -P)
+
+exec "$release_root/bin/device-control" campaign 2>&1

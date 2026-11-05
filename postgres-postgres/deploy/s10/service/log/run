@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+log_service_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+release_root=$(CDPATH= cd -- "$log_service_dir/../.." && pwd -P)
+runtime_env="$release_root/etc/runtime.env"
+
+[ -r "$runtime_env" ] || { echo "missing runtime environment: $runtime_env" >&2; exit 78; }
+. "$runtime_env"
+
+exec svlogd -tt "$OXIDE_LOG_ROOT"

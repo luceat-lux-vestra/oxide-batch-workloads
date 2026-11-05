@@ -652,6 +652,9 @@ run_ci_stage() {
   run_raw_sqlx_static_guards
   run_raw_jdbc_static_guards
 
+  echo "S10 deployment asset contract tests"
+  python3 deploy/s10/test-assets.py
+
   echo "retained-evidence verifier adversarial tests"
   python3 validation/test_verify_retained_evidence.py
 

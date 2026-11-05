@@ -1,0 +1,218 @@
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+release_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
+runtime_env="$release_root/etc/runtime.env"
+
+[ -r "$runtime_env" ] || { echo "missing runtime environment: $runtime_env" >&2; exit 78; }
+. "$runtime_env"
+
+campaign_config="$OXIDE_CONFIG_ROOT/campaign.env"
+pid_file="$OXIDE_STATE_ROOT/controller.pid"
+service_path="$OXIDE_SERVICE_ROOT/$OXIDE_SERVICE_NAME"
+controller="$release_root/bin/postgres-postgres-endurancectl"
+workload="$release_root/bin/postgres-postgres"
+guard_bridge="$release_root/bin/pre-iteration-guard"
+sv_bin="${OXIDE_SV_BIN:-sv}"
+
+validate_campaign_id() {
+  case "${OXIDE_CAMPAIGN_ID:-}" in
+    ""|"."|".."|*[!A-Za-z0-9._-]*)
+      echo "OXIDE_CAMPAIGN_ID must be one safe path component [A-Za-z0-9._-]" >&2
+      return 64
+      ;;
+  esac
+}
+
+load_campaign_config() {
+  [ -r "$campaign_config" ] || {
+    echo "missing campaign config: $campaign_config" >&2
+    return 78
+  }
+  . "$campaign_config"
+  : "${DATABASE_URL:?DATABASE_URL must be set in campaign.env}"
+  : "${OXIDE_CAMPAIGN_ID:?OXIDE_CAMPAIGN_ID must be set in campaign.env}"
+  OXIDE_SAMPLE_INTERVAL_MS="${OXIDE_SAMPLE_INTERVAL_MS:-1000}"
+  export DATABASE_URL OXIDE_CAMPAIGN_ID OXIDE_SAMPLE_INTERVAL_MS
+  validate_campaign_id
+  case "$OXIDE_SAMPLE_INTERVAL_MS" in
+    *[!0-9]*|"") echo "OXIDE_SAMPLE_INTERVAL_MS must be a positive integer" >&2; return 64 ;;
+  esac
+  [ "$OXIDE_SAMPLE_INTERVAL_MS" -gt 0 ] || {
+    echo "OXIDE_SAMPLE_INTERVAL_MS must be greater than zero" >&2
+    return 64
+  }
+}
+
+pid_state() {
+  if [ ! -e "$pid_file" ]; then
+    printf 'none\n'
+    return 0
+  fi
+  pid=$(sed -n '1p' "$pid_file" 2>/dev/null || true)
+  case "$pid" in
+    *[!0-9]*|"")
+      printf 'stale\n'
+      return 0
+      ;;
+  esac
+  if kill -0 "$pid" 2>/dev/null; then
+    printf 'live:%s\n' "$pid"
+  else
+    printf 'stale:%s\n' "$pid"
+  fi
+}
+
+require_no_pid_state() {
+  state=$(pid_state)
+  [ "$state" = "none" ] || {
+    echo "refusing start with controller pid state '$state'; inspect status and clear-stale explicitly" >&2
+    return 69
+  }
+}
+
+validate_runtime() {
+  [ -x "$controller" ] || { echo "controller binary missing: $controller" >&2; return 78; }
+  [ -x "$workload" ] || { echo "workload binary missing: $workload" >&2; return 78; }
+  [ -x "$guard_bridge" ] || { echo "guard bridge missing: $guard_bridge" >&2; return 78; }
+  [ -x "$OXIDE_DISK_GUARD" ] || { echo "disk guard missing: $OXIDE_DISK_GUARD" >&2; return 78; }
+  [ -d "$OXIDE_EVIDENCE_ROOT" ] || { echo "evidence root missing: $OXIDE_EVIDENCE_ROOT" >&2; return 78; }
+  [ -d "$OXIDE_LOG_ROOT" ] || { echo "raw log root missing: $OXIDE_LOG_ROOT" >&2; return 78; }
+  [ -d "$OXIDE_STATE_ROOT" ] || { echo "state root missing: $OXIDE_STATE_ROOT" >&2; return 78; }
+  [ -e "$service_path" ] || { echo "runit service link missing: $service_path" >&2; return 78; }
+  load_campaign_config
+}
+
+run_guard() {
+  load_campaign_config
+  [ -x "$OXIDE_DISK_GUARD" ] || { echo "disk guard missing: $OXIDE_DISK_GUARD" >&2; exit 78; }
+
+  printf 'disk-guard begin campaign=%s timestamp=%s\n' "$OXIDE_CAMPAIGN_ID" "$(date +%s)"
+  set +e
+  guard_output=$("$OXIDE_DISK_GUARD" 2>&1)
+  guard_status=$?
+  set -e
+  [ -z "$guard_output" ] || printf '%s\n' "$guard_output"
+
+  if [ "$guard_status" -ne 0 ]; then
+    printf 'disk-guard error campaign=%s exit=%s\n' "$OXIDE_CAMPAIGN_ID" "$guard_status" >&2
+    exit "$guard_status"
+  fi
+  if printf '%s\n' "$guard_output" | grep -Eq '(^|[[:space:]])BLOCK($|[[:space:]])'; then
+    printf 'disk-guard blocked campaign=%s\n' "$OXIDE_CAMPAIGN_ID" >&2
+    exit 75
+  fi
+  if printf '%s\n' "$guard_output" | grep -Eq '(^|[[:space:]])ALLOW($|[[:space:]])'; then
+    printf 'disk-guard allow campaign=%s\n' "$OXIDE_CAMPAIGN_ID"
+    exit 0
+  fi
+
+  printf 'disk-guard unrecognized output; failing closed campaign=%s\n' "$OXIDE_CAMPAIGN_ID" >&2
+  exit 70
+}
+
+run_campaign() {
+  validate_runtime
+  require_no_pid_state
+
+  umask 077
+  printf '%s\n' "$$" > "$pid_file"
+
+  child_pid=""
+  cleanup_pid() {
+    rm -f "$pid_file"
+  }
+  forward_signal() {
+    signal="$1"
+    if [ -n "$child_pid" ]; then
+      kill "-$signal" "$child_pid" 2>/dev/null || true
+      set +e
+      wait "$child_pid"
+      set -e
+    fi
+    cleanup_pid
+    case "$signal" in
+      TERM) exit 143 ;;
+      INT) exit 130 ;;
+      HUP) exit 129 ;;
+      *) exit 1 ;;
+    esac
+  }
+
+  trap cleanup_pid 0
+  trap 'forward_signal TERM' TERM
+  trap 'forward_signal INT' INT
+  trap 'forward_signal HUP' HUP
+
+  printf 'campaign-controller start campaign=%s timestamp=%s\n' "$OXIDE_CAMPAIGN_ID" "$(date +%s)"
+  set +e
+  "$controller" run-campaign \
+    --database-url "$DATABASE_URL" \
+    --evidence-root "$OXIDE_EVIDENCE_ROOT" \
+    --campaign-id "$OXIDE_CAMPAIGN_ID" \
+    --sample-interval-ms "$OXIDE_SAMPLE_INTERVAL_MS" \
+    --pre-iteration-guard "$guard_bridge" &
+  child_pid=$!
+  wait "$child_pid"
+  status=$?
+  set -e
+  child_pid=""
+  printf 'campaign-controller exit campaign=%s status=%s timestamp=%s\n' \
+    "$OXIDE_CAMPAIGN_ID" "$status" "$(date +%s)"
+  return "$status"
+}
+
+manage_start() {
+  validate_runtime
+  require_no_pid_state
+  "$sv_bin" once "$service_path"
+}
+
+manage_stop() {
+  [ -e "$service_path" ] || { echo "runit service link missing: $service_path" >&2; exit 78; }
+  "$sv_bin" down "$service_path"
+  echo "controller stop requested intentionally; service state is not a campaign success verdict"
+}
+
+manage_status() {
+  [ -e "$service_path" ] || { echo "runit service link missing: $service_path" >&2; exit 78; }
+  set +e
+  "$sv_bin" status "$service_path"
+  sv_status=$?
+  set -e
+  printf 'controller_pid_state=%s\n' "$(pid_state)"
+  return "$sv_status"
+}
+
+clear_stale() {
+  state=$(pid_state)
+  case "$state" in
+    none)
+      echo "no controller pid state to clear"
+      ;;
+    live:*)
+      echo "refusing to clear live controller pid state '$state'" >&2
+      exit 69
+      ;;
+    stale*)
+      rm -f "$pid_file"
+      echo "cleared stale controller pid state '$state'"
+      ;;
+  esac
+}
+
+command="${1:-}"
+case "$command" in
+  campaign) run_campaign ;;
+  guard) run_guard ;;
+  validate) validate_runtime ;;
+  start) manage_start ;;
+  stop) manage_stop ;;
+  status) manage_status ;;
+  clear-stale) clear_stale ;;
+  *)
+    echo "usage: device-control <campaign|guard|validate|start|stop|status|clear-stale>" >&2
+    exit 64
+    ;;
+esac

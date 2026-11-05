@@ -167,9 +167,11 @@ pub async fn execute_guarded_bounded_batch(
 
 async fn run_guard(path: &Path, sequence: u64) -> GuardAttempt {
     let mut command = Command::new(path);
+    // Keep guard diagnostics visible to the supervising raw log while the
+    // structured GuardAttempt remains the durable semantic record.
     command
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .kill_on_drop(true);
 
     let mut child = match command.spawn() {
