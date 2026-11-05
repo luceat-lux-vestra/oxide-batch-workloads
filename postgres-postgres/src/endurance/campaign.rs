@@ -338,9 +338,10 @@ mod tests {
             state: ResumeState::Ready,
             frontier_sequence: frontier,
             next_sequence: Some(next_sequence),
-            next_plan: Some(
-                plan_iteration(CAMPAIGN_ID, next_sequence).expect("build unit-test next plan"),
-            ),
+            next_plan: Some(match plan_iteration(CAMPAIGN_ID, next_sequence) {
+                Ok(plan) => plan,
+                Err(error) => panic!("build unit-test next plan: {error:#}"),
+            }),
             blocked_sequence: None,
             reason: None,
         }
@@ -407,7 +408,7 @@ mod tests {
             minimum_completed_iterations: 100,
         };
 
-        let already_satisfied = run_acceptance_loop(
+        let already_satisfied = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             ready_status(100),
@@ -416,7 +417,10 @@ mod tests {
             || ready(Err(anyhow!("step must not run"))),
         )
         .await
-        .expect("both satisfied should stop immediately");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("both satisfied should stop immediately: {error:#}"),
+        };
         assert_eq!(
             already_satisfied.stop_reason,
             CampaignStopReason::AcceptanceFloorsSatisfied
@@ -424,7 +428,7 @@ mod tests {
         assert_eq!(already_satisfied.iterations_completed_by_invocation, 0);
 
         let mut steps = VecDeque::from([successful_step(100)]);
-        let iteration_floor_first = run_acceptance_loop(
+        let iteration_floor_first = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             ready_status(100),
@@ -439,12 +443,15 @@ mod tests {
             },
         )
         .await
-        .expect("iteration floor first should keep running");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("iteration floor first should keep running: {error:#}"),
+        };
         assert_eq!(iteration_floor_first.final_frontier_sequence, 101);
         assert_eq!(iteration_floor_first.iterations_completed_by_invocation, 1);
 
         let mut steps = VecDeque::from([successful_step(99)]);
-        let time_floor_first = run_acceptance_loop(
+        let time_floor_first = match run_acceptance_loop(
             CAMPAIGN_ID,
             0,
             ready_status(99),
@@ -459,7 +466,10 @@ mod tests {
             },
         )
         .await
-        .expect("time floor first should keep running");
+        {
+            Ok(result) => result,
+            Err(error) => panic!("time floor first should keep running: {error:#}"),
+        };
         assert_eq!(time_floor_first.final_frontier_sequence, 100);
         assert_eq!(time_floor_first.iterations_completed_by_invocation, 1);
     }
