@@ -97,8 +97,7 @@ fn iteration_kind(root: &Path, campaign_id: &str, sequence: u64) -> String {
         .join(campaign_id)
         .join(format!("iterations/{sequence:06}.json"));
     let bytes = fs::read(path).expect("read controller iteration evidence");
-    let value: Value =
-        serde_json::from_slice(&bytes).expect("parse controller iteration evidence");
+    let value: Value = serde_json::from_slice(&bytes).expect("parse controller iteration evidence");
     value
         .get("execution")
         .and_then(|execution| execution.get("kind"))
@@ -191,18 +190,11 @@ async fn satisfied_guard_block_and_resume_block_paths_are_fail_closed() {
     let satisfied_guard = write_guard_script(
         &satisfied_helper,
         "must-not-run",
-        &format!(
-            "printf 'called\\n' >> {}; exit 0",
-            quoted(&satisfied_calls)
-        ),
+        &format!("printf 'called\\n' >> {}; exit 0", quoted(&satisfied_calls)),
     );
     let satisfied_campaign = format!("controlsatisfied{}", support::nonce());
-    let satisfied_store = EvidenceStore::open(
-        &satisfied_root,
-        &satisfied_campaign,
-        &binary,
-    )
-    .expect("initialize already-satisfied campaign");
+    let satisfied_store = EvidenceStore::open(&satisfied_root, &satisfied_campaign, &binary)
+        .expect("initialize already-satisfied campaign");
     write_success(&satisfied_store, 1);
     drop(satisfied_store);
 
@@ -260,9 +252,8 @@ async fn satisfied_guard_block_and_resume_block_paths_are_fail_closed() {
         &format!("printf 'called\\n' >> {}; exit 0", quoted(&resume_calls)),
     );
     let resume_campaign = format!("controlresumeblock{}", support::nonce());
-    let resume_store =
-        EvidenceStore::open(&resume_root, &resume_campaign, &binary)
-            .expect("initialize resume-block campaign");
+    let resume_store = EvidenceStore::open(&resume_root, &resume_campaign, &binary)
+        .expect("initialize resume-block campaign");
     resume_store
         .record_event(
             1,
@@ -360,7 +351,11 @@ fn run_campaign_cli_exposes_no_sequence_or_floor_override() {
         "--evidence-root",
     ];
 
-    for forbidden in ["--sequence", "--minimum-iterations", "--minimum-elapsed-seconds"] {
+    for forbidden in [
+        "--sequence",
+        "--minimum-iterations",
+        "--minimum-elapsed-seconds",
+    ] {
         let output = Command::new(endurancectl_binary())
             .args(base_args)
             .arg(&root)
