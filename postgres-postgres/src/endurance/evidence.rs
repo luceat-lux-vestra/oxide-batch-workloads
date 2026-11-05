@@ -521,7 +521,7 @@ pub(crate) fn append_jsonl(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("evidence path has no parent: {}", path.display()))?;

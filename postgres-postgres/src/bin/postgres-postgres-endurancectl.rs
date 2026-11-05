@@ -10,6 +10,7 @@ use postgres_postgres::endurance::guarded_batch::execute_guarded_bounded_batch;
 use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
 use postgres_postgres::endurance::resume::reconcile_resume_status;
 use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration;
+use postgres_postgres::endurance::summary::{summarize_campaign, SummaryVerdict};
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
 /// Campaign #203 bounded control surface for deterministic endurance setup,
@@ -17,8 +18,8 @@ use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, pl
 /// one evidence-persisted bounded iteration, one resource-sampled recorded
 /// iteration, one resume-selected single-step iteration, one explicit finite
 /// batch of resume-selected iterations, one externally guarded finite batch,
-/// one acceptance-bounded 24h/100-iteration campaign controller, and read-only
-/// durable frontier inspection.
+/// one acceptance-bounded 24h/100-iteration campaign controller, one final
+/// campaign summary/reconciliation pass, and read-only durable frontier inspection.
 ///
 /// Unbounded daemon/service lifecycle remains outside this control surface.
 #[derive(Parser)]
@@ -143,6 +144,16 @@ enum Command {
         sample_interval_ms: u64,
         #[arg(long)]
         pre_iteration_guard: PathBuf,
+    },
+    /// Reconcile all durable campaign evidence and campaign-owned OxideBatch
+    /// executions, then atomically write and print summary.json.
+    SummarizeCampaign {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        evidence_root: PathBuf,
+        #[arg(long)]
+        campaign_id: String,
     },
     /// Inspect existing durable evidence and report the next safe sequence
     /// without executing a workload process or mutating campaign evidence.
@@ -320,6 +331,28 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::SummarizeCampaign {
+            database_url,
+            evidence_root,
+            campaign_id,
+        } => {
+            let workload_binary = sibling_workload_binary()?;
+            let result = summarize_campaign(
+                &workload_binary,
+                &database_url,
+                &evidence_root,
+                &campaign_id,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            if result.verdict == SummaryVerdict::Rejected {
+                anyhow::bail!(
+                    "campaign summary rejected; inspect {} for machine-readable reason codes",
+                    result.summary_path
+                );
+            }
             Ok(())
         }
         Command::ResumeStatus {
