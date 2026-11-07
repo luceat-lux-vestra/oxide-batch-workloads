@@ -6,9 +6,7 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 use tokio::process::Command;
 
-use super::progress::{
-    execute_selected_sampled_recorded_iteration, initialize_campaign_if_absent,
-};
+use super::progress::{execute_selected_sampled_recorded_iteration, initialize_campaign_if_absent};
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
 
 const GUARDED_BATCH_SCHEMA: &str = "oxide-batch-workloads.endurance-run-guarded-batch";
