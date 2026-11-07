@@ -99,7 +99,10 @@ async fn fresh_campaign_bootstraps_before_first_resume_selected_iteration() {
     assert!(result.execution.is_some());
     assert!(root.join(&campaign_id).join("campaign.json").is_file());
     assert!(root.join(&campaign_id).join("events.jsonl").is_file());
-    assert!(root.join(&campaign_id).join("iterations/000001.json").is_file());
+    assert!(root
+        .join(&campaign_id)
+        .join("iterations/000001.json")
+        .is_file());
 
     let after = reconcile_resume_status(&root, &campaign_id, &binary)
         .expect("reconcile fresh Slice G campaign after sequence 1");
