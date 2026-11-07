@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 use tokio::process::Command;
 
-use super::progress::execute_selected_sampled_recorded_iteration;
+use super::progress::{execute_selected_sampled_recorded_iteration, initialize_campaign_if_absent};
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
 
 const GUARDED_BATCH_SCHEMA: &str = "oxide-batch-workloads.endurance-run-guarded-batch";
@@ -70,6 +70,8 @@ pub async fn execute_guarded_bounded_batch(
     if requested_iterations == 0 {
         bail!("requested iterations must be greater than zero");
     }
+
+    initialize_campaign_if_absent(evidence_root, campaign_id, workload_binary)?;
 
     let mut completed_sequences = Vec::new();
     let mut guard_attempts = Vec::new();

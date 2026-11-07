@@ -69,6 +69,51 @@ fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 #[tokio::test]
+async fn fresh_campaign_bootstraps_before_first_resume_selected_iteration() {
+    support::migrate();
+    support::reset();
+    support::seed(SeedOptions {
+        rows: 200,
+        seed: CANONICAL_SEED,
+    });
+
+    let root = temp_root("fresh-bootstrap");
+    let campaign_id = format!("slicegfresh{}", support::nonce());
+    let database_url = support::database_url();
+    let binary = workload_binary();
+    assert!(!root.exists());
+
+    let result = execute_next_sampled_recorded_iteration(
+        &binary,
+        &database_url,
+        &root,
+        &campaign_id,
+        SAMPLE_INTERVAL,
+    )
+    .await
+    .expect("fresh Slice G campaign must bootstrap before reconciliation");
+
+    assert_eq!(result.pre_execution.state, ResumeState::Ready);
+    assert_eq!(result.pre_execution.frontier_sequence, 0);
+    assert_eq!(result.selected_sequence, Some(1));
+    assert!(result.execution.is_some());
+    assert!(root.join(&campaign_id).join("campaign.json").is_file());
+    assert!(root.join(&campaign_id).join("events.jsonl").is_file());
+    assert!(root
+        .join(&campaign_id)
+        .join("iterations/000001.json")
+        .is_file());
+
+    let after = reconcile_resume_status(&root, &campaign_id, &binary)
+        .expect("reconcile fresh Slice G campaign after sequence 1");
+    assert_eq!(after.state, ResumeState::Ready);
+    assert_eq!(after.frontier_sequence, 1);
+    assert_eq!(after.next_sequence, Some(2));
+
+    fs::remove_dir_all(root).expect("remove fresh Slice G evidence");
+}
+
+#[tokio::test]
 async fn successful_invocations_advance_exactly_one_sequence_each_and_stay_secret_safe() {
     support::migrate();
     support::reset();

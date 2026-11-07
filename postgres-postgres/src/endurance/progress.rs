@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use serde::Serialize;
 
+use super::evidence::EvidenceStore;
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
 use super::sampling::{execute_sampled_recorded_iteration, SampledRecordedIterationOutput};
 use super::IterationPlan;
@@ -23,6 +24,21 @@ pub struct RunNextResult {
     pub execution: Option<SampledRecordedIterationOutput>,
 }
 
+pub(crate) fn initialize_campaign_if_absent(
+    evidence_root: &Path,
+    campaign_id: &str,
+    workload_binary: &Path,
+) -> Result<()> {
+    let campaign_dir = evidence_root.join(campaign_id);
+    if campaign_dir.try_exists()? {
+        return Ok(());
+    }
+
+    let store = EvidenceStore::open(evidence_root, campaign_id, workload_binary)?;
+    drop(store);
+    Ok(())
+}
+
 pub async fn execute_next_sampled_recorded_iteration(
     workload_binary: &Path,
     database_url: &str,
@@ -30,6 +46,7 @@ pub async fn execute_next_sampled_recorded_iteration(
     campaign_id: &str,
     sample_interval: Duration,
 ) -> Result<RunNextResult> {
+    initialize_campaign_if_absent(evidence_root, campaign_id, workload_binary)?;
     let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
     execute_selected_sampled_recorded_iteration(
         workload_binary,

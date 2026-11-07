@@ -112,6 +112,105 @@ fn assert_evidence_has_no_secret(root: &Path) {
 }
 
 #[tokio::test]
+async fn fresh_campaign_bootstraps_before_first_guarded_iteration() {
+    support::migrate();
+    support::reset();
+    support::seed(SeedOptions {
+        rows: 200,
+        seed: CANONICAL_SEED,
+    });
+
+    let root = temp_root("fresh-bootstrap-evidence");
+    let helper = temp_root("fresh-bootstrap-helper");
+    let calls = helper.join("calls.log");
+    let guard = write_guard_script(
+        &helper,
+        "allow-guard",
+        &format!("printf 'allow\\n' >> {}; exit 0", quoted(&calls)),
+    );
+    let campaign_id = format!("sliceifresh{}", support::nonce());
+    let binary = workload_binary();
+    assert!(!root.exists());
+
+    let result = execute_guarded_bounded_batch(
+        &binary,
+        &support::database_url(),
+        &root,
+        &campaign_id,
+        2,
+        SAMPLE_INTERVAL,
+        &guard,
+    )
+    .await
+    .expect("fresh guarded campaign must bootstrap before reconciliation");
+
+    assert_eq!(
+        result.stop_reason,
+        GuardedBatchStopReason::RequestedCountCompleted
+    );
+    assert_eq!(result.starting_frontier_sequence, 0);
+    assert_eq!(result.completed_sequences, vec![1, 2]);
+    assert_eq!(result.completed_iterations, 2);
+    assert_eq!(result.guard_attempts.len(), 2);
+    assert!(result
+        .guard_attempts
+        .iter()
+        .all(|attempt| attempt.decision == GuardDecision::Allow));
+    assert_eq!(result.terminal_resume_status.state, ResumeState::Ready);
+    assert_eq!(result.terminal_resume_status.next_sequence, Some(3));
+    assert_eq!(invocation_count(&calls), 2);
+    assert!(root.join(&campaign_id).join("campaign.json").is_file());
+
+    fs::remove_dir_all(root).expect("remove fresh Slice I evidence");
+    fs::remove_dir_all(helper).expect("remove fresh Slice I helper");
+}
+
+#[tokio::test]
+async fn preexisting_directory_without_campaign_metadata_remains_fail_closed() {
+    let root = temp_root("partial-existing-evidence");
+    let helper = temp_root("partial-existing-helper");
+    let calls = helper.join("calls.log");
+    let guard = write_guard_script(
+        &helper,
+        "must-not-run",
+        &format!("printf 'called\\n' >> {}; exit 0", quoted(&calls)),
+    );
+    let campaign_id = format!("sliceipartial{}", support::nonce());
+    let campaign_dir = root.join(&campaign_id);
+    fs::create_dir_all(&campaign_dir).expect("create partial campaign directory");
+    fs::write(campaign_dir.join("sentinel"), b"preserve-me")
+        .expect("write partial campaign sentinel");
+    let before = snapshot_tree(&root);
+
+    let result = execute_guarded_bounded_batch(
+        &workload_binary(),
+        "postgres://must-not-connect.invalid/partial-existing",
+        &root,
+        &campaign_id,
+        2,
+        SAMPLE_INTERVAL,
+        &guard,
+    )
+    .await
+    .expect("partial existing campaign must return structured resume block");
+
+    assert_eq!(result.stop_reason, GuardedBatchStopReason::ResumeBlocked);
+    assert_eq!(result.completed_iterations, 0);
+    assert!(result.completed_sequences.is_empty());
+    assert!(result.guard_attempts.is_empty());
+    assert_eq!(
+        result.terminal_resume_status.state,
+        ResumeState::BlockedInconsistentEvidence
+    );
+    assert_eq!(invocation_count(&calls), 0);
+    assert_eq!(before, snapshot_tree(&root));
+    assert!(!campaign_dir.join("campaign.json").exists());
+
+    fs::remove_dir_all(root).expect("remove partial Slice I evidence");
+    fs::remove_dir_all(helper).expect("remove partial Slice I helper");
+}
+
+#[tokio::test]
 async fn allow_runs_once_per_iteration_and_independent_invocation_resumes() {
     support::migrate();
     support::reset();
