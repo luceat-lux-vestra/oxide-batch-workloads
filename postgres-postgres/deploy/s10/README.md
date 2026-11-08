@@ -45,13 +45,24 @@ controller binaries. No path/git/unpublished OxideBatch substitution belongs in 
 Build the exact selected repository revision for the device, then invoke:
 
 ```sh
-./deploy/s10/install.sh \
+sh ./deploy/s10/install.sh \
   --repo-sha "$(git rev-parse HEAD)" \
   --workload-bin target/release/postgres-postgres \
   --controller-bin target/release/postgres-postgres-endurancectl \
+  --shell-bin "$PREFIX/bin/sh" \
   --server-root "$HOME/server" \
   --service-root "$PREFIX/var/service"
 ```
+
+On Termux, invoke the installer through `sh` rather than relying on the source checkout's
+`#!/usr/bin/env sh` shebang. The installer then rewrites every installed shell entry point
+(`device-control`, `pre-iteration-guard`, and both runit `run` scripts) to the explicit
+`--shell-bin` path. This avoids any runtime dependency on the nonexistent Android
+`/usr/bin/env`. Outside Termux, `--shell-bin` may be omitted and defaults to the absolute
+`sh` found on `PATH`.
+
+The selected shell path is recorded in `deployment.json` as `shell_binary` for deployment
+provenance.
 
 Installation does not migrate, reset, seed, start, or resume a campaign. It only installs runtime
 assets, preserves an existing `campaign.env`, registers the one-shot runit service, and prepares
