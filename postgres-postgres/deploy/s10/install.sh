@@ -174,7 +174,7 @@ chmod 0644 "$release_dir/deployment.json.tmp"
 mv -f "$release_dir/deployment.json.tmp" "$release_dir/deployment.json"
 
 ln -sfn "$release_dir" "$deployment_base/current"
-ln -sfn "$deployment_base/current/service" "$service_link"
+ln -sfn "$release_dir/service" "$service_link"
 
 printf 'installed_release=%s\n' "$release_dir"
 printf 'current=%s\n' "$deployment_base/current"

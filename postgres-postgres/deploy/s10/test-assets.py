@@ -187,6 +187,7 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         assert current.is_symlink()
         assert current.resolve() == release.resolve()
         assert service.is_symlink()
+        assert os.readlink(service) == str(release / "service")
         assert service.resolve() == (release / "service").resolve()
         assert (release / "service" / "down").is_file()
         installed_shell_assets = [
