@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import shutil
 from pathlib import Path
 import stat
 import subprocess
@@ -10,6 +11,10 @@ ASSET_ROOT = Path(__file__).resolve().parent
 WORKLOAD_ROOT = ASSET_ROOT.parent.parent
 INSTALL = ASSET_ROOT / "install.sh"
 REPO_SHA = "0123456789abcdef0123456789abcdef01234567"
+SYSTEM_SH = shutil.which("sh")
+if SYSTEM_SH is None:
+    raise RuntimeError("repository-side S10 asset tests require sh on PATH")
+SYSTEM_SH = str(Path(SYSTEM_SH).resolve())
 
 
 def write_executable(path: Path, body: str) -> None:
@@ -54,7 +59,7 @@ def campaign_config(server_root: Path, campaign_id: str) -> Path:
 
 def disk_guard(server_root: Path, body: str) -> Path:
     path = server_root / "scripts" / "disk-guard.sh"
-    write_executable(path, "#!/usr/bin/env sh\n" + body)
+    write_executable(path, f"#!{SYSTEM_SH}\n" + body)
     return path
 
 
@@ -73,6 +78,11 @@ def test_static_contract() -> None:
 
     service_run = (ASSET_ROOT / "service" / "run").read_text(encoding="utf-8")
     assert '"$release_root/bin/device-control" campaign' in service_run
+
+    install_script = INSTALL.read_text(encoding="utf-8")
+    assert "--shell-bin" in install_script
+    readme = (ASSET_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "sh ./deploy/s10/install.sh" in readme
 
     control = (ASSET_ROOT / "bin" / "device-control").read_text(encoding="utf-8")
     assert '"$sv_bin" once "$service_path"' in control
@@ -119,17 +129,17 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         sv_args = root / "sv-args.txt"
         controller_args = root / "controller-args.txt"
 
-        write_executable(workload, "#!/usr/bin/env sh\nexit 0\n")
+        write_executable(workload, f"#!{SYSTEM_SH}\nexit 0\n")
         write_executable(
             controller,
-            "#!/usr/bin/env sh\n"
+            f"#!{SYSTEM_SH}\n"
             'printf "%s\\n" "$@" > "$FAKE_CONTROLLER_ARGS"\n'
             'printf "planned-child-sigkill-handled\\n"\n'
             'exit "${FAKE_CONTROLLER_EXIT:-0}"\n',
         )
         write_executable(
             fake_sv,
-            "#!/usr/bin/env sh\n"
+            f"#!{SYSTEM_SH}\n"
             'printf "%s\\n" "$@" > "$FAKE_SV_ARGS"\n'
             'exit "${FAKE_SV_EXIT:-0}"\n',
         )
@@ -137,6 +147,7 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
 
         run(
             [
+                SYSTEM_SH,
                 INSTALL,
                 "--repo-sha",
                 REPO_SHA,
@@ -148,6 +159,8 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
                 server_root,
                 "--service-root",
                 service_root,
+                "--shell-bin",
+                SYSTEM_SH,
             ]
         )
 
@@ -176,6 +189,16 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         assert service.is_symlink()
         assert service.resolve() == (release / "service").resolve()
         assert (release / "service" / "down").is_file()
+        installed_shell_assets = [
+            release / "bin" / "device-control",
+            release / "bin" / "pre-iteration-guard",
+            release / "service" / "run",
+            release / "service" / "log" / "run",
+        ]
+        for asset in installed_shell_assets:
+            first_line = asset.read_text(encoding="utf-8").splitlines()[0]
+            assert first_line == f"#!{SYSTEM_SH}"
+            assert "/usr/bin/env" not in first_line
         assert list(evidence_root.iterdir()) == []
         assert (log_root / "config").read_text(encoding="utf-8") == "s8388608\nn16\n"
 
@@ -184,6 +207,7 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         assert manifest["repository_sha"] == REPO_SHA
         assert manifest["oxide_batch_version"] == "0.6.0"
         assert manifest["oxide_batch_features"] == ["postgres"]
+        assert manifest["shell_binary"] == SYSTEM_SH
         assert len(manifest["workload_sha256"]) == 64
         assert len(manifest["controller_sha256"]) == 64
 

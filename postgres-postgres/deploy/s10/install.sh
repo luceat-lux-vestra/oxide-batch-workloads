@@ -3,7 +3,7 @@ set -eu
 
 usage() {
   cat >&2 <<'EOF'
-usage: install.sh --repo-sha <40-hex> --workload-bin <path> --controller-bin <path> [--server-root <path>] [--service-root <path>]
+usage: install.sh --repo-sha <40-hex> --workload-bin <path> --controller-bin <path> [--server-root <path>] [--service-root <path>] [--shell-bin <absolute-path>]
 EOF
   exit 64
 }
@@ -13,6 +13,7 @@ service_root="${PREFIX:-}/var/service"
 repo_sha=""
 workload_bin=""
 controller_bin=""
+shell_bin=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -41,6 +42,11 @@ while [ "$#" -gt 0 ]; do
       controller_bin="$2"
       shift 2
       ;;
+    --shell-bin)
+      [ "$#" -ge 2 ] || usage
+      shell_bin="$2"
+      shift 2
+      ;;
     *)
       usage
       ;;
@@ -65,6 +71,36 @@ esac
 [ -x "$workload_bin" ] || { echo "workload binary is not executable: $workload_bin" >&2; exit 66; }
 [ -x "$controller_bin" ] || { echo "controller binary is not executable: $controller_bin" >&2; exit 66; }
 
+if [ -z "$shell_bin" ]; then
+  shell_bin=$(command -v sh 2>/dev/null || true)
+fi
+[ -n "$shell_bin" ] || { echo "unable to resolve shell binary; pass --shell-bin" >&2; exit 69; }
+case "$shell_bin" in
+  /*) ;;
+  *) echo "shell binary must be an absolute path: $shell_bin" >&2; exit 64 ;;
+esac
+case "$shell_bin" in
+  *[[:space:]]*) echo "shell binary path must not contain whitespace: $shell_bin" >&2; exit 64 ;;
+esac
+[ -x "$shell_bin" ] || { echo "shell binary is not executable: $shell_bin" >&2; exit 66; }
+
+install_shell_asset() {
+  source_path="$1"
+  destination_path="$2"
+  source_shebang=$(sed -n '1p' "$source_path")
+  [ "$source_shebang" = '#!/usr/bin/env sh' ] || {
+    echo "unexpected shell asset shebang in $source_path: $source_shebang" >&2
+    exit 65
+  }
+  destination_tmp="$destination_path.tmp.$$"
+  {
+    printf '#!%s\n' "$shell_bin"
+    sed '1d' "$source_path"
+  } > "$destination_tmp"
+  chmod 0755 "$destination_tmp"
+  mv -f "$destination_tmp" "$destination_path"
+}
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 deployment_base="$server_root/workloads/oxide-batch-workloads/postgres-postgres"
 release_dir="$deployment_base/releases/$repo_sha"
@@ -88,10 +124,10 @@ mkdir -p \
 
 install -m 0755 "$workload_bin" "$release_dir/bin/postgres-postgres"
 install -m 0755 "$controller_bin" "$release_dir/bin/postgres-postgres-endurancectl"
-install -m 0755 "$script_dir/bin/device-control" "$release_dir/bin/device-control"
-install -m 0755 "$script_dir/bin/pre-iteration-guard" "$release_dir/bin/pre-iteration-guard"
-install -m 0755 "$script_dir/service/run" "$release_dir/service/run"
-install -m 0755 "$script_dir/service/log/run" "$release_dir/service/log/run"
+install_shell_asset "$script_dir/bin/device-control" "$release_dir/bin/device-control"
+install_shell_asset "$script_dir/bin/pre-iteration-guard" "$release_dir/bin/pre-iteration-guard"
+install_shell_asset "$script_dir/service/run" "$release_dir/service/run"
+install_shell_asset "$script_dir/service/log/run" "$release_dir/service/log/run"
 : > "$release_dir/service/down"
 
 install -m 0644 "$script_dir/svlogd.config" "$log_root/config"
@@ -130,6 +166,7 @@ cat > "$release_dir/deployment.json.tmp" <<EOF
   "workload_sha256": "$workload_sha256",
   "controller_binary": "bin/postgres-postgres-endurancectl",
   "controller_sha256": "$controller_sha256",
+  "shell_binary": "$shell_bin",
   "installed_at_unix_seconds_utc": $installed_at_epoch
 }
 EOF
