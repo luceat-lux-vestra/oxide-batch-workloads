@@ -22,7 +22,9 @@ Source checkout and runtime state stay separate:
 ```
 
 The runit service name is `oxide-batch-postgres-endurance`. `install.sh` creates it as a symlink
-into the selected release. Every release contains a `service/down` file, so registration never
+directly to the selected immutable `releases/<repository-sha>/service` directory, never through
+`current/service`. This keeps runit supervision bound to one release while `current` is switched
+during deployment. Every release contains a `service/down` file, so registration never
 auto-starts the campaign. `device-control start` uses `sv once`: the controller is run once and
 is not automatically restarted after either semantic success or failure.
 
