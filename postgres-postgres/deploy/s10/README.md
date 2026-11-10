@@ -108,12 +108,22 @@ controller invocation from becoming an automatic restart loop. Planned SIGKILLs 
 children inside the controller; they do not change this supervisor contract.
 
 `controller.pid` is only a process-ownership marker. A leftover marker causes `start` to fail closed.
-After verifying that the recorded PID is not live:
+
+`status` reports one of:
+
+- `none` when no marker exists;
+- `live:<pid>` when the marker PID accepts a signal probe;
+- `stale:<pid>` when the PID is not observable;
+- `indeterminate:<pid>` when the PID appears to exist but the observer cannot authoritatively
+  signal it. Android ADB `run-as` may produce this state when SELinux denies `kill -0`.
+
+Only a proven `stale` marker may be cleared:
 
 ```sh
 "$current/bin/device-control" clear-stale
 ```
 
+`clear-stale` refuses both `live` and `indeterminate` states, and `start` requires `none`.
 There is no automatic stale-state deletion.
 
 ## Disk guard
