@@ -401,7 +401,19 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         self.assertNotIn("actions/workflows/fast-branch.yml/runs", discovery)
         self.assertNotIn("actions/runs/$run_id/jobs", discovery)
         self.assertNotIn("for _ in $(seq 1 60)", discovery)
-        self.assertNotIn("gh api", discovery)
+        # Exact-base classifier lookup + exact PR metadata/files are the only
+        # permitted read-only GitHub API calls in discovery. Remote workflow/job
+        # status polling remains forbidden as merge authority.
+        self.assertEqual(discovery.count("gh api "), 3)
+        self.assertIn(
+            'gh api "repos/$REPO/contents/.github/scripts/trusted-codeql-runtime-validation.py?ref=$BASE_SHA"',
+            discovery,
+        )
+        self.assertIn('gh api "repos/$REPO/pulls/$PR_NUMBER" > "$pr_json"', discovery)
+        self.assertIn(
+            'gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100&page=$page"',
+            discovery,
+        )
         # Retain independent early feedback, but never use its push run for PR authority.
         fast = (MODULE_PATH.parents[1] / "workflows" / "fast-branch.yml").read_text(encoding="utf-8")
         self.assertIn("  push:", fast)
@@ -419,7 +431,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for name in (
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
             "jberet-clean-qualification", "jberet-crash-qualification",
-            "pr4-semantic-qualification", "repository-governance-policy",
+            "pr4-semantic-qualification", "repository-governance-policy", "codeql-runtime",
         ):
             with self.subTest(name=name):
                 self.assertIn(f"      - {name}\n", gate)
@@ -439,7 +451,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         }
         names = {
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
-            *scoped,
+            "codeql-runtime", *scoped,
         }
 
         def run(
@@ -450,14 +462,21 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             extra: str | None = None,
             event: str = "pull_request",
             draft: str = "false",
+            codeql_required: str = "false",
+            codeql_classification_outcome: str = "success",
         ) -> subprocess.CompletedProcess[str]:
             scope_values = {output: "false" for output in scoped.values()}
             scope_values.update(scopes or {})
+            scope_values["codeql_runtime_classification_outcome"] = codeql_classification_outcome
+            scope_values["codeql_runtime_required"] = codeql_required
             values = {name: {"result": "success"} for name in names}
             values["discover"]["outputs"] = scope_values
             for name, output in scoped.items():
                 enabled = scope_values.get(output)
                 values[name] = {"result": "success" if enabled == "true" else "skipped"}
+            values["codeql-runtime"] = {
+                "result": "success" if event == "pull_request" and codeql_required == "true" else "skipped"
+            }
             if event == "workflow_dispatch":
                 values["dependency-review"] = {"result": "skipped"}
             for name, result in (changes or {}).items():
@@ -476,6 +495,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for label, kwargs in (
             ("valid PR", {}),
             ("valid scoped PR", {"scopes": {"jberet_clean": "true", "governance": "true"}}),
+            ("valid CodeQL runtime PR", {"codeql_required": "true"}),
             ("valid manual", {"event": "workflow_dispatch"}),
         ):
             with self.subTest(label=label):
@@ -486,11 +506,25 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             ("missing shard", {"removed": "ci-shard"}),
             ("missing dependency", {"removed": "dependency-review"}),
             ("missing scoped authority", {"removed": "jberet-clean-qualification"}),
+            ("missing CodeQL runtime authority", {"removed": "codeql-runtime"}),
             ("unexpected extra", {"extra": "untrusted-observer"}),
             ("failed aggregate", {"changes": {"workloads-msrv": "failure"}}),
             ("failed supply-chain authority", {"changes": {"supply-chain": "failure"}}),
             ("skipped discovery", {"changes": {"discover": "skipped"}}),
             ("invalid scope classification", {"scopes": {"jberet_clean": "unknown"}}),
+            ("failed CodeQL classifier", {"codeql_classification_outcome": "failure"}),
+            ("unknown CodeQL selection", {"codeql_required": "unknown"}),
+            ("required CodeQL runtime skipped", {
+                "codeql_required": "true",
+                "changes": {"codeql-runtime": "skipped"},
+            }),
+            ("required CodeQL runtime failed", {
+                "codeql_required": "true",
+                "changes": {"codeql-runtime": "failure"},
+            }),
+            ("non-required CodeQL runtime ran", {
+                "changes": {"codeql-runtime": "success"},
+            }),
             ("applicable scoped failure", {
                 "scopes": {"jberet_clean": "true"},
                 "changes": {"jberet-clean-qualification": "failure"},
