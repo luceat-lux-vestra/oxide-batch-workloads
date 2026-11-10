@@ -15,6 +15,10 @@ SYSTEM_SH = shutil.which("sh")
 if SYSTEM_SH is None:
     raise RuntimeError("repository-side S10 asset tests require sh on PATH")
 SYSTEM_SH = str(Path(SYSTEM_SH).resolve())
+SYSTEM_PS = shutil.which("ps")
+if SYSTEM_PS is None:
+    raise RuntimeError("repository-side S10 asset tests require ps on PATH")
+SYSTEM_PS = str(Path(SYSTEM_PS).resolve())
 
 
 def write_executable(path: Path, body: str) -> None:
@@ -89,6 +93,10 @@ def test_static_contract() -> None:
     assert '"$sv_bin" up "$service_path"' not in control
     assert "clear-stale" in control
     assert "--pre-iteration-guard" in control
+    assert "indeterminate:%s" in control
+    assert "Operation not permitted" in control
+    assert "Permission denied" in control
+    assert "process absence is not proven" in control
     assert "BLOCK" in control and "ALLOW" in control
 
     guarded = (WORKLOAD_ROOT / "src" / "endurance" / "guarded_batch.rs").read_text(
@@ -287,6 +295,50 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
             env=lifecycle_env,
         )
         assert "controller_pid_state=none" in status.stdout
+
+        indeterminate_pid = "999999998"
+        fake_ps = fake_bin / "ps"
+        write_executable(
+            fake_ps,
+            f"#!{SYSTEM_SH}\n"
+            f'if [ "$1" = "-p" ] && [ "$2" = "{indeterminate_pid}" ]; then exit 0; fi\n'
+            f'exec "{SYSTEM_PS}" "$@"\n',
+        )
+        (state_root / "controller.pid").write_text(
+            f"{indeterminate_pid}\n",
+            encoding="utf-8",
+        )
+        indeterminate_env = lifecycle_env.copy()
+        indeterminate_env["PATH"] = (
+            str(fake_bin) + os.pathsep + indeterminate_env.get("PATH", "")
+        )
+
+        indeterminate_status = run(
+            [current / "bin" / "device-control", "status"],
+            env=indeterminate_env,
+        )
+        assert (
+            f"controller_pid_state=indeterminate:{indeterminate_pid}"
+            in indeterminate_status.stdout
+        )
+
+        indeterminate_start = run(
+            [current / "bin" / "device-control", "start"],
+            env=indeterminate_env,
+            expected=69,
+        )
+        assert "process ownership is not proven clear" in indeterminate_start.stderr
+
+        indeterminate_clear = run(
+            [current / "bin" / "device-control", "clear-stale"],
+            env=indeterminate_env,
+            expected=69,
+        )
+        assert "process absence is not proven" in indeterminate_clear.stderr
+        assert (state_root / "controller.pid").read_text(encoding="utf-8") == (
+            f"{indeterminate_pid}\n"
+        )
+        (state_root / "controller.pid").unlink()
 
 
 if __name__ == "__main__":
