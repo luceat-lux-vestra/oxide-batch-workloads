@@ -66,7 +66,7 @@ pid_state() {
       ;;
   esac
 
-  if probe_output=$((
+  if probe_output=$( (
     LC_ALL=C
     export LC_ALL
     kill -0 "$pid"
