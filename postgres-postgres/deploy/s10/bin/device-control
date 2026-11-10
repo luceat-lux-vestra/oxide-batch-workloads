@@ -45,6 +45,14 @@ load_campaign_config() {
   }
 }
 
+pid_visible_without_signal() {
+  pid="$1"
+  if [ -d "/proc/$pid" ]; then
+    return 0
+  fi
+  ps -p "$pid" >/dev/null 2>&1
+}
+
 pid_state() {
   if [ ! -e "$pid_file" ]; then
     printf 'none\n'
@@ -57,8 +65,25 @@ pid_state() {
       return 0
       ;;
   esac
-  if kill -0 "$pid" 2>/dev/null; then
+
+  if probe_output=$((
+    LC_ALL=C
+    export LC_ALL
+    kill -0 "$pid"
+  ) 2>&1); then
     printf 'live:%s\n' "$pid"
+    return 0
+  fi
+
+  case "$probe_output" in
+    *"Operation not permitted"*|*"Permission denied"*)
+      printf 'indeterminate:%s\n' "$pid"
+      return 0
+      ;;
+  esac
+
+  if pid_visible_without_signal "$pid"; then
+    printf 'indeterminate:%s\n' "$pid"
   else
     printf 'stale:%s\n' "$pid"
   fi
@@ -66,10 +91,18 @@ pid_state() {
 
 require_no_pid_state() {
   state=$(pid_state)
-  [ "$state" = "none" ] || {
-    echo "refusing start with controller pid state '$state'; inspect status and clear-stale explicitly" >&2
-    return 69
-  }
+  case "$state" in
+    none)
+      ;;
+    stale*)
+      echo "refusing start with controller pid state '$state'; inspect status and clear-stale explicitly" >&2
+      return 69
+      ;;
+    *)
+      echo "refusing start with controller pid state '$state'; process ownership is not proven clear" >&2
+      return 69
+      ;;
+  esac
 }
 
 validate_runtime() {
@@ -193,6 +226,10 @@ clear_stale() {
       ;;
     live:*)
       echo "refusing to clear live controller pid state '$state'" >&2
+      exit 69
+      ;;
+    indeterminate:*)
+      echo "refusing to clear indeterminate controller pid state '$state'; process absence is not proven" >&2
       exit 69
       ;;
     stale*)
