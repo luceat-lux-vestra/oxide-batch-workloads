@@ -43,6 +43,9 @@ jobs:
   # business logic.
   discover:
     name: discover
+    permissions:
+      contents: read
+      pull-requests: read # Fetch exact live PR metadata for CodeQL runtime classification.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     outputs:
@@ -53,6 +56,8 @@ jobs:
       jberet_crash: ${{ steps.qualification-scope.outputs.jberet_crash }}
       pr4_semantic: ${{ steps.qualification-scope.outputs.pr4_semantic }}
       governance: ${{ steps.qualification-scope.outputs.governance }}
+      codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}
+      codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,6 +67,63 @@ jobs:
 
       - name: Test PR qualification scope classifier
         run: python3 .github/scripts/test-detect-pr-qualification-scope.py
+
+      - name: Test selective CodeQL PR runtime adapter
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/trusted-codeql-runtime-validation.py self-test
+
+      - name: Verify selective CodeQL PR runtime contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/trusted-codeql-runtime-validation.py check-contract
+
+      - name: Classify selective CodeQL runtime from trusted base
+        id: codeql-runtime-scope
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          # Bootstrap: an absent trusted-base classifier must execute the actual probe.
+          echo 'required=true' >> "$GITHUB_OUTPUT"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::missing immutable PR base/head identity" >&2
+            exit 1
+          }
+          trusted=".trusted-base/.github/scripts/trusted-codeql-runtime-validation.py"
+          mkdir -p "$(dirname "$trusted")"
+          if ! gh api "repos/$REPO/contents/.github/scripts/trusted-codeql-runtime-validation.py?ref=$BASE_SHA" \
+            --jq '.content' | base64 --decode > "$trusted"; then
+            echo "Protected base predates the CodeQL classifier; requiring runtime."
+            exit 0
+          fi
+          test -s "$trusted"
+          pr_json="$RUNNER_TEMP/codeql-runtime-pr.json"
+          pages="$RUNNER_TEMP/codeql-runtime-pages"
+          files_json="$RUNNER_TEMP/codeql-runtime-files.json"
+          mkdir -p "$pages"
+          gh api "repos/$REPO/pulls/$PR_NUMBER" > "$pr_json"
+          complete=false
+          for page in $(seq 1 30); do
+            page_file="$pages/page-$(printf '%02d' "$page").json"
+            gh api "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100&page=$page" > "$page_file"
+            count="$(jq -er 'if type == "array" then length else error("invalid file page") end' "$page_file")"
+            if [ "$count" -lt 100 ]; then
+              complete=true
+              break
+            fi
+          done
+          [ "$complete" = true ] || { echo "::error::incomplete changed-file pagination" >&2; exit 1; }
+          jq -s '.' "$pages"/page-*.json > "$files_json"
+          python3 "$trusted" classify \
+            --pr-json "$pr_json" --files-json "$files_json" \
+            --repo "$REPO" --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --head-repo "$HEAD_REPO" --github-output "$GITHUB_OUTPUT"
 
       - name: Classify PR qualification scopes
         id: qualification-scope
@@ -648,6 +710,50 @@ jobs:
     if: ${{ needs.discover.outputs.governance == 'true' }}
     uses: $/.github/workflows/hardening-drift-audit-policy.yml
 
+  # Read-only compatibility probe selected for CodeQL implementation changes.
+  codeql-runtime:
+    name: codeql-runtime
+    needs: discover
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.discover.outputs.codeql_runtime_required == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 12
+    permissions:
+      contents: read # exact PR head source
+      pull-requests: read # PR metadata only, never trusted CodeQL artifact authority
+    steps:
+      - name: Check out exact PR head for CodeQL runtime
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify selective CodeQL runtime contract
+        run: |
+          python3 .github/scripts/trusted-codeql-runtime-validation.py self-test
+          python3 .github/scripts/trusted-codeql-runtime-validation.py check-contract
+
+      - name: Initialize PR-only CodeQL runtime
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: actions
+          build-mode: none
+
+      - name: Analyze PR-only CodeQL runtime without upload
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:actions
+          upload: never
+          output: ${{ runner.temp }}/pr-codeql-runtime
+
+      - name: Verify local PR-only CodeQL SARIF and reject promotion
+        env:
+          SARIF_DIR: ${{ runner.temp }}/pr-codeql-runtime
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 .github/scripts/trusted-codeql-runtime-validation.py verify \
+            --sarif-dir "$SARIF_DIR" --head "$HEAD_SHA"
+
   # All semantic authorities run in this PR DAG. CI/MSRV shard aggregates
   # enforce exact identity/full coverage; supply-chain independently verifies
   # canonical real-workload completeness before scanning every workload.
@@ -665,6 +771,7 @@ jobs:
       - jberet-crash-qualification
       - pr4-semantic-qualification
       - repository-governance-policy
+      - codeql-runtime
     if: always()
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -693,7 +800,7 @@ jobs:
               "pr4-semantic-qualification": scope_outputs.get("pr4_semantic"),
               "repository-governance-policy": scope_outputs.get("governance"),
           }
-          expected = always_required | {"dependency-review"} | set(scoped)
+          expected = always_required | {"dependency-review", "codeql-runtime"} | set(scoped)
           errors = []
           if set(needs) != expected:
               errors.append(f"unexpected/missing DAG jobs: expected={sorted(expected)}, observed={sorted(needs)}")
@@ -715,6 +822,22 @@ jobs:
                   errors.append(
                       f"{name}: scope={enabled}, expected {expected_result}, observed {result!r}"
                   )
+
+          # Require the trusted classifier and the selected CodeQL runtime result.
+          codeql_scope_outcome = scope_outputs.get("codeql_runtime_classification_outcome")
+          codeql_required = scope_outputs.get("codeql_runtime_required")
+          codeql_result = needs.get("codeql-runtime", {}).get("result")
+          if event == "pull_request":
+              if codeql_scope_outcome != "success":
+                  errors.append(f"codeql-runtime-scope: expected success, observed {codeql_scope_outcome!r}")
+              if codeql_required not in {"true", "false"}:
+                  errors.append(f"codeql-runtime: invalid selection {codeql_required!r}")
+              else:
+                  expected_codeql = "success" if codeql_required == "true" else "skipped"
+                  if codeql_result != expected_codeql:
+                      errors.append(f"codeql-runtime: expected {expected_codeql}, observed {codeql_result!r}")
+          elif codeql_result != "skipped":
+              errors.append(f"codeql-runtime: expected skipped outside PR, observed {codeql_result!r}")
 
           dependency_result = needs.get("dependency-review", {}).get("result")
           expected_dependency = "success" if event == "pull_request" else "skipped"
