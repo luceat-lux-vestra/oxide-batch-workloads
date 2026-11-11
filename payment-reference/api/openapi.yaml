@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: OxideBatch Payment Reference Canonical API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
     Provider-neutral Merchant -> Gateway contract. Kill Bill, Hyperswitch and
     PG-native request/response shapes are intentionally excluded.
@@ -10,100 +10,62 @@ paths:
     post:
       operationId: authorizePayment
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PaymentMutation'
+        $ref: '#/components/requestBodies/PaymentMutation'
       responses:
-        '200':
-          description: Canonical payment state after authorization processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '202': { $ref: '#/components/responses/PaymentView' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /payments/auth-capture:
     post:
       operationId: authCapturePayment
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PaymentMutation'
+        $ref: '#/components/requestBodies/PaymentMutation'
       responses:
-        '200':
-          description: Canonical payment state after auth-capture processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '202': { $ref: '#/components/responses/PaymentView' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /payments/{paymentId}/capture:
     post:
       operationId: capturePayment
       parameters:
         - $ref: '#/components/parameters/PaymentId'
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PaymentMutation'
+        $ref: '#/components/requestBodies/PaymentMutation'
       responses:
-        '200':
-          description: Canonical payment state after capture processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '202': { $ref: '#/components/responses/PaymentView' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /payments/{paymentId}/cancel:
     post:
       operationId: cancelPayment
       parameters:
         - $ref: '#/components/parameters/PaymentId'
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PaymentMutation'
+        $ref: '#/components/requestBodies/PaymentMutation'
       responses:
-        '200':
-          description: Canonical payment state after cancellation processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '202': { $ref: '#/components/responses/PaymentView' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /payments/{paymentId}/refund:
     post:
       operationId: refundPayment
       parameters:
         - $ref: '#/components/parameters/PaymentId'
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PaymentMutation'
+        $ref: '#/components/requestBodies/PaymentMutation'
       responses:
-        '200':
-          description: Canonical payment state after refund processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '202': { $ref: '#/components/responses/PaymentView' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /payments/{paymentId}:
     get:
       operationId: getPayment
       parameters:
         - $ref: '#/components/parameters/PaymentId'
       responses:
-        '200':
-          description: Current canonical payment view.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaymentView'
+        '200': { $ref: '#/components/responses/PaymentView' }
+        '404':
+          description: Payment is not known to the Gateway.
 components:
   parameters:
     PaymentId:
@@ -113,6 +75,24 @@ components:
       schema:
         type: string
         minLength: 1
+  requestBodies:
+    PaymentMutation:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaymentMutation'
+  responses:
+    PaymentView:
+      description: >-
+        Canonical payment state. A newly accepted mutation may remain
+        PAYMENT_PENDING/PENDING until the Billing integration checkpoint.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PaymentView'
+    Conflict:
+      description: Idempotency key or operation identity conflicts with a prior mutation.
   schemas:
     PaymentMutation:
       type: object
@@ -136,6 +116,25 @@ components:
           type: [string, 'null']
           description: Required by authorize/auth-capture, omitted for later operations.
         idempotencyKey: { type: string, minLength: 1 }
+        requestedAt:
+          type: [string, 'null']
+          description: Optional caller timestamp; excluded from idempotency equivalence.
+    ExternalPaymentMapping:
+      type: object
+      additionalProperties: false
+      required:
+        - merchantPaymentId
+        - gatewayOperationId
+      properties:
+        merchantPaymentId: { type: string }
+        gatewayOperationId: { type: string }
+        killbillPaymentId: { type: [string, 'null'] }
+        killbillTransactionId: { type: [string, 'null'] }
+        hyperswitchPaymentId: { type: [string, 'null'] }
+        hyperswitchAttemptId: { type: [string, 'null'] }
+        providerPaymentId: { type: [string, 'null'] }
+        providerOperationId: { type: [string, 'null'] }
+        providerIdempotencyKey: { type: [string, 'null'] }
     PaymentView:
       type: object
       additionalProperties: false
@@ -143,6 +142,7 @@ components:
         - merchantPaymentId
         - paymentState
         - lastOperationState
+        - mapping
       properties:
         merchantPaymentId: { type: string }
         paymentState:
@@ -167,3 +167,5 @@ components:
             - UNKNOWN
             - RETRY_PENDING
             - MANUAL_REVIEW
+        mapping:
+          $ref: '#/components/schemas/ExternalPaymentMapping'

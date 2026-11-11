@@ -19,9 +19,32 @@ Deterministic Customer Scenario
   -> payment-sandbox
 ```
 
-The first scaffold intentionally contains only repository-owned contracts and
-service boundaries. Third-party deployment pins and adapters arrive in later
-bounded checkpoints.
+## Current implementation boundary
+
+The Merchant and Gateway are now real HTTP/PostgreSQL processes, but the
+Billing/Phub/PG path is intentionally not wired yet.
+
+- Merchant owns customer/order/payment business truth.
+- Gateway owns canonical mutation validation and durable idempotency identity.
+- A newly accepted Gateway mutation is persisted as
+  `PAYMENT_PENDING / PENDING`.
+- Replaying the same idempotency key with the same canonical mutation returns
+  the retained operation.
+- Reusing the same key for a conflicting mutation returns HTTP 409.
+- Kill Bill/Hyperswitch/provider IDs are nullable until the next integration
+  checkpoints populate them.
+
+Runtime configuration:
+
+```text
+MERCHANT_DATABASE_URL
+MERCHANT_BIND=127.0.0.1:8081
+
+GATEWAY_DATABASE_URL
+GATEWAY_BIND=127.0.0.1:8080
+```
+
+Both processes run embedded SQLx migrations on startup.
 
 ## Non-negotiable boundaries
 
@@ -36,18 +59,17 @@ bounded checkpoints.
 - External OSS is consumed as pinned artifacts, never Git submodules.
 - No real PAN/CVV or live PSP credential belongs in this system.
 
-## Current scaffold
+## Project layout
 
 - `api/openapi.yaml` — canonical Merchant -> Gateway HTTP surface.
 - `crates/payment-contract/` — provider-neutral domain and identity contract.
-- `merchant/` — reference Merchant process boundary.
-- `gateway/` — thin Gateway/UPP process boundary.
+- `merchant/` — reference Merchant HTTP process and PostgreSQL schema.
+- `gateway/` — thin Gateway/UPP HTTP process and durable idempotency schema.
 - `scenarios/v1/` — deterministic scenario identity contract.
 
-## Deferred from this candidate HEAD
+## Deferred from this checkpoint
 
-- Merchant PostgreSQL persistence and migrations.
-- HTTP server implementation.
+- Merchant -> Gateway HTTP client orchestration.
 - Kill Bill/Hyperswitch/payment-sandbox deployment pins.
 - Kill Bill <-> Hyperswitch bridge qualification in executable tests.
 - Hyperswitch -> payment-sandbox connector.

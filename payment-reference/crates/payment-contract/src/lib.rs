@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Currency(String);
 
@@ -48,7 +50,20 @@ pub enum PaymentOperationKind {
     Refund,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl PaymentOperationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Authorize => "AUTHORIZE",
+            Self::AuthCapture => "AUTH_CAPTURE",
+            Self::Capture => "CAPTURE",
+            Self::Cancel => "CANCEL",
+            Self::Refund => "REFUND",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PaymentState {
     Created,
     PaymentPending,
@@ -62,7 +77,8 @@ pub enum PaymentState {
     PaymentUnknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperationState {
     Pending,
     Succeeded,
@@ -70,6 +86,42 @@ pub enum OperationState {
     Unknown,
     RetryPending,
     ManualReview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentMutationRequest {
+    pub merchant_id: String,
+    pub merchant_order_id: String,
+    pub merchant_payment_id: String,
+    pub operation_id: String,
+    pub amount_minor: i64,
+    pub currency: String,
+    pub payment_method_token: Option<String>,
+    pub idempotency_key: String,
+    pub requested_at: Option<String>,
+}
+
+impl PaymentMutationRequest {
+    pub fn into_canonical(
+        self,
+        operation: PaymentOperationKind,
+    ) -> Result<CanonicalMutation, ContractError> {
+        let money = Money::new(self.amount_minor, Currency::parse(self.currency)?)?;
+        let mutation = CanonicalMutation {
+            merchant_id: self.merchant_id,
+            merchant_order_id: self.merchant_order_id,
+            merchant_payment_id: self.merchant_payment_id,
+            operation_id: self.operation_id,
+            operation,
+            money,
+            payment_method_token: self.payment_method_token,
+            idempotency_key: self.idempotency_key,
+            requested_at: self.requested_at,
+        };
+        mutation.validate()?;
+        Ok(mutation)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +134,7 @@ pub struct CanonicalMutation {
     pub money: Money,
     pub payment_method_token: Option<String>,
     pub idempotency_key: String,
+    pub requested_at: Option<String>,
 }
 
 impl CanonicalMutation {
@@ -106,8 +159,8 @@ impl CanonicalMutation {
     }
 
     /// Idempotent replay is safe only when the same key refers to the same
-    /// canonical business mutation. Transport metadata and downstream IDs are
-    /// intentionally outside this comparison.
+    /// canonical business mutation. Request timing is transport metadata and is
+    /// intentionally excluded from the comparison.
     pub fn same_idempotent_mutation_as(&self, other: &Self) -> bool {
         self.idempotency_key == other.idempotency_key
             && self.merchant_id == other.merchant_id
@@ -120,7 +173,8 @@ impl CanonicalMutation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExternalPaymentMapping {
     pub merchant_payment_id: String,
     pub gateway_operation_id: String,
@@ -133,7 +187,8 @@ pub struct ExternalPaymentMapping {
     pub provider_idempotency_key: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanonicalPaymentView {
     pub merchant_payment_id: String,
     pub payment_state: PaymentState,
@@ -175,16 +230,17 @@ fn require_non_blank(field: &'static str, value: &str) -> Result<(), ContractErr
 mod tests {
     use super::*;
 
-    fn mutation(key: &str, amount_minor: i64) -> CanonicalMutation {
-        CanonicalMutation {
+    fn request(key: &str, amount_minor: i64) -> PaymentMutationRequest {
+        PaymentMutationRequest {
             merchant_id: "merchant-1".into(),
             merchant_order_id: "order-1".into(),
             merchant_payment_id: "payment-1".into(),
             operation_id: "operation-1".into(),
-            operation: PaymentOperationKind::Authorize,
-            money: Money::new(amount_minor, Currency::parse("KRW").unwrap()).unwrap(),
+            amount_minor,
+            currency: "KRW".into(),
             payment_method_token: Some("test-token-1".into()),
             idempotency_key: key.into(),
+            requested_at: Some("2026-11-12T00:00:00Z".into()),
         }
     }
 
@@ -205,24 +261,36 @@ mod tests {
 
     #[test]
     fn authorization_requires_payment_method_token() {
-        let mut request = mutation("idem-1", 10_000);
+        let mut request = request("idem-1", 10_000);
         request.payment_method_token = None;
         assert_eq!(
-            request.validate(),
+            request.into_canonical(PaymentOperationKind::Authorize),
             Err(ContractError::BlankField("payment_method_token"))
         );
     }
 
     #[test]
     fn same_idempotency_key_with_conflicting_amount_is_not_same_mutation() {
-        let original = mutation("idem-1", 10_000);
-        let conflict = mutation("idem-1", 20_000);
+        let original = request("idem-1", 10_000)
+            .into_canonical(PaymentOperationKind::Authorize)
+            .unwrap();
+        let conflict = request("idem-1", 20_000)
+            .into_canonical(PaymentOperationKind::Authorize)
+            .unwrap();
         assert!(!original.same_idempotent_mutation_as(&conflict));
     }
 
     #[test]
-    fn exact_replay_is_same_idempotent_mutation() {
-        let original = mutation("idem-1", 10_000);
-        assert!(original.same_idempotent_mutation_as(&original.clone()));
+    fn exact_replay_is_same_idempotent_mutation_even_when_request_time_differs() {
+        let original = request("idem-1", 10_000)
+            .into_canonical(PaymentOperationKind::Authorize)
+            .unwrap();
+        let mut replay_request = request("idem-1", 10_000);
+        replay_request.requested_at = Some("2026-11-12T00:00:03Z".into());
+        let replay = replay_request
+            .into_canonical(PaymentOperationKind::Authorize)
+            .unwrap();
+
+        assert!(original.same_idempotent_mutation_as(&replay));
     }
 }
