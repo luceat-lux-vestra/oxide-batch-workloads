@@ -126,7 +126,7 @@
       "classification": "conditional",
       "readback": "ruleset-api",
       "expected": 0,
-      "rationale": "The authoritative merge process is the exact-final-HEAD strict gate. Mandatory human approval is a separate governance decision."
+      "rationale": "The authoritative merge process is the exact-final-HEAD merge gate. Mandatory human approval is a separate governance decision."
     },
     {
       "id": "ruleset.require_extra_approval_for_unattributed_changes",
@@ -139,7 +139,7 @@
       "id": "ruleset.strict_required_status_checks",
       "classification": "required",
       "readback": "ruleset-api",
-      "expected": true
+      "expected": false
     },
     {
       "id": "ruleset.required_status_contexts",

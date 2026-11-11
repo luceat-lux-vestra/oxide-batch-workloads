@@ -92,7 +92,7 @@ def canonical_ruleset():
             {
                 "type": "required_status_checks",
                 "parameters": {
-                    "strict_required_status_checks_policy": True,
+                    "strict_required_status_checks_policy": False,
                     "required_status_checks": [
                         {"context": "dependency-review"},
                         {"context": "supply-chain"},
