@@ -296,14 +296,14 @@ fn stored_row_matches(
     let payment_method_token: Option<String> =
         row.try_get("payment_method_token").map_err(internal)?;
 
-    Ok(operation_id == mutation.operation_id
-        && merchant_id == mutation.merchant_id
-        && merchant_order_id == mutation.merchant_order_id
-        && merchant_payment_id == mutation.merchant_payment_id
+    Ok(operation_id == mutation.operation_id.as_str()
+        && merchant_id == mutation.merchant_id.as_str()
+        && merchant_order_id == mutation.merchant_order_id.as_str()
+        && merchant_payment_id == mutation.merchant_payment_id.as_str()
         && operation_kind == mutation.operation.as_str()
         && amount_minor == mutation.money.amount_minor
         && currency == mutation.money.currency.as_str()
-        && payment_method_token == mutation.payment_method_token)
+        && payment_method_token.as_deref() == mutation.payment_method_token.as_deref())
 }
 
 fn view_from_row(row: &sqlx::postgres::PgRow) -> Result<CanonicalPaymentView, ApiError> {
