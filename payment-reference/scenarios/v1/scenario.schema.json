@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oxide-batch.dev/payment-reference/scenario-v1.schema.json",
+  "title": "Payment Reference Scenario v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenario_version",
+    "seed",
+    "logical_business_date",
+    "scenario_case",
+    "expected_outcome"
+  ],
+  "properties": {
+    "scenario_version": { "const": 1 },
+    "seed": { "type": "integer", "minimum": 0 },
+    "logical_business_date": { "type": "string", "format": "date" },
+    "scenario_case": { "type": "string", "minLength": 1 },
+    "expected_outcome": { "type": "string", "minLength": 1 }
+  }
+}

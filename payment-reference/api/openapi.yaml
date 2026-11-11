@@ -1,0 +1,169 @@
+openapi: 3.1.0
+info:
+  title: OxideBatch Payment Reference Canonical API
+  version: 0.1.0
+  description: >-
+    Provider-neutral Merchant -> Gateway contract. Kill Bill, Hyperswitch and
+    PG-native request/response shapes are intentionally excluded.
+paths:
+  /payments/authorize:
+    post:
+      operationId: authorizePayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutation'
+      responses:
+        '200':
+          description: Canonical payment state after authorization processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+  /payments/auth-capture:
+    post:
+      operationId: authCapturePayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutation'
+      responses:
+        '200':
+          description: Canonical payment state after auth-capture processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+  /payments/{paymentId}/capture:
+    post:
+      operationId: capturePayment
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutation'
+      responses:
+        '200':
+          description: Canonical payment state after capture processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+  /payments/{paymentId}/cancel:
+    post:
+      operationId: cancelPayment
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutation'
+      responses:
+        '200':
+          description: Canonical payment state after cancellation processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+  /payments/{paymentId}/refund:
+    post:
+      operationId: refundPayment
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMutation'
+      responses:
+        '200':
+          description: Canonical payment state after refund processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+  /payments/{paymentId}:
+    get:
+      operationId: getPayment
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Current canonical payment view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentView'
+components:
+  parameters:
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  schemas:
+    PaymentMutation:
+      type: object
+      additionalProperties: false
+      required:
+        - merchantId
+        - merchantOrderId
+        - merchantPaymentId
+        - operationId
+        - amountMinor
+        - currency
+        - idempotencyKey
+      properties:
+        merchantId: { type: string, minLength: 1 }
+        merchantOrderId: { type: string, minLength: 1 }
+        merchantPaymentId: { type: string, minLength: 1 }
+        operationId: { type: string, minLength: 1 }
+        amountMinor: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        paymentMethodToken:
+          type: [string, 'null']
+          description: Required by authorize/auth-capture, omitted for later operations.
+        idempotencyKey: { type: string, minLength: 1 }
+    PaymentView:
+      type: object
+      additionalProperties: false
+      required:
+        - merchantPaymentId
+        - paymentState
+        - lastOperationState
+      properties:
+        merchantPaymentId: { type: string }
+        paymentState:
+          type: string
+          enum:
+            - CREATED
+            - PAYMENT_PENDING
+            - AUTHORIZED
+            - PARTIALLY_CAPTURED
+            - PAID
+            - CANCELLED
+            - PARTIALLY_REFUNDED
+            - REFUNDED
+            - PAYMENT_FAILED
+            - PAYMENT_UNKNOWN
+        lastOperationState:
+          type: string
+          enum:
+            - PENDING
+            - SUCCEEDED
+            - FAILED
+            - UNKNOWN
+            - RETRY_PENDING
+            - MANUAL_REVIEW

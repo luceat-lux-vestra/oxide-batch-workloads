@@ -27,5 +27,10 @@
       }
     }
   ],
-  "reserved_top_level_cargo_projects": []
+  "reserved_top_level_cargo_projects": [
+    {
+      "path": "payment-reference",
+      "reason": "reference payment-system scaffold that creates external business state for later OxideBatch workloads; it is not itself an OxideBatch validation subject until an exact published OxideBatch consumer is activated"
+    }
+  ]
 }

@@ -1,0 +1,11 @@
+[package]
+name = "payment-reference-gateway"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+license = "Apache-2.0"
+description = "Thin canonical payment gateway for the OxideBatch payment-reference system"
+
+[dependencies]
+payment-reference-contract = { path = "../crates/payment-contract" }
