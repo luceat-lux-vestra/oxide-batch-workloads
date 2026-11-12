@@ -1155,9 +1155,7 @@ mod tests {
 
     #[test]
     fn response_mapping_uses_exact_transaction_external_key_not_array_order() {
-        let payment = payment_fixture(
-            "AUTHORIZED",
-            vec![
+        let payment = payment_fixture(vec![
                 transaction_fixture("old-operation", "AUTHORIZE", "SUCCESS", "10.00"),
                 transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
                 transaction_fixture("later-operation", "CAPTURE", "PENDING", "1.00"),
@@ -1191,7 +1189,7 @@ mod tests {
     #[test]
     fn response_mapping_fails_closed_on_missing_or_duplicate_transaction_identity() {
         let missing: KillBillPayment =
-            serde_json::from_value(payment_fixture("AUTHORIZED", vec![])).unwrap();
+            serde_json::from_value(payment_fixture(vec![])).unwrap();
         assert_eq!(
             map_payment_outcome(
                 &missing,
@@ -1206,9 +1204,7 @@ mod tests {
             KillBillClientErrorKind::Invariant
         );
 
-        let duplicate: KillBillPayment = serde_json::from_value(payment_fixture(
-            "AUTHORIZED",
-            vec![
+        let duplicate: KillBillPayment = serde_json::from_value(payment_fixture(vec![
                 transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
                 transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
             ],
@@ -1231,9 +1227,7 @@ mod tests {
 
     #[test]
     fn unknown_transaction_maps_to_payment_unknown() {
-        let parsed: KillBillPayment = serde_json::from_value(payment_fixture(
-            "UNKNOWN",
-            vec![transaction_fixture(
+        let parsed: KillBillPayment = serde_json::from_value(payment_fixture(vec![transaction_fixture(
                 "expected-operation",
                 "AUTHORIZE",
                 "UNKNOWN",
@@ -1260,8 +1254,8 @@ mod tests {
             "accountId": ACCOUNT_ID,
             "paymentId": PAYMENT_ID,
             "paymentExternalKey": "expected-payment",
-            "authAmount": 10.00,
-            "capturedAmount": 4.00,
+            "authAmount": number("10.00"),
+            "capturedAmount": number("4.00"),
             "purchasedAmount": 0,
             "refundedAmount": 0,
             "currency": "USD",
@@ -1287,10 +1281,10 @@ mod tests {
             "accountId": ACCOUNT_ID,
             "paymentId": PAYMENT_ID,
             "paymentExternalKey": "expected-payment",
-            "authAmount": 10.00,
-            "capturedAmount": 10.00,
+            "authAmount": number("10.00"),
+            "capturedAmount": number("10.00"),
             "purchasedAmount": 0,
-            "refundedAmount": 3.00,
+            "refundedAmount": number("3.00"),
             "currency": "USD",
             "paymentMethodId": PAYMENT_METHOD_ID,
             "transactions": [transaction_fixture("refund-op", "REFUND", "SUCCESS", "3.00")]
@@ -1461,9 +1455,7 @@ mod tests {
 
     async fn return_payment(Path(payment_id): Path<String>) -> Json<Value> {
         assert_eq!(payment_id, PAYMENT_ID);
-        Json(payment_fixture(
-            "SUCCESS",
-            vec![transaction_fixture(
+        Json(payment_fixture(vec![transaction_fixture(
                 "expected-operation",
                 "AUTHORIZE",
                 "SUCCESS",
@@ -1486,12 +1478,12 @@ mod tests {
         .unwrap()
     }
 
-    fn payment_fixture(_status: &str, transactions: Vec<Value>) -> Value {
+    fn payment_fixture(transactions: Vec<Value>) -> Value {
         json!({
             "accountId": ACCOUNT_ID,
             "paymentId": PAYMENT_ID,
             "paymentExternalKey": "expected-payment",
-            "authAmount": 12.34,
+            "authAmount": number("12.34"),
             "capturedAmount": 0,
             "purchasedAmount": 0,
             "refundedAmount": 0,
@@ -1499,6 +1491,10 @@ mod tests {
             "paymentMethodId": PAYMENT_METHOD_ID,
             "transactions": transactions
         })
+    }
+
+    fn number(value: &str) -> Number {
+        serde_json::from_str(value).unwrap()
     }
 
     fn transaction_fixture(
@@ -1514,9 +1510,9 @@ mod tests {
             "paymentExternalKey": "expected-payment",
             "transactionType": transaction_type,
             "status": status,
-            "amount": serde_json::from_str::<Number>(amount).unwrap(),
+            "amount": number(amount),
             "currency": "USD",
-            "processedAmount": serde_json::from_str::<Number>(amount).unwrap(),
+            "processedAmount": number(amount),
             "processedCurrency": "USD",
             "gatewayErrorCode": null,
             "gatewayErrorMsg": null,
