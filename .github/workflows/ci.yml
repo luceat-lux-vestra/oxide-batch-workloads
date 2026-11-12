@@ -777,8 +777,8 @@ jobs:
           cache: maven
           cache-dependency-path: payment-reference/adapters/killbill-payment-sandbox/pom.xml
 
-      - name: Validate payment-reference Java adapter core
-        run: mvn -B -ntp -f payment-reference/adapters/killbill-payment-sandbox/pom.xml test
+      - name: Validate payment-reference Kill Bill bundle
+        run: mvn -B -ntp -f payment-reference/adapters/killbill-payment-sandbox/pom.xml verify
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
