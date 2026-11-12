@@ -187,7 +187,7 @@ async fn process_initial_mutation(
         .into_canonical(operation)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
 
-    let inserted = insert_mutation(&state.pool, &mutation).await?;
+    insert_mutation(&state.pool, &mutation).await?;
 
     // The canonical row is committed before any external side effect. The row
     // lock then serializes exact concurrent replays while an external request is
@@ -212,40 +212,39 @@ async fn process_initial_mutation(
     let payment_key = payment_external_key(&mutation.merchant_id, &mutation.merchant_payment_id);
     let transaction_key = transaction_external_key(&mutation.merchant_id, &mutation.operation_id);
 
-    // Any request that did not create the canonical row itself may be a replay
-    // after a process crash or an ambiguous Kill Bill response. It must prove
-    // absence through the deterministic payment key before another mutation.
-    if !inserted {
-        match inquiry_initial_outcome(
-            &state.killbill,
-            &payment_key,
-            &transaction_key,
-            &mutation,
-        )
-        .await
-        {
-            Ok(Some(outcome)) => {
-                persist_initial_outcome(&mut tx, &mutation.operation_id, &outcome).await?;
-                return commit_initial_view(tx, &mutation.operation_id).await;
-            }
-            Ok(None) => {
-                // Absence was observed. This replay may proceed to a single
-                // deterministic mutation while holding the canonical row lock.
-            }
-            Err(error) => {
-                log_killbill_error("initial replay inquiry failed", &error);
-                persist_initial_state(
-                    &mut tx,
-                    &mutation.operation_id,
-                    PaymentState::PaymentUnknown,
-                    OperationState::Unknown,
-                )
-                .await?;
-                tx.commit().await.map_err(internal)?;
-                return Err(ApiError::Upstream(
-                    "Kill Bill inquiry failed; retry with the same idempotency key".into(),
-                ));
-            }
+    // Always inquire before the initial mutation, including the request that
+    // first inserted the canonical row. This closes the crash/concurrency gap
+    // where another exact replay could have held the row lock, committed a Kill
+    // Bill side effect, and crashed before persisting the Kill Bill IDs.
+    match inquiry_initial_outcome(
+        &state.killbill,
+        &payment_key,
+        &transaction_key,
+        &mutation,
+    )
+    .await
+    {
+        Ok(Some(outcome)) => {
+            persist_initial_outcome(&mut tx, &mutation.operation_id, &outcome).await?;
+            return commit_initial_view(tx, &mutation.operation_id).await;
+        }
+        Ok(None) => {
+            // Absence was observed while this request owns the canonical row
+            // lock. Exactly one deterministic mutation may now be dispatched.
+        }
+        Err(error) => {
+            log_killbill_error("initial pre-dispatch inquiry failed", &error);
+            persist_initial_state(
+                &mut tx,
+                &mutation.operation_id,
+                PaymentState::PaymentUnknown,
+                OperationState::Unknown,
+            )
+            .await?;
+            tx.commit().await.map_err(internal)?;
+            return Err(ApiError::Upstream(
+                "Kill Bill inquiry failed; retry with the same idempotency key".into(),
+            ));
         }
     }
 
