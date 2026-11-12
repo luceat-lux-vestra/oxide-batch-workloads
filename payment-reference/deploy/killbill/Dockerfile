@@ -13,5 +13,4 @@ COPY --from=plugin-build /src/target/killbill-payment-sandbox-plugin-0.1.0-SNAPS
 RUN "$KPM_INSTALL_DIR/kpm-latest/kpm" install_java_plugin payment-sandbox \
       --from-source-file=/tmp/killbill-payment-sandbox-plugin-0.1.0-SNAPSHOT.jar \
       --version=0.1.0-SNAPSHOT \
-      --destination="$KILLBILL_INSTALL_DIR/bundles" \
-    && rm -f /tmp/killbill-payment-sandbox-plugin-0.1.0-SNAPSHOT.jar
+      --destination="$KILLBILL_INSTALL_DIR/bundles"
