@@ -431,7 +431,8 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for name in (
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
             "jberet-clean-qualification", "jberet-crash-qualification",
-            "pr4-semantic-qualification", "repository-governance-policy", "reserved-cargo-ci", "codeql-runtime",
+            "pr4-semantic-qualification", "repository-governance-policy", "payment-reference-runtime",
+            "reserved-cargo-ci", "codeql-runtime",
         ):
             with self.subTest(name=name):
                 self.assertIn(f"      - {name}\n", gate)
@@ -448,6 +449,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             "jberet-crash-qualification": "jberet_crash",
             "pr4-semantic-qualification": "pr4_semantic",
             "repository-governance-policy": "governance",
+            "payment-reference-runtime": "payment_reference_runtime",
         }
         names = {
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
@@ -495,6 +497,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for label, kwargs in (
             ("valid PR", {}),
             ("valid scoped PR", {"scopes": {"jberet_clean": "true", "governance": "true"}}),
+            ("valid payment runtime PR", {"scopes": {"payment_reference_runtime": "true"}}),
             ("valid CodeQL runtime PR", {"codeql_required": "true"}),
             ("valid manual", {"event": "workflow_dispatch"}),
         ):
@@ -508,6 +511,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             ("missing reserved Cargo authority", {"removed": "reserved-cargo-ci"}),
             ("missing scoped authority", {"removed": "jberet-clean-qualification"}),
             ("missing CodeQL runtime authority", {"removed": "codeql-runtime"}),
+            ("missing payment runtime authority", {"removed": "payment-reference-runtime"}),
             ("unexpected extra", {"extra": "untrusted-observer"}),
             ("failed aggregate", {"changes": {"workloads-msrv": "failure"}}),
             ("failed supply-chain authority", {"changes": {"supply-chain": "failure"}}),
@@ -532,6 +536,10 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
             }),
             ("non-applicable scoped success", {
                 "changes": {"jberet-clean-qualification": "success"},
+            }),
+            ("applicable payment runtime failure", {
+                "scopes": {"payment_reference_runtime": "true"},
+                "changes": {"payment-reference-runtime": "failure"},
             }),
             ("skipped PR review", {"changes": {"dependency-review": "skipped"}}),
             ("manual claimed diff review", {"event": "workflow_dispatch",
