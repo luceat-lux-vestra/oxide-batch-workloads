@@ -95,11 +95,22 @@ def classify(paths: Iterable[str]) -> dict[str, bool]:
         or _workflow_file(path)
     )
 
+    payment_reference_runtime = any_path(
+        lambda path: _under(path, "payment-reference/")
+        or path
+        in {
+            ".github/workflows/ci.yml",
+            ".github/scripts/detect-pr-qualification-scope.py",
+            ".github/scripts/test-detect-pr-qualification-scope.py",
+        }
+    )
+
     return {
         "jberet_clean": jberet_clean,
         "jberet_crash": jberet_crash,
         "pr4_semantic": pr4_semantic,
         "governance": governance,
+        "payment_reference_runtime": payment_reference_runtime,
     }
 
 

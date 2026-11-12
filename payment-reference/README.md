@@ -25,8 +25,9 @@ deferred interoperability lane, not a v1 runtime dependency.
 ## Current implementation boundary
 
 The Merchant and Gateway are real HTTP/PostgreSQL processes. The repository-owned
-Kill Bill payment plugin is now implemented as an OSGi bundle candidate, but a
-live Kill Bill/Compose topology is intentionally not wired yet.
+Kill Bill payment plugin is validated as an OSGi bundle and the bounded
+Kill Bill -> payment-sandbox runtime topology is now defined under `deploy/`.
+Merchant/Gateway -> Kill Bill orchestration remains deferred.
 
 - Merchant owns customer/order/payment business truth.
 - Gateway owns canonical mutation validation and durable idempotency identity.
@@ -92,8 +93,8 @@ Both processes run embedded SQLx migrations on startup.
 ## Deferred from this checkpoint
 
 - Merchant -> Gateway HTTP client orchestration.
-- authoritative Maven/bundle CI for the new Kill Bill binding.
-- full runnable Compose topology.
+- authoritative runtime smoke evidence for the new Compose topology.
+- Merchant/Gateway -> Kill Bill orchestration.
 - end-to-end payment lifecycle.
 - broader deterministic fault matrix and webhook matrix.
 - Hyperswitch interoperability lane.

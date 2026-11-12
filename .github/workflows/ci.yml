@@ -56,6 +56,7 @@ jobs:
       jberet_crash: ${{ steps.qualification-scope.outputs.jberet_crash }}
       pr4_semantic: ${{ steps.qualification-scope.outputs.pr4_semantic }}
       governance: ${{ steps.qualification-scope.outputs.governance }}
+      payment_reference_runtime: ${{ steps.qualification-scope.outputs.payment_reference_runtime }}
       codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}
       codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}
     steps:
@@ -141,6 +142,7 @@ jobs:
               echo "jberet_crash=$value"
               echo "pr4_semantic=$value"
               echo "governance=$value"
+              echo "payment_reference_runtime=$value"
             } >> "$GITHUB_OUTPUT"
           }
 
@@ -710,6 +712,30 @@ jobs:
     if: ${{ needs.discover.outputs.governance == 'true' }}
     uses: $/.github/workflows/hardening-drift-audit-policy.yml
 
+  payment-reference-runtime:
+    name: Payment reference runtime
+    needs: discover
+    if: ${{ needs.discover.outputs.payment_reference_runtime == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate payment-reference Compose model
+        run: docker compose -f payment-reference/deploy/compose.yaml config --quiet
+
+      - name: Run payment-reference runtime smoke
+        run: bash payment-reference/deploy/smoke.sh
+
+      - name: Tear down payment-reference runtime
+        if: always()
+        run: docker compose -f payment-reference/deploy/compose.yaml down -v --remove-orphans
+
   # Read-only compatibility probe selected for CodeQL implementation changes.
   codeql-runtime:
     name: codeql-runtime
@@ -821,6 +847,7 @@ jobs:
       - jberet-crash-qualification
       - pr4-semantic-qualification
       - repository-governance-policy
+      - payment-reference-runtime
       - codeql-runtime
     if: always()
     runs-on: ubuntu-24.04-arm
@@ -850,6 +877,7 @@ jobs:
               "jberet-crash-qualification": scope_outputs.get("jberet_crash"),
               "pr4-semantic-qualification": scope_outputs.get("pr4_semantic"),
               "repository-governance-policy": scope_outputs.get("governance"),
+              "payment-reference-runtime": scope_outputs.get("payment_reference_runtime"),
           }
           expected = always_required | {"dependency-review", "codeql-runtime"} | set(scoped)
           errors = []

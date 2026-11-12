@@ -1,0 +1,66 @@
+name: oxide-payment-reference
+
+services:
+  killbill-db:
+    build:
+      context: ../..
+      dockerfile: payment-reference/deploy/killbill-db/Dockerfile
+    environment:
+      POSTGRES_DB: killbill
+      POSTGRES_USER: killbill
+      POSTGRES_PASSWORD: killbill
+    volumes:
+      - killbill-db:/var/lib/postgresql/data
+    networks:
+      - payment-reference
+
+  payment-sandbox:
+    build:
+      context: ./payment-sandbox
+      args:
+        PAYMENT_SANDBOX_VERSION: "1.5.4"
+    environment:
+      PAYMENT_SANDBOX_HTTP_ADDRESS: ":8080"
+      PAYMENT_SANDBOX_LOG_FORMAT: json
+      PAYMENT_SANDBOX_ADMIN_TOKEN: payment-reference-local-only
+    volumes:
+      - payment-sandbox-data:/var/lib/payment-sandbox
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 20
+    networks:
+      - payment-reference
+
+  killbill:
+    build:
+      context: ../..
+      dockerfile: payment-reference/deploy/killbill/Dockerfile
+    environment:
+      KILLBILL_DAO_URL: jdbc:postgresql://killbill-db:5432/killbill
+      KILLBILL_DAO_USER: killbill
+      KILLBILL_DAO_PASSWORD: killbill
+      KILLBILL_CATALOG_URI: SpyCarAdvanced.xml
+      KILLBILL_SERVER_TEST_MODE: "true"
+      KB_org_killbill_billing_plugin_paymentSandbox_baseUri: http://payment-sandbox:8080/
+    depends_on:
+      killbill-db:
+        condition: service_healthy
+      payment-sandbox:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${KILLBILL_PORT:-8080}:8080"
+    networks:
+      - payment-reference
+
+volumes:
+  killbill-db:
+  payment-sandbox-data:
+
+networks:
+  payment-reference:
+    driver: bridge

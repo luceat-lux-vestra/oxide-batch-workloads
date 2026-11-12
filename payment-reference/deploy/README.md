@@ -1,8 +1,9 @@
 # Third-party deployment pins
 
 This directory freezes the external component inputs selected or qualified for
-payment reference v1. It does not claim that the complete stack is runnable
-yet.
+payment reference v1 and contains the bounded Kill Bill -> payment-sandbox
+runtime topology. Merchant/Gateway orchestration is still outside this runtime
+checkpoint.
 
 The source of truth is `third-party.lock.json`.
 
@@ -25,17 +26,47 @@ The source of truth is `third-party.lock.json`.
 Floating `latest`, floating Git branches and unverified payment-sandbox
 downloads are forbidden.
 
-## Why there is no full compose file yet
+## Runtime topology
 
-Source qualification changed the v1 bridge decision.
+`compose.yaml` is intentionally bounded to:
 
-The first runnable Billing -> provider path will use a repository-owned thin
-Kill Bill `PaymentPluginApi` adapter directly against the pinned
-`payment-sandbox` HTTP API. See `bridge-qualification.md`.
+```text
+127.0.0.1:8080
+      |
+      v
+  Kill Bill 0.24.22
+      |
+      +-- JDBC --> PostgreSQL 18.6
+      |              + Kill Bill 0.24.22 DDL
+      |              + payment-sandbox plugin DDL
+      |
+      v
+repository-owned PaymentPluginApi
+      |
+      v
+payment-sandbox v1.5.4
+```
 
-A full Compose topology would be premature until that adapter has an executable,
-tested artifact. No separate Hyperswitch plugin fork is required for this
-checkpoint.
+PostgreSQL and payment-sandbox are not published to the host. The only default
+host listener is Kill Bill on loopback.
+
+The Kill Bill image is pinned to the qualified 0.24.22 image-index digest.
+The DB image remains the separately qualified `postgres:18.6-bookworm` input.
+Its Kill Bill schema is assembled from the exact 0.24.22 source commit; every
+downloaded DDL is verified against its Git blob SHA before it is admitted to the
+image.
+
+The plugin is built with `mvn verify` and installed into the Kill Bill bundle
+tree through KPM during the derived Kill Bill image build.
+
+Run the bounded smoke qualification with:
+
+```bash
+bash payment-reference/deploy/smoke.sh
+```
+
+The smoke requires Kill Bill health, payment-sandbox readiness and observable
+OSGi registration of `killbill-payment-sandbox`.
 
 Hyperswitch remains intentionally deferred. Reintroducing it later requires a
 specific interoperability claim and executable proof that the additional

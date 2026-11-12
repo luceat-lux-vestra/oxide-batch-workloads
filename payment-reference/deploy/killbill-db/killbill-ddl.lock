@@ -1,0 +1,13 @@
+# Kill Bill 0.24.22 source commit: 4f3fa45dbb044ed5d65cccebb0beadbc5d1b2899
+# git-blob-sha1 path
+f301016230ffcd60a25c3de902dbb017b3e25e64 util/src/main/resources/org/killbill/billing/util/ddl-postgresql.sql
+a41fbffcf9d78f62d490def85000e1656aa80c8d account/src/main/resources/org/killbill/billing/account/ddl.sql
+4b3cb4cfc08fba64a536353e9ff6c0df58fcc8a3 beatrix/src/main/resources/org/killbill/billing/beatrix/ddl.sql
+88f920807b2ec2ff0186e9453a8f706184f04ae7 catalog/src/main/resources/org/killbill/billing/catalog/ddl.sql
+5e9dd05ca4fff05085c7774c3c7dcb6f41c0a53f entitlement/src/main/resources/org/killbill/billing/entitlement/ddl.sql
+352ed5a2b10384aba9e6f5e7e8ca9fa1c15ea25c invoice/src/main/resources/org/killbill/billing/invoice/ddl.sql
+202da268f4f7e00e031f2885835be31c17f4b066 payment/src/main/resources/org/killbill/billing/payment/ddl.sql
+1bd569e9a4b5313452c572ed1958410ab0928fa5 subscription/src/main/resources/org/killbill/billing/subscription/ddl.sql
+0b1b84a32e07e648f5fbb47108bc60a854a0db11 tenant/src/main/resources/org/killbill/billing/tenant/ddl.sql
+ac51a4630454778e7ff97e722917153833215766 usage/src/main/resources/org/killbill/billing/usage/ddl.sql
+b02cb27ddccf5ca433c27650c2e0108b443b904d util/src/main/resources/org/killbill/billing/util/ddl.sql

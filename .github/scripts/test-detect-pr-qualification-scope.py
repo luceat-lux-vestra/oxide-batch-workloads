@@ -21,6 +21,7 @@ def expect(paths: list[str], **expected: bool) -> None:
         "jberet_crash": False,
         "pr4_semantic": False,
         "governance": False,
+        "payment_reference_runtime": False,
     }
     baseline.update(expected)
     assert actual == baseline, (paths, baseline, actual)
@@ -48,9 +49,17 @@ def main() -> int:
         pr4_semantic=True,
         governance=True,
     )
+    expect(
+        ["payment-reference/deploy/compose.yaml"],
+        payment_reference_runtime=True,
+    )
     expect(["workloads.json"], governance=True)
     expect([".github/ISSUE_TEMPLATE/config.yml"], governance=True)
-    expect([".github/workflows/ci.yml"], governance=True)
+    expect(
+        [".github/workflows/ci.yml"],
+        governance=True,
+        payment_reference_runtime=True,
+    )
     print("qualification scope classifier tests: PASS")
     return 0
 
