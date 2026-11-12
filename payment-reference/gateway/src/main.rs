@@ -527,7 +527,7 @@ fn find_payment_method(
 
     match matching.as_slice() {
         [] => Ok(None),
-        [method] => verify_payment_method(method.clone(), account_id, expected_external_key).map(Some),
+        [method] => verify_payment_method((*method).clone(), account_id, expected_external_key).map(Some),
         _ => Err(KillBillClientError::invariant(
             "duplicate Kill Bill payment methods for deterministic external key",
         )),
