@@ -1,36 +1,45 @@
 # Third-party deployment pins
 
-This directory freezes the external component inputs selected for payment
-reference v1. It does not claim that the complete stack is runnable yet.
+This directory freezes the external component inputs selected or qualified for
+payment reference v1. It does not claim that the complete stack is runnable
+yet.
 
 The source of truth is `third-party.lock.json`.
 
-## Current pins
+## Active v1 pins
 
 - Kill Bill 0.24.22.
-- Hyperswitch v1.129.0 standalone router.
 - payment-sandbox v1.5.4.
 - PostgreSQL 18.6.
-- Redis 7.4.12.
-- Card Vault v0.9.0 is recorded but deferred.
+
+## Qualified but deferred inputs
+
+- Hyperswitch v1.129.0 standalone router.
+- Redis 7.4.12 for a future Hyperswitch interoperability lane.
+- Card Vault v0.9.0.
+- `juspay/hyperswitch-killbill-plugin` source was qualified and rejected for
+  unchanged v1 use.
+- `deepanshu-iiitu/killbill-prism-plugin` was reviewed as an interoperability
+  candidate and is not selected for v1.
 
 Floating `latest`, floating Git branches and unverified payment-sandbox
 downloads are forbidden.
 
 ## Why there is no full compose file yet
 
-The Kill Bill -> Hyperswitch bridge did not pass source qualification unchanged.
-See `bridge-qualification.md`.
+Source qualification changed the v1 bridge decision.
 
-Publishing a compose file that points Kill Bill at an unqualified plugin would
-make the repository look runnable while the canonical AUTHORIZE/CAPTURE/etc.
-path is not yet trustworthy. The next bounded owner must create or select the
-narrow plugin fork, pin its built artifact, and only then wire the full
-container topology.
+The first runnable Billing -> provider path will use a repository-owned thin
+Kill Bill `PaymentPluginApi` adapter directly against the pinned
+`payment-sandbox` HTTP API. See `bridge-qualification.md`.
 
-Hyperswitch's selected release is also newer than the upstream Kill Bill
-plugin's Java client. Runtime compatibility must be demonstrated rather than
-assumed.
+A full Compose topology would be premature until that adapter has an executable,
+tested artifact. No separate Hyperswitch plugin fork is required for this
+checkpoint.
+
+Hyperswitch remains intentionally deferred. Reintroducing it later requires a
+specific interoperability claim and executable proof that the additional
+stateful layer adds validation value.
 
 ## payment-sandbox image
 
@@ -42,7 +51,7 @@ This deliberately avoids building an evolving upstream `main` checkout.
 
 ## Evidence rule
 
-Before any official campaign, resolve every container tag to the exact runtime
-image digest on the target registry/architecture and retain those digests in
-campaign provenance. A release tag is sufficient for development bootstrap but
-not for final evidence.
+Before any official campaign, resolve every container tag used by that campaign
+to the exact runtime image digest on the target registry/architecture and retain
+those digests in campaign provenance. A release tag is sufficient for
+development bootstrap but not for final evidence.

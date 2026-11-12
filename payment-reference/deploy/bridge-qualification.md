@@ -1,4 +1,4 @@
-# Kill Bill -> Hyperswitch bridge qualification
+# Kill Bill payment bridge qualification
 
 Owner: #256
 
@@ -8,13 +8,32 @@ Qualified upstream:
 - upstream commit: `11433a53e1d0e92c9216e43e5e31ac02f606f23d`
 - source POM version: `0.1.1`
 - last published release: `version-0.1.0`
+- upstream last commit observed: 2024-03-18
+
+Additional alternative reviewed:
+
+- repository: `deepanshu-iiitu/killbill-prism-plugin`
+- observed repository history: one `init` commit (`36962154...`, 2026-05-20)
 
 ## Result
 
-**FORK REQUIRED before runtime integration.**
+**DO NOT CREATE A SEPARATE FORK FOR v1.**
 
-The upstream plugin is useful as a base because it already implements the Kill
-Bill payment-plugin entry points required by the first reference slice:
+The upstream Hyperswitch plugin cannot be consumed unchanged, but maintaining a
+fork is not the smallest path to the #256 objective. Full Hyperswitch would
+also require a new Hyperswitch -> `payment-sandbox` connector, so the fork is
+only the first of two custom integration surfaces.
+
+For the first payment-reference slice, use a repository-owned thin Kill Bill
+payment adapter that talks directly to the pinned `payment-sandbox` HTTP API.
+
+This adapter is the v1 Phub/connector boundary. Hyperswitch remains a later
+interoperability lane and can be reintroduced after the first business workload
+has produced useful validation signal.
+
+## What the Hyperswitch plugin source actually shows
+
+The upstream plugin already contains Kill Bill entry points for:
 
 - AUTHORIZE;
 - CAPTURE;
@@ -23,78 +42,153 @@ Bill payment-plugin entry points required by the first reference slice:
 - REFUND;
 - payment-info refresh.
 
-It is not safe to consume unchanged for this reference system.
+It is nevertheless unsuitable unchanged.
 
-## Blocking gaps
+### Currency mapping
 
-### KRW is not supported
-
-The current `convertCurrency` implementation explicitly maps only:
+`convertCurrency` explicitly maps only:
 
 `USD, AUD, CAD, DKK, EUR, GBP, NZD, SEK`.
 
-The reference contract must support KRW, so silently returning `null` for KRW
-is unacceptable.
+The Hyperswitch Java client itself contains `KRW`; the missing piece is only
+the plugin's enum mapping. This is not foreign-exchange conversion.
 
-### Self-hosted Hyperswitch endpoint is not proven
+More importantly, #256 does not require KRW as a first-slice acceptance
+condition. The canonical contract requires an explicit currency, not a
+Korea-specific currency. v1 can use USD for deterministic fixtures and add KRW
+only when a Korea-specific scenario actually needs it.
 
-Configuration exposes an `environment` property, but
-`buildHyperswitchClient` / `buildHyperswitchRefundsClient` construct
-`HsApiClient` from only API-key material. The configured environment is not
-passed at those call sites.
+Therefore **KRW is not a v1 fork blocker**.
 
-The reference system requires an explicit base URL pointing at our pinned
-self-hosted Hyperswitch router. A fork must make the target endpoint
-configuration explicit and testable.
+### Self-hosted endpoint
 
-### Kill Bill identity persistence is suspicious in later operations
+`hyperswitch-java-client 0.0.4` defaults its base path to
+`https://sandbox.hyperswitch.io` and exposes `setBasePath(...)`.
 
-AUTHORIZE/PURCHASE persist the supplied Kill Bill payment and transaction IDs.
+The Kill Bill plugin constructs `HsApiClient` with only API-key material and
+never calls `setBasePath`. Its configured `environment` value is not applied
+to the client construction path.
 
-CAPTURE, VOID and REFUND currently call `addResponse` with
-`kbPaymentMethodId` in positions used by the earlier methods for payment /
-transaction identity. The fork must correct this and cover the mapping with
-tests. We must preserve:
+A self-hosted Hyperswitch deployment therefore requires source change or an
+equivalent adapter layer.
 
-`Kill Bill payment ID != payment-method ID != transaction ID`.
+### Kill Bill identity persistence
 
-### Payment refresh does not publish the refreshed view
+AUTHORIZE and PURCHASE persist the supplied Kill Bill payment and transaction
+IDs.
+
+CAPTURE, VOID and REFUND instead pass `kbPaymentMethodId` in positions used by
+the earlier operations for payment / transaction identity. That is not
+acceptable for a reference system whose reconciliation model explicitly keeps
+payment, transaction and payment-method identity separate.
+
+### PENDING refresh
 
 `getPaymentInfo` initializes `wasRefreshed = false`, performs refresh work
-for pending transactions, but does not set the flag to true. As written, the
-method returns the original transaction list instead of re-reading the updated
-state.
+for pending transactions, but never flips the flag. It can therefore return the
+pre-refresh list after updating storage.
 
-The fork must fix this before ambiguous-outcome convergence is trusted.
+### Webhook entry point
 
-### Webhook notification is not implemented
+`processNotification` returns `null`.
 
-`processNotification` returns `null`. That is insufficient for the later
-delayed/duplicate/out-of-order webhook scenarios.
+This matters for the later webhook matrix, but it is **not** a blocker for the
+first #256 happy path. #256 already allows delayed/duplicate/out-of-order/lost
+webhook coverage to move to the next bounded owner.
 
-The first online happy path may use explicit status retrieval, but the fork must
-retain a clear extension point for async notification handling.
+### Client age / compatibility
 
-### Client compatibility is old and must be proven
+The plugin depends on `hyperswitch-java-client 0.0.4`, generated in early
+2024. The selected router release is Hyperswitch v1.129.0.
 
-The upstream source uses `hyperswitch-java-client 0.0.4`. The selected
-Hyperswitch runtime is v1.129.0. Compatibility is not assumed.
+Compatibility would need executable proof before this path could be trusted.
 
-The fork must either:
+## Alternatives considered
 
-1. prove the old client against v1.129.0 for the exact required API surface; or
-2. update/replace the client while preserving the Kill Bill plugin contract.
+### 1. Narrow fork of `juspay/hyperswitch-killbill-plugin`
 
-## Fork acceptance
+Rejected for v1.
 
-The fork is acceptable for #256 only when automated tests prove:
+The code fixes themselves are small, but the resulting architecture still
+requires:
 
-- explicit self-hosted Hyperswitch base URL;
-- KRW conversion;
-- AUTHORIZE / CAPTURE / PURCHASE / VOID / REFUND;
-- correct Kill Bill payment/transaction/payment-method identity mapping;
-- PENDING refresh returns the refreshed state;
-- no production/cloud endpoint is reachable by default;
-- no real card data is required.
+1. maintaining the Kill Bill -> Hyperswitch fork;
+2. qualifying the old Java client against v1.129.0;
+3. running the stateful Hyperswitch router stack;
+4. implementing and maintaining a Hyperswitch -> `payment-sandbox` connector.
 
-Do not expand the fork into a general Kill Bill plugin cleanup project.
+That is too much integration ownership before OxideBatch has received any new
+business-workload validation signal.
+
+### 2. Pinned upstream + local patch overlay
+
+Technically viable and preferable to a permanent fork if full Hyperswitch is
+reintroduced later.
+
+It would allow a reproducible build from an exact upstream commit plus
+repository-owned patch digests. It does not, however, remove the second custom
+connector or the full-router runtime cost, so it is not selected for v1.
+
+### 3. `killbill-prism-plugin`
+
+Not selected for v1.
+
+The reviewed public repository is not an official Juspay/Kill Bill repository,
+has a single observed commit, and currently documents Stripe/Adyen only. Its
+Prism SDK is not available from the normal Maven Central path in the reviewed
+setup, requires a native Rust/JNA library build, and still has no
+`payment-sandbox` connector.
+
+It is an interesting future interoperability candidate, not a lower-risk first
+slice.
+
+### 4. Repository-owned Kill Bill -> `payment-sandbox` adapter
+
+**Selected for v1.**
+
+The pinned `payment-sandbox v1.5.4` API already supplies the exact business
+surface needed here:
+
+- caller-supplied payment identity;
+- authorize;
+- capture;
+- cancel;
+- refund;
+- status retrieval;
+- integer minor-unit money;
+- `Idempotency-Key` replay/conflict semantics;
+- correlation identity;
+- durable async work and deterministic failure scenarios.
+
+A thin Kill Bill `PaymentPluginApi` implementation can translate only the
+required v1 operations and keep provider-specific concerns below the canonical
+Merchant/Gateway contract.
+
+## v1 adapter acceptance
+
+The repository-owned adapter must prove:
+
+- AUTHORIZE;
+- CAPTURE;
+- PURCHASE / auth-capture semantics;
+- VOID / CANCEL;
+- REFUND;
+- GET / payment-info convergence;
+- distinct Kill Bill payment / transaction / payment-method identities;
+- deterministic provider identity mapping;
+- mutation-scoped idempotency with no duplicate provider side effect;
+- USD fixture support using integer minor units;
+- no real PAN/CVV or live PSP credential;
+- no public/cloud payment endpoint reachable by default.
+
+Webhook ingestion and Hyperswitch interoperability remain explicitly deferred.
+
+## Reintroduction rule for Hyperswitch
+
+Reconsider full Hyperswitch only after the direct reference path and first
+OxideBatch business workload are working.
+
+At that point, add a separate interoperability lane if the additional
+independent Phub state materially improves a concrete validation claim. Prefer
+an exact upstream commit plus bounded patch overlay before creating a permanent
+fork; create a fork only if the patch surface becomes durable product code.

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "qualified_on": "2026-11-12",
   "components": {
     "killbill": {
@@ -9,22 +9,6 @@
       "source_commit": "4f3fa45dbb044ed5d65cccebb0beadbc5d1b2899",
       "image": "killbill/killbill:0.24.22",
       "image_index_digest": "sha256:e135615bd14f8ff52d258a4b6a936b4cd0276e30a874a7e2c4690f7a1e28f7f1"
-    },
-    "hyperswitch": {
-      "decision": "ADOPT_WITH_RESTRICTIONS",
-      "release": "v1.129.0",
-      "source_commit": "cf913c5aaa226e102b257a81a3a53ac841bf45bd",
-      "image": "docker.juspay.io/juspaydotin/hyperswitch-router:v1.129.0-standalone",
-      "image_digest": null,
-      "digest_status": "capture from the target registry before an evidence campaign"
-    },
-    "hyperswitch_killbill_plugin": {
-      "decision": "FORK_REQUIRED",
-      "published_release": "0.1.0",
-      "published_tag_commit": "9ccf6395496c6636c931053c003953efdfee9a5c",
-      "qualified_upstream_commit": "11433a53e1d0e92c9216e43e5e31ac02f606f23d",
-      "qualified_upstream_version": "0.1.1-SOURCE",
-      "runtime_artifact": null
     },
     "payment_sandbox": {
       "decision": "ADOPT",
@@ -39,12 +23,38 @@
         "sha256": "d25f71d7575ac1ba102c9b79dd771daf0329ac323be1ec7f5dfa1d9aa64c5f7e"
       }
     },
+    "killbill_payment_sandbox_adapter": {
+      "decision": "BUILD_REPOSITORY_OWNED",
+      "scope": "thin v1 PaymentPluginApi adapter",
+      "runtime_artifact": null
+    },
+    "hyperswitch": {
+      "decision": "DEFER_INTEROP_LANE",
+      "qualified_release": "v1.129.0",
+      "source_commit": "cf913c5aaa226e102b257a81a3a53ac841bf45bd",
+      "qualified_image": "docker.juspay.io/juspaydotin/hyperswitch-router:v1.129.0-standalone",
+      "runtime_artifact": null
+    },
+    "hyperswitch_killbill_plugin": {
+      "decision": "REJECT_FOR_V1_NO_FORK",
+      "published_release": "0.1.0",
+      "published_tag_commit": "9ccf6395496c6636c931053c003953efdfee9a5c",
+      "qualified_upstream_commit": "11433a53e1d0e92c9216e43e5e31ac02f606f23d",
+      "qualified_upstream_version": "0.1.1-SOURCE",
+      "runtime_artifact": null
+    },
+    "killbill_prism_plugin": {
+      "decision": "DEFER_INTEROP_CANDIDATE",
+      "repository": "deepanshu-iiitu/killbill-prism-plugin",
+      "qualified_commit": "36962154fbaec55beab0a55d9eb6300efee318e7",
+      "runtime_artifact": null
+    },
     "postgres": {
       "decision": "PIN_FOR_REFERENCE_INFRA",
       "image": "postgres:18.6-bookworm"
     },
     "redis": {
-      "decision": "PIN_FOR_HYPERSWITCH",
+      "decision": "DEFER_WITH_HYPERSWITCH",
       "image": "redis:7.4.12-alpine"
     },
     "card_vault": {
