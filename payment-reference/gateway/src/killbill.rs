@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const CREATED_BY: &str = "oxide-batch-payment-reference-gateway";
-const PAYMENT_PLUGIN_NAME: &str = "killbill-payment-sandbox";
+pub const PAYMENT_PLUGIN_NAME: &str = "killbill-payment-sandbox";
 const ERROR_BODY_LIMIT: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +67,7 @@ impl KillBillClientError {
         }
     }
 
-    fn invariant(message: impl Into<String>) -> Self {
+    pub fn invariant(message: impl Into<String>) -> Self {
         Self::new(KillBillClientErrorKind::Invariant, message)
     }
 
