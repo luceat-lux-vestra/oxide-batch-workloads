@@ -10,7 +10,7 @@ import org.osgi.framework.BundleContext;
 
 public final class PaymentSandboxActivator extends KillbillActivatorBase {
     public static final String PLUGIN_NAME = "killbill-payment-sandbox";
-    public static final String BASE_URI_PROPERTY = "org.killbill.billing.plugin.payment-sandbox.baseUri";
+    public static final String BASE_URI_PROPERTY = "org.killbill.billing.plugin.paymentSandbox.baseUri";
 
     @Override
     public void start(BundleContext context) throws Exception {

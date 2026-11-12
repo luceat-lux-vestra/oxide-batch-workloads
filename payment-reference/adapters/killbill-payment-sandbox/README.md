@@ -78,7 +78,14 @@ client. They do not call an external PSP or payment-sandbox deployment.
 Kill Bill runtime configuration requires:
 
 ```text
-org.killbill.billing.plugin.payment-sandbox.baseUri=http://payment-sandbox:8080/
+org.killbill.billing.plugin.paymentSandbox.baseUri=http://payment-sandbox:8080/
 ```
 
 There is no implicit public provider endpoint.
+
+For Docker/Compose, the same property is supplied through Kill Bill's standard
+environment-variable bridge:
+
+```text
+KB_org_killbill_billing_plugin_paymentSandbox_baseUri=http://payment-sandbox:8080/
+```
