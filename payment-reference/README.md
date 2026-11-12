@@ -24,11 +24,18 @@ deferred interoperability lane, not a v1 runtime dependency.
 
 ## Current implementation boundary
 
-The Merchant and Gateway are now real HTTP/PostgreSQL processes, but the
-Billing/provider path is intentionally not wired yet.
+The Merchant and Gateway are real HTTP/PostgreSQL processes. The provider
+translation core now exists, but the Kill Bill runtime binding is intentionally
+not wired yet.
 
 - Merchant owns customer/order/payment business truth.
 - Gateway owns canonical mutation validation and durable idempotency identity.
+- `adapters/killbill-payment-sandbox` owns deterministic Kill Bill/provider
+  identity translation, mutation-scoped provider idempotency identities,
+  payment-sandbox v1.5.4 HTTP calls, provider-status mapping, and ambiguous
+  transport classification.
+- The actual Kill Bill `PaymentPluginApi` / OSGi registration and plugin DAO
+  persistence remain the next bounded integration checkpoint.
 - A newly accepted Gateway mutation is persisted as
   `PAYMENT_PENDING / PENDING`.
 - Replaying the same idempotency key with the same canonical mutation returns
@@ -73,11 +80,13 @@ Both processes run embedded SQLx migrations on startup.
 - `gateway/` — thin Gateway/UPP HTTP process and durable idempotency schema.
 - `scenarios/v1/` — deterministic scenario identity contract.
 - `deploy/` — exact third-party qualification/pinning and runtime inputs.
+- `adapters/killbill-payment-sandbox/` — Java 11/Maven payment-sandbox
+  translation core and focused HTTP/identity/idempotency contract tests.
 
 ## Deferred from this checkpoint
 
 - Merchant -> Gateway HTTP client orchestration.
-- repository-owned Kill Bill -> payment-sandbox adapter implementation.
+- Kill Bill `PaymentPluginApi` / OSGi binding and plugin DAO persistence.
 - full runnable Compose topology.
 - end-to-end payment lifecycle.
 - broader deterministic fault matrix and webhook matrix.

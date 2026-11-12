@@ -769,6 +769,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Java 11 for payment-reference adapter core
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: zulu
+          java-version: 11
+          cache: maven
+          cache-dependency-path: payment-reference/adapters/killbill-payment-sandbox/pom.xml
+
+      - name: Validate payment-reference Java adapter core
+        run: mvn -B -ntp -f payment-reference/adapters/killbill-payment-sandbox/pom.xml test
+
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
         with:
