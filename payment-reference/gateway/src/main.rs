@@ -14,7 +14,7 @@ use payment_reference_contract::{
 use payment_reference_gateway::killbill::{
     account_external_key, map_payment_outcome, payment_external_key,
     payment_method_external_key, transaction_external_key, KillBillAccount, KillBillClient,
-    KillBillClientConfig, KillBillClientError, KillBillCreateAccountRequest,
+    KillBillClientConfig, KillBillClientError, KillBillClientErrorKind, KillBillCreateAccountRequest,
     KillBillInitialTransactionType, KillBillMappedOutcome, KillBillMutation,
     KillBillPaymentMethod, PAYMENT_PLUGIN_NAME,
 };
@@ -205,12 +205,18 @@ async fn process_initial_mutation(
     let current_view = view_from_row(&row)?;
     if is_terminal_operation(current_view.last_operation_state) {
         validate_terminal_initial_mapping(&current_view)?;
+        let status = response_status(current_view.last_operation_state);
         tx.commit().await.map_err(internal)?;
-        return Ok((StatusCode::OK, Json(current_view)));
+        return Ok((status, Json(current_view)));
     }
 
     let payment_key = payment_external_key(&mutation.merchant_id, &mutation.merchant_payment_id);
     let transaction_key = transaction_external_key(&mutation.merchant_id, &mutation.operation_id);
+
+    // Different operation IDs for the same canonical payment use different DB
+    // rows. Serialize their initial side effects on the deterministic Kill Bill
+    // payment key so they cannot both observe absence and dispatch concurrently.
+    lock_initial_payment(&mut tx, &payment_key).await?;
 
     // Always inquire before the initial mutation, including the request that
     // first inserted the canonical row. This closes the crash/concurrency gap
@@ -231,6 +237,20 @@ async fn process_initial_mutation(
         Ok(None) => {
             // Absence was observed while this request owns the canonical row
             // lock. Exactly one deterministic mutation may now be dispatched.
+        }
+        Err(error) if error.kind == KillBillClientErrorKind::Invariant => {
+            log_killbill_error("initial pre-dispatch identity conflict", &error);
+            persist_initial_state(
+                &mut tx,
+                &mutation.operation_id,
+                PaymentState::PaymentUnknown,
+                OperationState::ManualReview,
+            )
+            .await?;
+            tx.commit().await.map_err(internal)?;
+            return Err(ApiError::Conflict(
+                "Kill Bill payment identity conflicts with the canonical operation".into(),
+            ));
         }
         Err(error) => {
             log_killbill_error("initial pre-dispatch inquiry failed", &error);
@@ -389,6 +409,16 @@ async fn recover_after_ambiguous_effect(
                 &mutation.operation_id,
                 PaymentState::PaymentUnknown,
                 OperationState::Unknown,
+            )
+            .await?;
+        }
+        Err(error) if error.kind == KillBillClientErrorKind::Invariant => {
+            log_killbill_error("Kill Bill ambiguous-effect identity conflict", &error);
+            persist_initial_state(
+                &mut tx,
+                &mutation.operation_id,
+                PaymentState::PaymentUnknown,
+                OperationState::ManualReview,
             )
             .await?;
         }
@@ -665,6 +695,18 @@ async fn load_operation_by_idempotency(
     })
 }
 
+async fn lock_initial_payment(
+    tx: &mut Transaction<'_, Postgres>,
+    payment_key: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(payment_key)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    Ok(())
+}
+
 async fn load_operation_for_update(
     tx: &mut Transaction<'_, Postgres>,
     idempotency_key: &str,
@@ -904,10 +946,12 @@ fn is_terminal_operation(state: OperationState) -> bool {
 }
 
 fn response_status(state: OperationState) -> StatusCode {
-    if matches!(state, OperationState::Succeeded | OperationState::Failed) {
-        StatusCode::OK
-    } else {
-        StatusCode::ACCEPTED
+    match state {
+        OperationState::Succeeded | OperationState::Failed => StatusCode::OK,
+        OperationState::ManualReview => StatusCode::CONFLICT,
+        OperationState::Pending | OperationState::Unknown | OperationState::RetryPending => {
+            StatusCode::ACCEPTED
+        }
     }
 }
 
@@ -1040,6 +1084,10 @@ mod tests {
         assert_eq!(
             response_status(OperationState::RetryPending),
             StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            response_status(OperationState::ManualReview),
+            StatusCode::CONFLICT
         );
     }
 
