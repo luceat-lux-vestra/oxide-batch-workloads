@@ -1156,11 +1156,10 @@ mod tests {
     #[test]
     fn response_mapping_uses_exact_transaction_external_key_not_array_order() {
         let payment = payment_fixture(vec![
-                transaction_fixture("old-operation", "AUTHORIZE", "SUCCESS", "10.00"),
-                transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
-                transaction_fixture("later-operation", "CAPTURE", "PENDING", "1.00"),
-            ],
-        );
+            transaction_fixture("old-operation", "AUTHORIZE", "SUCCESS", "10.00"),
+            transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
+            transaction_fixture("later-operation", "CAPTURE", "PENDING", "1.00"),
+        ]);
         let parsed: KillBillPayment = serde_json::from_value(payment).unwrap();
 
         let mapped = map_payment_outcome(
@@ -1205,10 +1204,9 @@ mod tests {
         );
 
         let duplicate: KillBillPayment = serde_json::from_value(payment_fixture(vec![
-                transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
-                transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
-            ],
-        ))
+            transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
+            transaction_fixture("expected-operation", "AUTHORIZE", "SUCCESS", "12.34"),
+        ]))
         .unwrap();
         assert_eq!(
             map_payment_outcome(
@@ -1227,14 +1225,14 @@ mod tests {
 
     #[test]
     fn unknown_transaction_maps_to_payment_unknown() {
-        let parsed: KillBillPayment = serde_json::from_value(payment_fixture(vec![transaction_fixture(
+        let parsed: KillBillPayment =
+            serde_json::from_value(payment_fixture(vec![transaction_fixture(
                 "expected-operation",
                 "AUTHORIZE",
                 "UNKNOWN",
                 "12.34",
-            )],
-        ))
-        .unwrap();
+            )]))
+            .unwrap();
         let mapped = map_payment_outcome(
             &parsed,
             "expected-payment",
@@ -1456,12 +1454,11 @@ mod tests {
     async fn return_payment(Path(payment_id): Path<String>) -> Json<Value> {
         assert_eq!(payment_id, PAYMENT_ID);
         Json(payment_fixture(vec![transaction_fixture(
-                "expected-operation",
-                "AUTHORIZE",
-                "SUCCESS",
-                "12.34",
-            )],
-        ))
+            "expected-operation",
+            "AUTHORIZE",
+            "SUCCESS",
+            "12.34",
+        )]))
     }
 
     fn header(headers: &HeaderMap, name: &str) -> Option<String> {
