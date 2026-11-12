@@ -10,7 +10,11 @@ description = "Thin canonical payment gateway for the OxideBatch payment-referen
 [dependencies]
 axum = "0.8"
 payment-reference-contract = { path = "../crates/payment-contract" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["serde"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tracing = "0.1"
