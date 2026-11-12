@@ -207,7 +207,10 @@ impl fmt::Display for ContractError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidCurrency(value) => {
-                write!(f, "currency must be three uppercase ASCII letters: {value:?}")
+                write!(
+                    f,
+                    "currency must be three uppercase ASCII letters: {value:?}"
+                )
             }
             Self::NonPositiveAmount(value) => {
                 write!(f, "amount_minor must be positive: {value}")

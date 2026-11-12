@@ -226,9 +226,7 @@ async fn persist_mutation(
     .await
     .map_err(internal)?
     .ok_or_else(|| {
-        ApiError::Conflict(
-            "operationId is already bound to a different idempotency key".into(),
-        )
+        ApiError::Conflict("operationId is already bound to a different idempotency key".into())
     })?;
 
     if !stored_row_matches(&row, &mutation)? {
@@ -315,16 +313,12 @@ fn view_from_row(row: &sqlx::postgres::PgRow) -> Result<CanonicalPaymentView, Ap
             merchant_payment_id: row.try_get("merchant_payment_id").map_err(internal)?,
             gateway_operation_id: row.try_get("operation_id").map_err(internal)?,
             killbill_payment_id: row.try_get("killbill_payment_id").map_err(internal)?,
-            killbill_transaction_id: row
-                .try_get("killbill_transaction_id")
-                .map_err(internal)?,
+            killbill_transaction_id: row.try_get("killbill_transaction_id").map_err(internal)?,
             hyperswitch_payment_id: row.try_get("hyperswitch_payment_id").map_err(internal)?,
             hyperswitch_attempt_id: row.try_get("hyperswitch_attempt_id").map_err(internal)?,
             provider_payment_id: row.try_get("provider_payment_id").map_err(internal)?,
             provider_operation_id: row.try_get("provider_operation_id").map_err(internal)?,
-            provider_idempotency_key: row
-                .try_get("provider_idempotency_key")
-                .map_err(internal)?,
+            provider_idempotency_key: row.try_get("provider_idempotency_key").map_err(internal)?,
         },
     })
 }

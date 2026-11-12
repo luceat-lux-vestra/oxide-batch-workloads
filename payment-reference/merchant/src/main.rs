@@ -110,10 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/merchants", post(create_merchant))
         .route("/customers", post(create_customer))
         .route("/orders", post(create_order))
-        .route(
-            "/orders/{merchantOrderId}/payments",
-            post(prepare_payment),
-        )
+        .route("/orders/{merchantOrderId}/payments", post(prepare_payment))
         .route("/payments/{merchantPaymentId}", get(get_payment))
         .with_state(AppState { pool });
 
