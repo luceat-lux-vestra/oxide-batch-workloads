@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: killbill
       POSTGRES_PASSWORD: killbill
     volumes:
-      - killbill-db:/var/lib/postgresql/data
+      - killbill-db:/var/lib/postgresql
     networks:
       - payment-reference
 
