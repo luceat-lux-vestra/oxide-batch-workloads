@@ -5,7 +5,10 @@ Owner: oxide-batch-workloads #256.
 This module is the bounded Java core for the revised payment-reference v1 bridge:
 
 ```text
-Kill Bill PaymentPluginApi binding (next checkpoint)
+Kill Bill PaymentPluginApi
+              |
+              v
+ transaction journal DAO
               |
               v
       KillBillPaymentAdapter
@@ -17,10 +20,10 @@ Kill Bill PaymentPluginApi binding (next checkpoint)
       payment-sandbox v1.5.4
 ```
 
-It deliberately does **not** contain the Kill Bill OSGi activator, plugin DAO,
-or full Compose wiring yet. The current checkpoint freezes and tests the
-provider translation semantics before introducing Kill Bill runtime lifecycle
-and persistence concerns.
+It now contains the bounded Kill Bill runtime binding: OSGi activator,
+`PaymentPluginApi`, transaction journal DAO, MySQL/PostgreSQL DDL, and focused
+binding tests. Full Compose wiring and a live Kill Bill runtime are still
+deferred.
 
 ## Frozen v1 semantics
 
@@ -55,8 +58,11 @@ Pinned payment-sandbox v1.5.4 states map to the future Kill Bill binding as:
 | `cancelled` | `CANCELED` |
 | `failed` | `ERROR` |
 
-The next checkpoint binds these values to Kill Bill `PaymentPluginStatus` and
-persists Kill Bill payment/transaction/provider identities in the plugin DAO.
+The binding maps these values to Kill Bill `PaymentPluginStatus`. Ambiguous
+mutation transport failures map to Kill Bill `UNDEFINED`, whose contract is
+explicitly “may or may not have succeeded”. The DAO retains Kill Bill payment
+and transaction IDs, provider payment ID, payment-creation idempotency key, and
+operation idempotency keys. PURCHASE retains both authorize and capture keys.
 
 ## Validation
 
@@ -66,5 +72,13 @@ Requires Java 11+ and Maven:
 mvn -B -ntp test
 ```
 
-Tests use only an in-process JDK HTTP server or a fake client. They do not call
-an external PSP or payment-sandbox deployment.
+Tests use only an in-process JDK HTTP server, H2 in MySQL mode, or a fake
+client. They do not call an external PSP or payment-sandbox deployment.
+
+Kill Bill runtime configuration requires:
+
+```text
+org.killbill.billing.plugin.payment-sandbox.baseUri=http://payment-sandbox:8080/
+```
+
+There is no implicit public provider endpoint.

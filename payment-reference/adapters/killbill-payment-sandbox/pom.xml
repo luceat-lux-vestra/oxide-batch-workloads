@@ -3,25 +3,78 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.kill-bill.billing</groupId>
+    <artifactId>killbill-oss-parent</artifactId>
+    <version>0.147.34</version>
+  </parent>
 
   <groupId>io.github.luceat-lux-vestra</groupId>
-  <artifactId>killbill-payment-sandbox-adapter-core</artifactId>
+  <artifactId>killbill-payment-sandbox-plugin</artifactId>
   <version>0.1.0-SNAPSHOT</version>
-  <name>Kill Bill payment-sandbox adapter core</name>
-  <description>Deterministic Kill Bill transaction translation core for payment-sandbox v1.5.4</description>
+  <packaging>bundle</packaging>
+  <name>Kill Bill payment-sandbox plugin</name>
+  <description>Reference Kill Bill PaymentPluginApi bridge for payment-sandbox v1.5.4</description>
 
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <jackson.version>2.18.3</jackson.version>
     <junit.version>5.11.4</junit.version>
+    <h2.version>2.3.232</h2.version>
+    <check.skip-dependency>true</check.skip-dependency>
+    <check.skip-dependency-scope>true</check.skip-dependency-scope>
+    <check.skip-dependency-versions>true</check.skip-dependency-versions>
+    <check.skip-duplicate-finder>true</check.skip-duplicate-finder>
+    <check.skip-enforcer>true</check.skip-enforcer>
+    <check.skip-rat>true</check.skip-rat>
+    <check.skip-spotbugs>true</check.skip-spotbugs>
+    <osgi.private>io.oxidebatch.workloads.paymentreference.sandbox.*</osgi.private>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>joda-time</groupId>
+      <artifactId>joda-time</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.felix</groupId>
+      <artifactId>org.apache.felix.framework</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.kill-bill.billing</groupId>
+      <artifactId>killbill-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.kill-bill.billing</groupId>
+      <artifactId>killbill-platform-osgi-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.kill-bill.billing</groupId>
+      <artifactId>killbill-platform-osgi-bundles-lib-killbill</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.kill-bill.billing.plugin</groupId>
+      <artifactId>killbill-plugin-api-payment</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.kill-bill.billing.plugin.java</groupId>
+      <artifactId>killbill-base-plugin</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <version>${h2.version}</version>
+      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -33,6 +86,10 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.felix</groupId>
+        <artifactId>maven-bundle-plugin</artifactId>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

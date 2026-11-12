@@ -24,9 +24,9 @@ deferred interoperability lane, not a v1 runtime dependency.
 
 ## Current implementation boundary
 
-The Merchant and Gateway are real HTTP/PostgreSQL processes. The provider
-translation core now exists, but the Kill Bill runtime binding is intentionally
-not wired yet.
+The Merchant and Gateway are real HTTP/PostgreSQL processes. The repository-owned
+Kill Bill payment plugin is now implemented as an OSGi bundle candidate, but a
+live Kill Bill/Compose topology is intentionally not wired yet.
 
 - Merchant owns customer/order/payment business truth.
 - Gateway owns canonical mutation validation and durable idempotency identity.
@@ -34,8 +34,13 @@ not wired yet.
   identity translation, mutation-scoped provider idempotency identities,
   payment-sandbox v1.5.4 HTTP calls, provider-status mapping, and ambiguous
   transport classification.
-- The actual Kill Bill `PaymentPluginApi` / OSGi registration and plugin DAO
-  persistence remain the next bounded integration checkpoint.
+- The adapter now includes the actual Kill Bill `PaymentPluginApi`, OSGi
+  registration, transaction journal DAO, MySQL/PostgreSQL DDL, and binding
+  tests.
+- Ambiguous provider mutation transport failures become Kill Bill
+  `PaymentPluginStatus.UNDEFINED`, not a false business failure.
+- Completed Kill Bill transaction replay is served from the journal; conflicting
+  replay identity fails closed before a provider mutation.
 - A newly accepted Gateway mutation is persisted as
   `PAYMENT_PENDING / PENDING`.
 - Replaying the same idempotency key with the same canonical mutation returns
@@ -80,13 +85,14 @@ Both processes run embedded SQLx migrations on startup.
 - `gateway/` — thin Gateway/UPP HTTP process and durable idempotency schema.
 - `scenarios/v1/` — deterministic scenario identity contract.
 - `deploy/` — exact third-party qualification/pinning and runtime inputs.
-- `adapters/killbill-payment-sandbox/` — Java 11/Maven payment-sandbox
-  translation core and focused HTTP/identity/idempotency contract tests.
+- `adapters/killbill-payment-sandbox/` — Java 11 Kill Bill OSGi payment plugin,
+  transaction journal DAO, payment-sandbox translation core, and focused
+  HTTP/identity/idempotency/binding tests.
 
 ## Deferred from this checkpoint
 
 - Merchant -> Gateway HTTP client orchestration.
-- Kill Bill `PaymentPluginApi` / OSGi binding and plugin DAO persistence.
+- authoritative Maven/bundle CI for the new Kill Bill binding.
 - full runnable Compose topology.
 - end-to-end payment lifecycle.
 - broader deterministic fault matrix and webhook matrix.
