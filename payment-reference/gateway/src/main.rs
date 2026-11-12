@@ -187,6 +187,20 @@ async fn process_initial_mutation(
         .into_canonical(operation)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
 
+    let payment_key = payment_external_key(&mutation.merchant_id, &mutation.merchant_payment_id);
+    let transaction_key = transaction_external_key(&mutation.merchant_id, &mutation.operation_id);
+    let transaction_type =
+        KillBillInitialTransactionType::try_from(mutation.operation).map_err(|error| {
+            ApiError::Internal(format!("invalid initial payment operation: {error}"))
+        })?;
+    let killbill_mutation = KillBillMutation::new(
+        mutation.money.amount_minor,
+        mutation.money.currency.as_str(),
+        payment_key.clone(),
+        transaction_key.clone(),
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
     insert_mutation(&state.pool, &mutation).await?;
 
     // The canonical row is committed before any external side effect. The row
@@ -209,9 +223,6 @@ async fn process_initial_mutation(
         tx.commit().await.map_err(internal)?;
         return Ok((status, Json(current_view)));
     }
-
-    let payment_key = payment_external_key(&mutation.merchant_id, &mutation.merchant_payment_id);
-    let transaction_key = transaction_external_key(&mutation.merchant_id, &mutation.operation_id);
 
     // Different operation IDs for the same canonical payment use different DB
     // rows. Serialize their initial side effects on the deterministic Kill Bill
@@ -305,18 +316,6 @@ async fn process_initial_mutation(
             ));
         }
     };
-
-    let transaction_type =
-        KillBillInitialTransactionType::try_from(mutation.operation).map_err(|error| {
-            ApiError::Internal(format!("invalid initial payment operation: {error}"))
-        })?;
-    let killbill_mutation = KillBillMutation::new(
-        mutation.money.amount_minor,
-        mutation.money.currency.as_str(),
-        payment_key.clone(),
-        transaction_key.clone(),
-    )
-    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
 
     match state
         .killbill
@@ -699,7 +698,7 @@ async fn lock_initial_payment(
     tx: &mut Transaction<'_, Postgres>,
     payment_key: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0::bigint))")
         .bind(payment_key)
         .execute(&mut **tx)
         .await
@@ -927,9 +926,11 @@ fn view_from_row(row: &PgRow) -> Result<CanonicalPaymentView, ApiError> {
 }
 
 fn validate_terminal_initial_mapping(view: &CanonicalPaymentView) -> Result<(), ApiError> {
-    if view.last_operation_state == OperationState::Succeeded
-        && (view.mapping.killbill_payment_id.is_none()
-            || view.mapping.killbill_transaction_id.is_none())
+    if matches!(
+        view.last_operation_state,
+        OperationState::Succeeded | OperationState::Failed
+    ) && (view.mapping.killbill_payment_id.is_none()
+        || view.mapping.killbill_transaction_id.is_none())
     {
         return Err(ApiError::Internal(
             "completed initial payment is missing Kill Bill identity".into(),
