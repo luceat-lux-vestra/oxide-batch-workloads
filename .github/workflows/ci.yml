@@ -757,6 +757,55 @@ jobs:
   # All semantic authorities run in this PR DAG. CI/MSRV shard aggregates
   # enforce exact identity/full coverage; supply-chain independently verifies
   # canonical real-workload completeness before scanning every workload.
+  reserved-cargo-ci:
+    name: Reserved Cargo Projects
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Java 11 for payment-reference adapter core
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: zulu
+          java-version: 11
+          cache: maven
+          cache-dependency-path: payment-reference/adapters/killbill-payment-sandbox/pom.xml
+
+      - name: Validate payment-reference Kill Bill bundle
+        run: mvn -B -ntp -f payment-reference/adapters/killbill-payment-sandbox/pom.xml verify
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Validate reserved Cargo projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t projects < <(jq -r '.reserved_top_level_cargo_projects[].path' workloads.json)
+          if [ "${#projects[@]}" -eq 0 ]; then
+            echo "No reserved Cargo projects registered."
+            exit 0
+          fi
+          for project in "${projects[@]}"; do
+            echo "::group::reserved Cargo project: $project"
+            manifest="$project/Cargo.toml"
+            test -f "$manifest"
+            cargo fmt --manifest-path "$manifest" --all -- --check
+            cargo check --manifest-path "$manifest" --workspace --all-targets
+            cargo clippy --manifest-path "$manifest" --workspace --all-targets -- -D warnings
+            cargo test --manifest-path "$manifest" --workspace --all-targets
+            echo "::endgroup::"
+          done
+
   merge-gate:
     name: Merge Gate
     needs:
@@ -766,6 +815,7 @@ jobs:
       - workloads-ci
       - workloads-msrv
       - supply-chain
+      - reserved-cargo-ci
       - dependency-review
       - jberet-clean-qualification
       - jberet-crash-qualification
@@ -792,6 +842,7 @@ jobs:
           always_required = {
               "discover", "ci-shard", "msrv-shard",
               "workloads-ci", "workloads-msrv", "supply-chain",
+              "reserved-cargo-ci",
           }
           scope_outputs = needs.get("discover", {}).get("outputs", {})
           scoped = {

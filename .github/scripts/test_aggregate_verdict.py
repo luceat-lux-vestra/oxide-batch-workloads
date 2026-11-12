@@ -431,7 +431,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for name in (
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
             "jberet-clean-qualification", "jberet-crash-qualification",
-            "pr4-semantic-qualification", "repository-governance-policy", "codeql-runtime",
+            "pr4-semantic-qualification", "repository-governance-policy", "reserved-cargo-ci", "codeql-runtime",
         ):
             with self.subTest(name=name):
                 self.assertIn(f"      - {name}\n", gate)
@@ -451,7 +451,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         }
         names = {
             "discover", "ci-shard", "msrv-shard", "workloads-ci", "workloads-msrv", "supply-chain", "dependency-review",
-            "codeql-runtime", *scoped,
+            "reserved-cargo-ci", "codeql-runtime", *scoped,
         }
 
         def run(
@@ -505,6 +505,7 @@ class AggregateWorkflowIndependenceTests(unittest.TestCase):
         for label, kwargs in (
             ("missing shard", {"removed": "ci-shard"}),
             ("missing dependency", {"removed": "dependency-review"}),
+            ("missing reserved Cargo authority", {"removed": "reserved-cargo-ci"}),
             ("missing scoped authority", {"removed": "jberet-clean-qualification"}),
             ("missing CodeQL runtime authority", {"removed": "codeql-runtime"}),
             ("unexpected extra", {"extra": "untrusted-observer"}),
