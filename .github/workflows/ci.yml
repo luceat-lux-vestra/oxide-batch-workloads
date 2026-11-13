@@ -730,7 +730,17 @@ jobs:
         run: docker compose -f payment-reference/deploy/compose.yaml config --quiet
 
       - name: Run payment-reference runtime smoke
+        env:
+          PAYMENT_REFERENCE_RESULT_PATH: ${{ runner.temp }}/payment-reference-scenario-result.json
         run: bash payment-reference/deploy/smoke.sh
+
+      - name: Upload payment-reference scenario result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: payment-reference-scenario-result
+          path: ${{ runner.temp }}/payment-reference-scenario-result.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Tear down payment-reference runtime
         if: always()

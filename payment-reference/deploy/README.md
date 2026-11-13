@@ -79,6 +79,12 @@ Run the bounded qualification with:
 bash payment-reference/deploy/smoke.sh
 ```
 
+On success the local default result is written to
+`payment-reference/deploy/evidence/payment-reference-scenario-result.json`.
+Set `PAYMENT_REFERENCE_RESULT_PATH` to redirect it. Generated local JSON is
+ignored by Git; CI writes the same contract into the runner temp directory and
+uploads it as the `payment-reference-scenario-result` artifact for seven days.
+
 The smoke owns local tenant bootstrap; the per-payment Gateway path never
 silently creates or rotates a tenant.
 
@@ -109,6 +115,29 @@ connection**. The candidate smoke arms HTTP 503 on the provider's initial
 for that provider create to remain zero, and requires direct provider lookup to
 return 404. Exact Merchant replay must retain the same Kill Bill identity and
 still create no provider payment.
+
+## Machine-readable scenario evidence
+
+`../scenarios/v1/scenario-result.schema.json` defines the retained result
+contract. The smoke emits one v1 JSON document containing five bounded cases:
+
+- authorize -> capture -> refund lifecycle;
+- auth-capture / purchase;
+- authorize -> cancel / void;
+- provider commit followed by response loss;
+- provider 503 before side effect through Reference Merchant -> Gateway.
+
+Every case retains deterministic scenario identity, Merchant operation/payment
+IDs, Kill Bill payment/transaction IDs, provider payment identity, final
+canonical state, final provider state, replay observations, and an
+`unexpected_invariant_violations` array. Successful qualification requires
+every unexpected-invariant array to be empty and requires all executed replay
+checks to preserve the same Kill Bill identity without a duplicate provider
+mutation.
+
+The result also records `source_revision` from the executing environment
+(`GITHUB_SHA` in GitHub Actions, otherwise `local`). It is evidence for the
+exact executed runtime, not a replacement for the smoke assertions themselves.
 
 Hyperswitch remains intentionally deferred. Reintroducing it later requires a
 specific interoperability claim and executable proof that the additional

@@ -81,10 +81,10 @@ Merchant mappings/events.
 
 This candidate has **not yet received authoritative PR/CI validation**, so the
 last merged and validated runtime remains #260. The candidate runtime harness
-now also contains a deterministic provider-503-before-side-effect scenario
-through Reference Merchant -> Gateway. Broader deterministic
-failure/async-outcome coverage remains deferred until the remaining #256
-acceptance gaps are handled.
+contains the deterministic provider-503-before-side-effect scenario and now
+materializes one machine-readable v1 scenario-result JSON after all bounded
+runtime assertions pass. Broader deterministic failure/async-outcome coverage
+remains deferred until the later owner.
 
 Runtime configuration:
 
@@ -131,7 +131,8 @@ or rotate tenants.
 - `merchant/` — reference Merchant HTTP process and PostgreSQL schema.
 - `gateway/` — thin Gateway/UPP HTTP process and durable idempotency/recovery
   implementation.
-- `scenarios/v1/` — deterministic scenario identity contract.
+- `scenarios/v1/` — deterministic scenario identity contract plus the
+  machine-readable v1 result schema.
 - `deploy/` — pinned third-party inputs and the bounded Gateway -> Kill Bill ->
   payment-sandbox runtime qualification harness.
 - `adapters/killbill-payment-sandbox/` — Java 11 Kill Bill OSGi payment plugin,
@@ -140,10 +141,8 @@ or rotate tenants.
 
 ## Deferred from the current #256 checkpoint
 
-- authoritative PR/CI/runtime validation of the Merchant -> Gateway and
-  provider-503-before-side-effect candidates;
-- retained machine-readable scenario result spanning Merchant/Gateway/provider
-  identities and final states;
+- authoritative PR/CI/runtime validation of the Merchant -> Gateway,
+  provider-503-before-side-effect, and retained result-artifact candidates;
 - broader deterministic fault and async/webhook matrix;
 - Hyperswitch interoperability lane;
 - OxideBatch business workloads and release-evidence campaigns.

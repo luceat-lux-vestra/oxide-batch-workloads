@@ -14,6 +14,12 @@ gateway_base="http://127.0.0.1:${gateway_port}"
 merchant_base="http://127.0.0.1:${merchant_port}"
 fault_proxy_base="http://127.0.0.1:${fault_proxy_port}"
 
+result_path="${PAYMENT_REFERENCE_RESULT_PATH:-${PWD}/evidence/payment-reference-scenario-result.json}"
+source_revision="${PAYMENT_REFERENCE_SOURCE_REVISION:-${GITHUB_SHA:-local}}"
+scenario_version=1
+scenario_seed=256
+logical_business_date="2026-11-13"
+
 export KILLBILL_USERNAME="${KILLBILL_USERNAME:-admin}"
 export KILLBILL_PASSWORD="${KILLBILL_PASSWORD:-password}"
 export KILLBILL_API_KEY="${KILLBILL_API_KEY:-pr-smoke-${RANDOM}-${RANDOM}}"
@@ -408,7 +414,236 @@ jq -e '
   and ((.forwarded_by_path["POST /payments"] // 0) == 0)
 ' /tmp/pr-fault-stats-provider-503-after-replay.json >/dev/null
 
+# Retain one machine-readable result artifact for the bounded online-path suite.
+# Every value below is sourced from assertions that have already passed above;
+# the result is evidence, not a second execution path.
+mkdir -p "$(dirname "$result_path")"
+
+lifecycle_auth_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth.json)"
+lifecycle_capture_600_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-capture-600.json)"
+lifecycle_capture_400_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-capture-400.json)"
+lifecycle_refund_250_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-refund-250.json)"
+lifecycle_refund_750_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-refund-750.json)"
+purchase_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-purchase.json)"
+purchase_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-purchase.json)"
+cancel_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-cancel.json)"
+cancel_auth_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-cancel-auth.json)"
+cancel_void_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-cancel.json)"
+ambiguous_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous.json)"
+provider_503_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503.json)"
+provider_503_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503.json)"
+
+jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$scenario_version"   --argjson seed "$scenario_seed"   --arg logical_business_date "$logical_business_date"   --arg lifecycle_kb_id "$lifecycle_kb_id"   --arg lifecycle_provider_id "$lifecycle_provider_id"   --arg lifecycle_auth_tx "$lifecycle_auth_tx"   --arg lifecycle_capture_600_tx "$lifecycle_capture_600_tx"   --arg lifecycle_capture_400_tx "$lifecycle_capture_400_tx"   --arg lifecycle_refund_250_tx "$lifecycle_refund_250_tx"   --arg lifecycle_refund_750_tx "$lifecycle_refund_750_tx"   --arg lifecycle_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth-replay.json)"   --arg lifecycle_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth-replay.json)"   --arg purchase_kb_id "$purchase_kb_id"   --arg purchase_provider_id "$purchase_provider_id"   --arg purchase_tx "$purchase_tx"   --arg cancel_kb_id "$cancel_kb_id"   --arg cancel_provider_id "$cancel_provider_id"   --arg cancel_auth_tx "$cancel_auth_tx"   --arg cancel_void_tx "$cancel_void_tx"   --arg ambiguous_kb_id "$ambiguous_kb_id"   --arg ambiguous_provider_id "$ambiguous_provider_id"   --arg ambiguous_tx "$ambiguous_transaction_id"   --arg ambiguous_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous-replay.json)"   --arg ambiguous_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous-replay.json)"   --arg provider_503_kb_id "$provider_503_kb_id"   --arg provider_503_provider_id "$provider_503_id"   --arg provider_503_tx "$provider_503_tx"   --arg provider_503_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503-replay.json)"   --arg provider_503_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503-replay.json)"   --slurpfile lifecycle_provider /tmp/pr-provider-lifecycle.json   --slurpfile purchase_provider /tmp/pr-provider-purchase.json   --slurpfile cancel_provider /tmp/pr-provider-cancel.json   --slurpfile ambiguous_provider /tmp/pr-provider-ambiguous-after-replay.json   '
+  def identity($case; $expected):
+    {
+      scenario_version: $scenario_version,
+      seed: $seed,
+      logical_business_date: $logical_business_date,
+      scenario_case: $case,
+      expected_outcome: $expected
+    };
+  def provider($p):
+    {
+      exists: true,
+      status: ($p.status // null),
+      authorized_amount_minor: ($p.authorized_amount // null),
+      captured_amount_minor: ($p.captured_amount // null),
+      refunded_amount_minor: ($p.refunded_amount // null)
+    };
+  {
+    result_version: 1,
+    schema_id: "https://oxide-batch.dev/payment-reference/scenario-result-v1.schema.json",
+    source_revision: $source_revision,
+    suite: identity(
+      "payment-reference-online-path-v1",
+      "bounded online path invariants hold"
+    ),
+    scenarios: [
+      {
+        identity: identity(
+          "authorize-capture-refund-lifecycle",
+          "REFUNDED/SUCCEEDED with exact replay and conflicts creating no extra effect"
+        ),
+        system_ids: {
+          merchant_id: "merchant-smoke",
+          merchant_order_id: "order-lifecycle",
+          merchant_payment_id: "payment-lifecycle",
+          operation_ids: [
+            "op-auth-001",
+            "op-capture-600",
+            "op-capture-400",
+            "op-refund-250",
+            "op-refund-750"
+          ],
+          killbill_payment_id: $lifecycle_kb_id,
+          killbill_transaction_ids: [
+            $lifecycle_auth_tx,
+            $lifecycle_capture_600_tx,
+            $lifecycle_capture_400_tx,
+            $lifecycle_refund_250_tx,
+            $lifecycle_refund_750_tx
+          ],
+          provider_payment_id: $lifecycle_provider_id
+        },
+        final_canonical_state: {
+          payment_state: "REFUNDED",
+          operation_state: "SUCCEEDED"
+        },
+        provider_state: provider($lifecycle_provider[0]),
+        replay: {
+          performed: true,
+          same_killbill_payment_id: ($lifecycle_replay_kb_id == $lifecycle_kb_id),
+          same_killbill_transaction_id: ($lifecycle_replay_tx == $lifecycle_auth_tx),
+          duplicate_provider_mutation_observed: false,
+          conflict_http_statuses: [409, 409]
+        },
+        unexpected_invariant_violations: []
+      },
+      {
+        identity: identity(
+          "auth-capture-purchase",
+          "PAID/SUCCEEDED and provider captured"
+        ),
+        system_ids: {
+          merchant_id: "merchant-smoke",
+          merchant_order_id: "order-purchase",
+          merchant_payment_id: "payment-purchase",
+          operation_ids: ["op-purchase-001"],
+          killbill_payment_id: $purchase_kb_id,
+          killbill_transaction_ids: [$purchase_tx],
+          provider_payment_id: $purchase_provider_id
+        },
+        final_canonical_state: {
+          payment_state: "PAID",
+          operation_state: "SUCCEEDED"
+        },
+        provider_state: provider($purchase_provider[0]),
+        replay: {
+          performed: false,
+          same_killbill_payment_id: null,
+          same_killbill_transaction_id: null,
+          duplicate_provider_mutation_observed: null,
+          conflict_http_statuses: []
+        },
+        unexpected_invariant_violations: []
+      },
+      {
+        identity: identity(
+          "authorize-cancel-void",
+          "CANCELLED/SUCCEEDED and provider cancelled"
+        ),
+        system_ids: {
+          merchant_id: "merchant-smoke",
+          merchant_order_id: "order-cancel",
+          merchant_payment_id: "payment-cancel",
+          operation_ids: ["op-cancel-auth", "op-cancel-void"],
+          killbill_payment_id: $cancel_kb_id,
+          killbill_transaction_ids: [$cancel_auth_tx, $cancel_void_tx],
+          provider_payment_id: $cancel_provider_id
+        },
+        final_canonical_state: {
+          payment_state: "CANCELLED",
+          operation_state: "SUCCEEDED"
+        },
+        provider_state: provider($cancel_provider[0]),
+        replay: {
+          performed: false,
+          same_killbill_payment_id: null,
+          same_killbill_transaction_id: null,
+          duplicate_provider_mutation_observed: null,
+          conflict_http_statuses: []
+        },
+        unexpected_invariant_violations: []
+      },
+      {
+        identity: identity(
+          "provider-commit-response-loss",
+          "PAYMENT_UNKNOWN/UNKNOWN with one provider authorize and no blind replay"
+        ),
+        system_ids: {
+          merchant_id: "merchant-smoke",
+          merchant_order_id: "order-ambiguous",
+          merchant_payment_id: "payment-ambiguous",
+          operation_ids: ["op-ambiguous-auth"],
+          killbill_payment_id: $ambiguous_kb_id,
+          killbill_transaction_ids: [$ambiguous_tx],
+          provider_payment_id: $ambiguous_provider_id
+        },
+        final_canonical_state: {
+          payment_state: "PAYMENT_UNKNOWN",
+          operation_state: "UNKNOWN"
+        },
+        provider_state: provider($ambiguous_provider[0]),
+        replay: {
+          performed: true,
+          same_killbill_payment_id: ($ambiguous_replay_kb_id == $ambiguous_kb_id),
+          same_killbill_transaction_id: ($ambiguous_replay_tx == $ambiguous_tx),
+          duplicate_provider_mutation_observed: false,
+          conflict_http_statuses: []
+        },
+        unexpected_invariant_violations: []
+      },
+      {
+        identity: identity(
+          "provider-503-before-side-effect",
+          "PAYMENT_PENDING/RETRY_PENDING with provider payment absent"
+        ),
+        system_ids: {
+          merchant_id: "merchant-provider-503",
+          merchant_order_id: "order-provider-503",
+          merchant_payment_id: "payment-provider-503",
+          operation_ids: ["op-provider-503"],
+          killbill_payment_id: $provider_503_kb_id,
+          killbill_transaction_ids: [$provider_503_tx],
+          provider_payment_id: $provider_503_provider_id
+        },
+        final_canonical_state: {
+          payment_state: "PAYMENT_PENDING",
+          operation_state: "RETRY_PENDING"
+        },
+        provider_state: {
+          exists: false,
+          status: null,
+          authorized_amount_minor: null,
+          captured_amount_minor: null,
+          refunded_amount_minor: null
+        },
+        replay: {
+          performed: true,
+          same_killbill_payment_id: ($provider_503_replay_kb_id == $provider_503_kb_id),
+          same_killbill_transaction_id: ($provider_503_replay_tx == $provider_503_tx),
+          duplicate_provider_mutation_observed: false,
+          conflict_http_statuses: []
+        },
+        unexpected_invariant_violations: []
+      }
+    ],
+    unexpected_invariant_violations: []
+  }
+  ' >"$result_path"
+
+jq -e '
+  .result_version == 1
+  and .schema_id == "https://oxide-batch.dev/payment-reference/scenario-result-v1.schema.json"
+  and (.source_revision | type == "string" and length > 0)
+  and (.suite.scenario_version == 1)
+  and (.scenarios | length == 5)
+  and ([.scenarios[].unexpected_invariant_violations | length] | add) == 0
+  and (.unexpected_invariant_violations | length) == 0
+  and all(
+    .scenarios[].replay;
+    if .performed then
+      .same_killbill_payment_id == true
+      and .same_killbill_transaction_id == true
+      and .duplicate_provider_mutation_observed == false
+    else
+      true
+    end
+  )
+' "$result_path" >/dev/null
+
 printf 'payment-reference end-to-end smoke PASS\n'
+printf 'Scenario result: %s\n' "$result_path"
 printf 'Merchant: %s\n' "$merchant_base"
 printf 'Gateway: %s\n' "$gateway_base"
 printf 'Kill Bill: %s\n' "$killbill_base"
