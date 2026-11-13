@@ -25,7 +25,7 @@ class FaultPlanValidationError(ValueError):
 
 
 class RequestFaultPlanAdapter:
-    """Consumes only request/response fault steps from the shared v1 fault plan."""
+    """Validates and schedules the bounded v1 fault-plan surface owned by the proxy."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -36,9 +36,9 @@ class RequestFaultPlanAdapter:
             self._identity = None
             self._now_ms = 0
             self._scheduled_request = []
-            self._active_request_request = []
+            self._active_request = []
             self._scheduled_timeline = []
-            self._consumed_request_request = []
+            self._consumed_request = []
             self._dispatched_timeline = []
             self._deferred = []
 
@@ -48,9 +48,9 @@ class RequestFaultPlanAdapter:
             self._identity = normalized["identity"]
             self._now_ms = 0
             self._scheduled_request = normalized["request_steps"]
-            self._active_request_request = []
+            self._active_request = []
             self._scheduled_timeline = normalized["timeline_steps"]
-            self._consumed_request_request = []
+            self._consumed_request = []
             self._dispatched_timeline = []
             self._deferred = normalized["deferred_steps"]
             return self._snapshot_unlocked()
@@ -67,7 +67,7 @@ class RequestFaultPlanAdapter:
                 self._scheduled_request
                 and self._scheduled_request[0]["offset_ms"] <= offset_ms
             ):
-                self._active_request_request.append(self._scheduled_request.pop(0))
+                self._active_request.append(self._scheduled_request.pop(0))
 
             due_events = []
             while (
