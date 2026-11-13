@@ -455,13 +455,13 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
     schema_id: "https://oxide-batch.dev/payment-reference/scenario-result-v1.schema.json",
     source_revision: $source_revision,
     suite: identity(
-      "payment-reference-online-path-v1",
+      "payment-reference-online-path-v1";
       "bounded online path invariants hold"
     ),
     scenarios: [
       {
         identity: identity(
-          "authorize-capture-refund-lifecycle",
+          "authorize-capture-refund-lifecycle";
           "REFUNDED/SUCCEEDED with exact replay and conflicts creating no extra effect"
         ),
         system_ids: {
@@ -501,7 +501,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       },
       {
         identity: identity(
-          "auth-capture-purchase",
+          "auth-capture-purchase";
           "PAID/SUCCEEDED and provider captured"
         ),
         system_ids: {
@@ -529,7 +529,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       },
       {
         identity: identity(
-          "authorize-cancel-void",
+          "authorize-cancel-void";
           "CANCELLED/SUCCEEDED and provider cancelled"
         ),
         system_ids: {
@@ -557,7 +557,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       },
       {
         identity: identity(
-          "provider-commit-response-loss",
+          "provider-commit-response-loss";
           "PAYMENT_UNKNOWN/UNKNOWN with one provider authorize and no blind replay"
         ),
         system_ids: {
@@ -585,7 +585,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       },
       {
         identity: identity(
-          "provider-503-before-side-effect",
+          "provider-503-before-side-effect";
           "PAYMENT_PENDING/RETRY_PENDING with provider payment absent"
         ),
         system_ids: {
