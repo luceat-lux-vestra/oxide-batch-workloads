@@ -218,9 +218,7 @@ impl KillBillClient {
         &self,
         account_id: Uuid,
     ) -> Result<Vec<KillBillPaymentMethod>, KillBillClientError> {
-        let url = self.endpoint(&format!(
-            "1.0/kb/accounts/{account_id}/paymentMethods"
-        ))?;
+        let url = self.endpoint(&format!("1.0/kb/accounts/{account_id}/paymentMethods"))?;
         let response = self.send(self.request(Method::GET, url), false).await?;
         self.decode_success(response, false).await
     }
@@ -230,9 +228,7 @@ impl KillBillClient {
         account_id: Uuid,
         external_key: impl Into<String>,
     ) -> Result<KillBillPaymentMethod, KillBillClientError> {
-        let url = self.endpoint(&format!(
-            "1.0/kb/accounts/{account_id}/paymentMethods"
-        ))?;
+        let url = self.endpoint(&format!("1.0/kb/accounts/{account_id}/paymentMethods"))?;
         let request = KillBillCreatePaymentMethodRequest {
             external_key: external_key.into(),
             plugin_name: PAYMENT_PLUGIN_NAME.to_owned(),
@@ -330,10 +326,8 @@ impl KillBillClient {
         let url = self.endpoint("1.0/kb/payments")?;
         let response = self
             .send(
-                self.request(Method::GET, url).query(&[
-                    ("externalKey", external_key),
-                    ("withPluginInfo", "true"),
-                ]),
+                self.request(Method::GET, url)
+                    .query(&[("externalKey", external_key), ("withPluginInfo", "true")]),
                 false,
             )
             .await?;
@@ -402,14 +396,12 @@ impl KillBillClient {
             .headers()
             .get(LOCATION)
             .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| {
-                KillBillClientError {
-                    kind: KillBillClientErrorKind::MissingLocation,
-                    message: "successful Kill Bill mutation omitted Location".into(),
-                    status: Some(response.status().as_u16()),
-                    location: None,
-                    requires_read_before_retry: true,
-                }
+            .ok_or_else(|| KillBillClientError {
+                kind: KillBillClientErrorKind::MissingLocation,
+                message: "successful Kill Bill mutation omitted Location".into(),
+                status: Some(response.status().as_u16()),
+                location: None,
+                requires_read_before_retry: true,
             })?;
         let mut location = self.resolve_location(location)?;
         if with_plugin_info {
@@ -796,7 +788,11 @@ pub fn map_payment_outcome_if_present(
     let (operation_state, payment_state) = match transaction.status {
         KillBillTransactionStatus::Success => (
             OperationState::Succeeded,
-            Some(success_payment_state(payment, operation, expected_currency)?),
+            Some(success_payment_state(
+                payment,
+                operation,
+                expected_currency,
+            )?),
         ),
         KillBillTransactionStatus::Pending => (OperationState::Pending, None),
         KillBillTransactionStatus::Unknown => {
@@ -813,8 +809,9 @@ pub fn map_payment_outcome_if_present(
                 | PaymentOperationKind::Refund => None,
             },
         ),
-        KillBillTransactionStatus::PluginFailure
-        | KillBillTransactionStatus::PaymentSystemOff => (OperationState::RetryPending, None),
+        KillBillTransactionStatus::PluginFailure | KillBillTransactionStatus::PaymentSystemOff => {
+            (OperationState::RetryPending, None)
+        }
     };
 
     Ok(Some(KillBillMappedOutcome {
@@ -857,9 +854,9 @@ fn success_payment_state(
             let captured = optional_minor(payment.captured_amount.as_ref(), currency)?;
             let refunded =
                 required_minor(payment.refunded_amount.as_ref(), currency, "refundedAmount")?;
-            let paid = purchased.checked_add(captured).ok_or_else(|| {
-                KillBillClientError::invariant("Kill Bill paid amount overflow")
-            })?;
+            let paid = purchased
+                .checked_add(captured)
+                .ok_or_else(|| KillBillClientError::invariant("Kill Bill paid amount overflow"))?;
             if paid <= 0 {
                 return Err(KillBillClientError::invariant(
                     "Kill Bill refund succeeded without a positive paid amount",
@@ -884,8 +881,8 @@ fn required_minor(
     currency: &str,
     field: &str,
 ) -> Result<i64, KillBillClientError> {
-    let number =
-        number.ok_or_else(|| KillBillClientError::invariant(format!("Kill Bill omitted {field}")))?;
+    let number = number
+        .ok_or_else(|| KillBillClientError::invariant(format!("Kill Bill omitted {field}")))?;
     major_number_to_minor_units(number, currency)
 }
 
@@ -915,10 +912,7 @@ pub fn payment_method_external_key(
     currency: &str,
     payment_method_token: &str,
 ) -> String {
-    deterministic_external_key(
-        "pr-pm-v1-",
-        &[merchant_id, currency, payment_method_token],
-    )
+    deterministic_external_key("pr-pm-v1-", &[merchant_id, currency, payment_method_token])
 }
 
 pub fn payment_external_key(merchant_id: &str, merchant_payment_id: &str) -> String {
@@ -1067,27 +1061,26 @@ fn currency_scale(currency: &str) -> Result<u32, KillBillClientError> {
         ));
     }
     Ok(match currency {
-        "BIF" | "BYR" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW"
-        | "PYG" | "RWF" | "UGX" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+        "BIF" | "BYR" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF"
+        | "UGX" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
         "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
         _ => 2,
     })
 }
 
 const KILLBILL_FIAT_CURRENCIES: &[&str] = &[
-    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
-    "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYR",
-    "BZD", "CAD", "CDF", "CHF", "CLP", "CNY", "COP", "CRC", "CUC", "CUP", "CVE", "CZK",
-    "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL",
-    "GGP", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF",
-    "IDR", "ILS", "IMP", "INR", "IQD", "IRR", "ISK", "JEP", "JMD", "JOD", "JPY", "KES",
-    "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD",
-    "LSL", "LTL", "LVL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRO",
-    "MUR", "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD",
-    "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB",
-    "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLL", "SOS", "SPL", "SRD",
-    "STD", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TVD",
-    "TWD", "TZS", "UAH", "UGX", "USD", "UYU", "UZS", "VEF", "VND", "VUV", "WST", "XAF",
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT",
+    "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYR", "BZD", "CAD",
+    "CDF", "CHF", "CLP", "CNY", "COP", "CRC", "CUC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP",
+    "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GGP", "GHS", "GIP", "GMD",
+    "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR", "ILS", "IMP", "INR", "IQD",
+    "IRR", "ISK", "JEP", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD",
+    "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LTL", "LVL", "LYD", "MAD", "MDL", "MGA",
+    "MKD", "MMK", "MNT", "MOP", "MRO", "MUR", "MVR", "MWK", "MXN", "MYR", "MZN", "NAD", "NGN",
+    "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR",
+    "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLL", "SOS",
+    "SPL", "SRD", "STD", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD",
+    "TVD", "TWD", "TZS", "UAH", "UGX", "USD", "UYU", "UZS", "VEF", "VND", "VUV", "WST", "XAF",
     "XCD", "XDR", "XOF", "XPF", "YER", "ZAR", "ZMW", "ZWD",
 ];
 
@@ -1116,8 +1109,7 @@ mod tests {
             account_external_key("merchant-1", "KRW"),
             "pr-acct-v1-f0ad73afdc22cec96f7b7cd9156ad2570019f43a13b7272da13298998e53cca3"
         );
-        let payment_method =
-            payment_method_external_key("merchant-1", "KRW", "test-token-1");
+        let payment_method = payment_method_external_key("merchant-1", "KRW", "test-token-1");
         assert_eq!(
             payment_method,
             "pr-pm-v1-9b24926622d73b792538eeda8bc8eb83fdf18993316362af3eb2e99583952a3b"
@@ -1136,15 +1128,21 @@ mod tests {
     #[test]
     fn minor_major_conversion_is_exact_and_currency_aware() {
         assert_eq!(
-            minor_units_to_major_number(1234, "USD").unwrap().to_string(),
+            minor_units_to_major_number(1234, "USD")
+                .unwrap()
+                .to_string(),
             "12.34"
         );
         assert_eq!(
-            minor_units_to_major_number(1234, "KRW").unwrap().to_string(),
+            minor_units_to_major_number(1234, "KRW")
+                .unwrap()
+                .to_string(),
             "1234"
         );
         assert_eq!(
-            minor_units_to_major_number(1234, "BHD").unwrap().to_string(),
+            minor_units_to_major_number(1234, "BHD")
+                .unwrap()
+                .to_string(),
             "1.234"
         );
 
@@ -1201,7 +1199,10 @@ mod tests {
             mapped.killbill_transaction_id,
             Uuid::parse_str(TRANSACTION_ID).unwrap()
         );
-        assert_eq!(mapped.provider_payment_id.as_deref(), Some("provider-payment-1"));
+        assert_eq!(
+            mapped.provider_payment_id.as_deref(),
+            Some("provider-payment-1")
+        );
         assert_eq!(
             mapped.provider_idempotency_key.as_deref(),
             Some("provider-idem-1")
@@ -1210,8 +1211,7 @@ mod tests {
 
     #[test]
     fn response_mapping_fails_closed_on_missing_or_duplicate_transaction_identity() {
-        let missing: KillBillPayment =
-            serde_json::from_value(payment_fixture(vec![])).unwrap();
+        let missing: KillBillPayment = serde_json::from_value(payment_fixture(vec![])).unwrap();
         assert_eq!(
             map_payment_outcome(
                 &missing,

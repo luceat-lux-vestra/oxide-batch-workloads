@@ -13,11 +13,10 @@ use payment_reference_contract::{
 };
 use payment_reference_gateway::killbill::{
     account_external_key, map_payment_outcome, map_payment_outcome_if_present,
-    payment_external_key, payment_method_external_key, transaction_external_key,
-    KillBillAccount, KillBillClient,
-    KillBillClientConfig, KillBillClientError, KillBillClientErrorKind, KillBillCreateAccountRequest,
-    KillBillInitialTransactionType, KillBillMappedOutcome, KillBillMutation,
-    KillBillPaymentMethod, PAYMENT_PLUGIN_NAME,
+    payment_external_key, payment_method_external_key, transaction_external_key, KillBillAccount,
+    KillBillClient, KillBillClientConfig, KillBillClientError, KillBillClientErrorKind,
+    KillBillCreateAccountRequest, KillBillInitialTransactionType, KillBillMappedOutcome,
+    KillBillMutation, KillBillPaymentMethod, PAYMENT_PLUGIN_NAME,
 };
 use serde::Serialize;
 use sqlx::{
@@ -142,13 +141,7 @@ async fn capture(
     State(state): State<AppState>,
     Json(request): Json<PaymentMutationRequest>,
 ) -> Result<(StatusCode, Json<CanonicalPaymentView>), ApiError> {
-    process_follow_up_mutation(
-        &state,
-        request,
-        PaymentOperationKind::Capture,
-        &payment_id,
-    )
-    .await
+    process_follow_up_mutation(&state, request, PaymentOperationKind::Capture, &payment_id).await
 }
 
 async fn cancel(
@@ -156,13 +149,7 @@ async fn cancel(
     State(state): State<AppState>,
     Json(request): Json<PaymentMutationRequest>,
 ) -> Result<(StatusCode, Json<CanonicalPaymentView>), ApiError> {
-    process_follow_up_mutation(
-        &state,
-        request,
-        PaymentOperationKind::Cancel,
-        &payment_id,
-    )
-    .await
+    process_follow_up_mutation(&state, request, PaymentOperationKind::Cancel, &payment_id).await
 }
 
 async fn refund(
@@ -170,13 +157,7 @@ async fn refund(
     State(state): State<AppState>,
     Json(request): Json<PaymentMutationRequest>,
 ) -> Result<(StatusCode, Json<CanonicalPaymentView>), ApiError> {
-    process_follow_up_mutation(
-        &state,
-        request,
-        PaymentOperationKind::Refund,
-        &payment_id,
-    )
-    .await
+    process_follow_up_mutation(&state, request, PaymentOperationKind::Refund, &payment_id).await
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -319,11 +300,7 @@ async fn process_follow_up_mutation(
         PaymentOperationKind::Cancel => {
             state
                 .killbill
-                .void_payment(
-                    context.killbill_payment_id,
-                    &payment_key,
-                    &transaction_key,
-                )
+                .void_payment(context.killbill_payment_id, &payment_key, &transaction_key)
                 .await
         }
         PaymentOperationKind::Refund => {
@@ -342,7 +319,10 @@ async fn process_follow_up_mutation(
     match result {
         Ok(payment) => {
             if let Err(error) = verify_killbill_payment_id(&payment, context.killbill_payment_id) {
-                log_killbill_error("follow-up mutation returned a different Kill Bill payment", &error);
+                log_killbill_error(
+                    "follow-up mutation returned a different Kill Bill payment",
+                    &error,
+                );
                 return recover_after_ambiguous_follow_up(
                     tx,
                     state,
@@ -373,7 +353,10 @@ async fn process_follow_up_mutation(
                     commit_initial_view(tx, &mutation.operation_id).await
                 }
                 Err(error) => {
-                    log_killbill_error("follow-up mutation readback violated identity contract", &error);
+                    log_killbill_error(
+                        "follow-up mutation readback violated identity contract",
+                        &error,
+                    );
                     recover_after_ambiguous_follow_up(
                         tx,
                         state,
@@ -399,7 +382,10 @@ async fn process_follow_up_mutation(
             .await
         }
         Err(error) => {
-            log_killbill_error("follow-up mutation failed before an ambiguous effect", &error);
+            log_killbill_error(
+                "follow-up mutation failed before an ambiguous effect",
+                &error,
+            );
             persist_initial_state(
                 &mut tx,
                 &mutation.operation_id,
@@ -582,9 +568,7 @@ async fn load_follow_up_payment_context(
 
     let prior_payment_state: String = prior.try_get("payment_state").map_err(internal)?;
     let fallback_payment_state = parse_payment_state(&prior_payment_state)?;
-    let prior_payment_id: String = prior
-        .try_get("killbill_payment_id")
-        .map_err(internal)?;
+    let prior_payment_id: String = prior.try_get("killbill_payment_id").map_err(internal)?;
     let prior_payment_id = parse_killbill_uuid(&prior_payment_id, "prior Kill Bill payment id")?;
 
     let current_payment_id = current_view
@@ -649,7 +633,6 @@ fn parse_killbill_uuid(value: &str, field: &str) -> Result<uuid::Uuid, ApiError>
         .map_err(|error| ApiError::Internal(format!("invalid {field}: {error}")))
 }
 
-
 async fn process_initial_mutation(
     state: &AppState,
     request: PaymentMutationRequest,
@@ -705,13 +688,7 @@ async fn process_initial_mutation(
     // first inserted the canonical row. This closes the crash/concurrency gap
     // where another exact replay could have held the row lock, committed a Kill
     // Bill side effect, and crashed before persisting the Kill Bill IDs.
-    match inquiry_initial_outcome(
-        &state.killbill,
-        &payment_key,
-        &transaction_key,
-        &mutation,
-    )
-    .await
+    match inquiry_initial_outcome(&state.killbill, &payment_key, &transaction_key, &mutation).await
     {
         Ok(Some(outcome)) => {
             persist_initial_outcome(&mut tx, &mutation.operation_id, &outcome).await?;
@@ -769,25 +746,25 @@ async fn process_initial_mutation(
         }
     };
 
-    let payment_method_id = match resolve_payment_method(&state.killbill, account_id, &mutation).await
-    {
-        Ok(payment_method_id) => payment_method_id,
-        Err(error) => {
-            log_killbill_error("Kill Bill payment-method resolution failed", &error);
-            persist_initial_state(
-                &mut tx,
-                &mutation.operation_id,
-                PaymentState::PaymentPending,
-                OperationState::RetryPending,
-            )
-            .await?;
-            tx.commit().await.map_err(internal)?;
-            return Err(ApiError::Upstream(
+    let payment_method_id =
+        match resolve_payment_method(&state.killbill, account_id, &mutation).await {
+            Ok(payment_method_id) => payment_method_id,
+            Err(error) => {
+                log_killbill_error("Kill Bill payment-method resolution failed", &error);
+                persist_initial_state(
+                    &mut tx,
+                    &mutation.operation_id,
+                    PaymentState::PaymentPending,
+                    OperationState::RetryPending,
+                )
+                .await?;
+                tx.commit().await.map_err(internal)?;
+                return Err(ApiError::Upstream(
                 "Kill Bill payment-method resolution failed; retry with the same idempotency key"
                     .into(),
             ));
-        }
-    };
+            }
+        };
 
     match state
         .killbill
@@ -813,7 +790,10 @@ async fn process_initial_mutation(
                     commit_initial_view(tx, &mutation.operation_id).await
                 }
                 Err(error) => {
-                    log_killbill_error("Kill Bill mutation readback violated identity contract", &error);
+                    log_killbill_error(
+                        "Kill Bill mutation readback violated identity contract",
+                        &error,
+                    );
                     recover_after_ambiguous_effect(
                         tx,
                         state,
@@ -827,17 +807,14 @@ async fn process_initial_mutation(
         }
         Err(error) if error.requires_read_before_retry => {
             log_killbill_error("Kill Bill mutation outcome is ambiguous", &error);
-            recover_after_ambiguous_effect(
-                tx,
-                state,
-                &mutation,
-                &payment_key,
-                &transaction_key,
-            )
-            .await
+            recover_after_ambiguous_effect(tx, state, &mutation, &payment_key, &transaction_key)
+                .await
         }
         Err(error) => {
-            log_killbill_error("Kill Bill initial mutation failed before an ambiguous effect", &error);
+            log_killbill_error(
+                "Kill Bill initial mutation failed before an ambiguous effect",
+                &error,
+            );
             persist_initial_state(
                 &mut tx,
                 &mutation.operation_id,
@@ -860,14 +837,7 @@ async fn recover_after_ambiguous_effect(
     payment_key: &str,
     transaction_key: &str,
 ) -> Result<(StatusCode, Json<CanonicalPaymentView>), ApiError> {
-    match inquiry_initial_outcome(
-        &state.killbill,
-        payment_key,
-        transaction_key,
-        mutation,
-    )
-    .await
-    {
+    match inquiry_initial_outcome(&state.killbill, payment_key, transaction_key, mutation).await {
         Ok(Some(outcome)) => {
             persist_initial_outcome(&mut tx, &mutation.operation_id, &outcome).await?;
         }
@@ -934,14 +904,17 @@ async fn resolve_account(
     killbill: &KillBillClient,
     mutation: &CanonicalMutation,
 ) -> Result<uuid::Uuid, KillBillClientError> {
-    let external_key = account_external_key(&mutation.merchant_id, mutation.money.currency.as_str());
+    let external_key =
+        account_external_key(&mutation.merchant_id, mutation.money.currency.as_str());
 
     if let Some(account) = killbill.get_account_by_external_key(&external_key).await? {
         return verify_account(account, &external_key, mutation.money.currency.as_str());
     }
 
-    let request =
-        KillBillCreateAccountRequest::reference(external_key.clone(), mutation.money.currency.as_str())?;
+    let request = KillBillCreateAccountRequest::reference(
+        external_key.clone(),
+        mutation.money.currency.as_str(),
+    )?;
 
     match killbill.create_account(&request).await {
         Ok(account) => verify_account(account, &external_key, mutation.money.currency.as_str()),
@@ -991,9 +964,11 @@ async fn resolve_payment_method(
         token,
     );
 
-    if let Some(payment_method_id) =
-        find_payment_method(killbill.list_payment_methods(account_id).await?, account_id, &external_key)?
-    {
+    if let Some(payment_method_id) = find_payment_method(
+        killbill.list_payment_methods(account_id).await?,
+        account_id,
+        &external_key,
+    )? {
         return Ok(payment_method_id);
     }
 
@@ -1028,7 +1003,9 @@ fn find_payment_method(
 
     match matching.as_slice() {
         [] => Ok(None),
-        [method] => verify_payment_method((*method).clone(), account_id, expected_external_key).map(Some),
+        [method] => {
+            verify_payment_method((*method).clone(), account_id, expected_external_key).map(Some)
+        }
         _ => Err(KillBillClientError::invariant(
             "duplicate Kill Bill payment methods for deterministic external key",
         )),
@@ -1181,13 +1158,7 @@ async fn persist_initial_outcome(
     operation_id: &str,
     outcome: &KillBillMappedOutcome,
 ) -> Result<(), ApiError> {
-    persist_outcome(
-        tx,
-        operation_id,
-        outcome,
-        PaymentState::PaymentPending,
-    )
-    .await
+    persist_outcome(tx, operation_id, outcome, PaymentState::PaymentPending).await
 }
 
 async fn persist_outcome(
@@ -1361,22 +1332,21 @@ async fn get_payment(
             }
         }
     } else {
-        let context =
-            match load_follow_up_payment_context(&mut tx, &row, &current_view).await {
-                Ok(context) => context,
-                Err(ApiError::Conflict(message)) => {
-                    persist_initial_state(
-                        &mut tx,
-                        &operation_id,
-                        PaymentState::PaymentUnknown,
-                        OperationState::ManualReview,
-                    )
-                    .await?;
-                    tx.commit().await.map_err(internal)?;
-                    return Err(ApiError::Conflict(message));
-                }
-                Err(error) => return Err(error),
-            };
+        let context = match load_follow_up_payment_context(&mut tx, &row, &current_view).await {
+            Ok(context) => context,
+            Err(ApiError::Conflict(message)) => {
+                persist_initial_state(
+                    &mut tx,
+                    &operation_id,
+                    PaymentState::PaymentUnknown,
+                    OperationState::ManualReview,
+                )
+                .await?;
+                tx.commit().await.map_err(internal)?;
+                return Err(ApiError::Conflict(message));
+            }
+            Err(error) => return Err(error),
+        };
         match inquiry_follow_up_outcome(
             &state.killbill,
             context.killbill_payment_id,
@@ -1488,7 +1458,6 @@ async fn load_latest_operation_for_update(
     .map_err(internal)?
     .ok_or_else(|| ApiError::NotFound("payment not found".into()))
 }
-
 
 fn stored_row_matches(row: &PgRow, mutation: &CanonicalMutation) -> Result<bool, ApiError> {
     let operation_id: String = row.try_get("operation_id").map_err(internal)?;
@@ -1635,7 +1604,6 @@ fn parse_payment_operation_kind(value: &str) -> Result<PaymentOperationKind, Api
     }
 }
 
-
 fn log_killbill_error(context: &str, error: &KillBillClientError) {
     tracing::warn!(
         context,
@@ -1674,7 +1642,10 @@ mod tests {
             PaymentState::PaymentFailed,
             PaymentState::PaymentUnknown,
         ] {
-            assert_eq!(parse_payment_state(payment_state_name(state)).unwrap(), state);
+            assert_eq!(
+                parse_payment_state(payment_state_name(state)).unwrap(),
+                state
+            );
         }
 
         for state in [
