@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/fault-plan",
   "crates/payment-contract",
   "merchant",
   "gateway",
