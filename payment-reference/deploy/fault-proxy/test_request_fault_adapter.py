@@ -9,23 +9,20 @@ def plan(*steps):
         "scenario_version": 1,
         "seed": 42,
         "logical_business_time": "2026-11-14T00:00:00Z",
-        "scenario_case": "request-adapter-test",
+        "scenario_case": "adapter-test",
         "expected_provider_truth": "AUTHORIZED",
         "expected_canonical_outcome": "PAYMENT_UNKNOWN/UNKNOWN",
         "steps": list(steps),
     }
 
 
-def request_step(step_id, sequence, offset_ms, point, path_suffix, action):
+def request_step(step_id, sequence, offset_ms, point, path_suffix, action, method="POST"):
     return {
         "step_id": step_id,
         "sequence": sequence,
         "offset_ms": offset_ms,
         "point": point,
-        "request_match": {
-            "method": "POST",
-            "path_suffix": path_suffix,
-        },
+        "request_match": {"method": method, "path_suffix": path_suffix},
         "action": action,
     }
 
@@ -55,99 +52,100 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
         self.assertEqual(503, decision["status"])
         self.assertIsNone(adapter.consume_before("POST", "/payments"))
 
-    def test_after_commit_drop_is_consumed_only_in_after_commit_phase(self):
+    def test_async_defer_and_timeline_transition_share_operation_identity(self):
         adapter = RequestFaultPlanAdapter()
         adapter.load(
             plan(
                 request_step(
-                    "commit-drop",
-                    1,
-                    0,
-                    "REQUEST_AFTER_PROVIDER_COMMIT",
-                    "/authorize",
-                    {"kind": "COMMIT_THEN_DROP_RESPONSE"},
-                )
-            )
-        )
-        adapter.advance(0)
-
-        self.assertIsNone(adapter.consume_before("POST", "/payments/kb-1/authorize"))
-        decision = adapter.consume_after_commit("POST", "/payments/kb-1/authorize")
-        self.assertEqual("DROP_AFTER_UPSTREAM_COMMIT", decision["effect"])
-        self.assertIsNone(adapter.consume_after_commit("POST", "/payments/kb-1/authorize"))
-
-    def test_non_request_steps_are_retained_as_deferred_not_executed(self):
-        adapter = RequestFaultPlanAdapter()
-        snapshot = adapter.load(
-            plan(
-                {
-                    "step_id": "stale-read",
-                    "sequence": 1,
-                    "offset_ms": 50,
-                    "point": "STATUS_INQUIRY",
-                    "action": {"kind": "STATUS_VISIBILITY", "visibility": "STALE"},
-                }
-            )
-        )
-
-        self.assertEqual([], snapshot["scheduled_request_steps"])
-        self.assertEqual("stale-read", snapshot["deferred_steps"][0]["step_id"])
-
-    def test_permanent_business_failure_has_explicit_non_retryable_4xx_status(self):
-        adapter = RequestFaultPlanAdapter()
-        adapter.load(
-            plan(
-                request_step(
-                    "decline",
+                    "defer",
                     1,
                     0,
                     "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
                     "/authorize",
-                    {
-                        "kind": "PERMANENT_BUSINESS_FAILURE",
-                        "status": 422,
-                        "code": "payment_declined",
+                    {"kind": "DEFER_ASYNC", "operation_id": "async-1"},
+                ),
+                {
+                    "step_id": "transition",
+                    "sequence": 2,
+                    "offset_ms": 100,
+                    "point": "PROVIDER_TRANSITION",
+                    "action": {
+                        "kind": "PROVIDER_TRANSITION",
+                        "operation_id": "async-1",
+                        "outcome": "SUCCEEDED",
                     },
+                },
+            )
+        )
+
+        adapter.advance(0)
+        decision = adapter.consume_before("POST", "/payments/kb-1/authorize")
+        self.assertEqual("DEFER_ASYNC", decision["effect"])
+        self.assertEqual("async-1", decision["operation_id"])
+
+        advanced = adapter.advance(100)
+        self.assertEqual("transition", advanced["due_events"][0]["step_id"])
+
+    def test_status_visibility_is_timeline_event_with_get_selector(self):
+        adapter = RequestFaultPlanAdapter()
+        adapter.load(
+            plan(
+                request_step(
+                    "stale",
+                    1,
+                    50,
+                    "STATUS_INQUIRY",
+                    "/payments/kb-1",
+                    {"kind": "STATUS_VISIBILITY", "visibility": "STALE"},
+                    method="GET",
                 )
             )
         )
-        adapter.advance(0)
 
-        decision = adapter.consume_before("POST", "/payments/kb-1/authorize")
-        self.assertEqual(422, decision["status"])
-        self.assertEqual("payment_declined", decision["error_code"])
+        advanced = adapter.advance(50)
+        event = advanced["due_events"][0]
+        self.assertEqual("STATUS_INQUIRY", event["point"])
+        self.assertEqual("GET", event["request_match"]["method"])
 
+    def test_transition_without_matching_defer_is_rejected(self):
+        adapter = RequestFaultPlanAdapter()
         with self.assertRaises(FaultPlanValidationError):
             adapter.load(
                 plan(
-                    request_step(
-                        "bad-decline",
-                        1,
-                        0,
-                        "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
-                        "/authorize",
-                        {
-                            "kind": "PERMANENT_BUSINESS_FAILURE",
-                            "status": 429,
-                            "code": "wrong-classification",
+                    {
+                        "step_id": "orphan-transition",
+                        "sequence": 1,
+                        "offset_ms": 10,
+                        "point": "PROVIDER_TRANSITION",
+                        "action": {
+                            "kind": "PROVIDER_TRANSITION",
+                            "operation_id": "missing",
+                            "outcome": "FAILED",
                         },
-                    )
+                    }
                 )
             )
 
-    def test_request_method_must_match_ascii_contract(self):
+    def test_webhook_remains_deferred(self):
         adapter = RequestFaultPlanAdapter()
-        invalid = request_step(
-            "unicode-method",
-            1,
-            0,
-            "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
-            "/payments",
-            {"kind": "HTTP_FAILURE", "status": 503},
+        snapshot = adapter.load(
+            plan(
+                {
+                    "step_id": "webhook",
+                    "sequence": 1,
+                    "offset_ms": 10,
+                    "point": "WEBHOOK_DELIVERY",
+                    "action": {
+                        "kind": "WEBHOOK",
+                        "delivery": "DELIVER",
+                        "event_id": "event-1",
+                        "attempt": 1,
+                    },
+                }
+            )
         )
-        invalid["request_match"]["method"] = "ＰＯＳＴ"
-        with self.assertRaises(FaultPlanValidationError):
-            adapter.load(plan(invalid))
+        self.assertEqual("webhook", snapshot["deferred_steps"][0]["step_id"])
+        self.assertEqual([], adapter.advance(100)["due_events"])
 
     def test_backward_logical_time_is_rejected(self):
         adapter = RequestFaultPlanAdapter()

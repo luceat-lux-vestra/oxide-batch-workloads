@@ -46,6 +46,8 @@ impl FaultPlan {
 
         let mut step_ids = HashSet::new();
         let mut sequences = HashSet::new();
+        let mut deferred_async_ids = HashSet::new();
+        let mut transition_ids = HashSet::new();
         for step in &self.steps {
             step.validate()?;
             if !step_ids.insert(step.step_id.as_str()) {
@@ -53,6 +55,30 @@ impl FaultPlan {
             }
             if !sequences.insert(step.sequence) {
                 return Err(FaultPlanError::DuplicateSequence(step.sequence));
+            }
+
+            match &step.action {
+                FaultAction::DeferAsync { operation_id } => {
+                    if !deferred_async_ids.insert(operation_id.clone()) {
+                        return Err(FaultPlanError::DuplicateAsyncOperationId(
+                            operation_id.clone(),
+                        ));
+                    }
+                }
+                FaultAction::ProviderTransition { operation_id, .. } => {
+                    if !transition_ids.insert(operation_id.clone()) {
+                        return Err(FaultPlanError::DuplicateProviderTransition(
+                            operation_id.clone(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for operation_id in transition_ids {
+            if !deferred_async_ids.contains(&operation_id) {
+                return Err(FaultPlanError::OrphanProviderTransition(operation_id));
             }
         }
 
@@ -119,11 +145,13 @@ impl FaultStep {
     fn validate(&self) -> Result<(), FaultPlanError> {
         require_non_blank("step_id", &self.step_id)?;
 
-        let request_point = matches!(
+        let selected_point = matches!(
             self.point,
-            FaultPoint::RequestBeforeProviderSideEffect | FaultPoint::RequestAfterProviderCommit
+            FaultPoint::RequestBeforeProviderSideEffect
+                | FaultPoint::RequestAfterProviderCommit
+                | FaultPoint::StatusInquiry
         );
-        match (request_point, self.request_match.as_ref()) {
+        match (selected_point, self.request_match.as_ref()) {
             (true, Some(request_match)) => request_match.validate()?,
             (true, None) => {
                 return Err(FaultPlanError::MissingRequestMatch(self.step_id.clone()));
@@ -141,6 +169,7 @@ impl FaultStep {
                 FaultAction::TransportFailure { .. }
                     | FaultAction::HttpFailure { .. }
                     | FaultAction::PermanentBusinessFailure { .. }
+                    | FaultAction::DeferAsync { .. }
             ) | (
                 FaultPoint::RequestAfterProviderCommit,
                 FaultAction::CommitThenDropResponse
@@ -176,6 +205,12 @@ impl FaultStep {
                 }
                 require_non_blank("business_failure.code", code)?;
             }
+            FaultAction::DeferAsync { operation_id } => {
+                require_non_blank("defer_async.operation_id", operation_id)?;
+            }
+            FaultAction::ProviderTransition { operation_id, .. } => {
+                require_non_blank("provider_transition.operation_id", operation_id)?;
+            }
             FaultAction::Webhook {
                 event_id, attempt, ..
             } => {
@@ -186,8 +221,7 @@ impl FaultStep {
             }
             FaultAction::TransportFailure { .. }
             | FaultAction::CommitThenDropResponse
-            | FaultAction::StatusVisibility { .. }
-            | FaultAction::ProviderTransition { .. } => {}
+            | FaultAction::StatusVisibility { .. } => {}
         }
 
         Ok(())
@@ -217,11 +251,15 @@ pub enum FaultAction {
         status: u16,
         code: String,
     },
+    DeferAsync {
+        operation_id: String,
+    },
     CommitThenDropResponse,
     StatusVisibility {
         visibility: StatusVisibility,
     },
     ProviderTransition {
+        operation_id: String,
         outcome: AsyncOutcome,
     },
     Webhook {
@@ -237,6 +275,7 @@ impl FaultAction {
             Self::TransportFailure { .. } => "TRANSPORT_FAILURE",
             Self::HttpFailure { .. } => "HTTP_FAILURE",
             Self::PermanentBusinessFailure { .. } => "PERMANENT_BUSINESS_FAILURE",
+            Self::DeferAsync { .. } => "DEFER_ASYNC",
             Self::CommitThenDropResponse => "COMMIT_THEN_DROP_RESPONSE",
             Self::StatusVisibility { .. } => "STATUS_VISIBILITY",
             Self::ProviderTransition { .. } => "PROVIDER_TRANSITION",
@@ -345,6 +384,9 @@ pub enum FaultPlanError {
     EmptySteps,
     DuplicateStepId(String),
     DuplicateSequence(u32),
+    DuplicateAsyncOperationId(String),
+    DuplicateProviderTransition(String),
+    OrphanProviderTransition(String),
     MissingRequestMatch(String),
     UnexpectedRequestMatch(String),
     InvalidRequestMethod(String),
@@ -375,6 +417,18 @@ impl fmt::Display for FaultPlanError {
             Self::DuplicateStepId(step_id) => write!(f, "duplicate step_id: {step_id}"),
             Self::DuplicateSequence(sequence) => {
                 write!(f, "duplicate step sequence: {sequence}")
+            }
+            Self::DuplicateAsyncOperationId(operation_id) => {
+                write!(f, "duplicate deferred async operation_id: {operation_id}")
+            }
+            Self::DuplicateProviderTransition(operation_id) => {
+                write!(f, "duplicate provider transition operation_id: {operation_id}")
+            }
+            Self::OrphanProviderTransition(operation_id) => {
+                write!(
+                    f,
+                    "provider transition has no matching DEFER_ASYNC operation: {operation_id}"
+                )
             }
             Self::MissingRequestMatch(step_id) => {
                 write!(f, "request fault step {step_id} requires request_match")
@@ -447,14 +501,18 @@ mod tests {
         point: FaultPoint,
         action: FaultAction,
     ) -> FaultStep {
-        let request_match = matches!(
-            point,
-            FaultPoint::RequestBeforeProviderSideEffect | FaultPoint::RequestAfterProviderCommit
-        )
-        .then(|| RequestMatch {
-            method: "POST".into(),
-            path_suffix: "/payments".into(),
-        });
+        let request_match = match point {
+            FaultPoint::RequestBeforeProviderSideEffect
+            | FaultPoint::RequestAfterProviderCommit => Some(RequestMatch {
+                method: "POST".into(),
+                path_suffix: "/payments".into(),
+            }),
+            FaultPoint::StatusInquiry => Some(RequestMatch {
+                method: "GET".into(),
+                path_suffix: "/payments".into(),
+            }),
+            FaultPoint::ProviderTransition | FaultPoint::WebhookDelivery => None,
+        };
 
         FaultStep {
             step_id: step_id.into(),
@@ -584,11 +642,21 @@ mod tests {
     fn validation_rejects_duplicate_step_identity_and_sequence() {
         let duplicate_id = plan(vec![
             step(
+                "defer-async",
+                0,
+                0,
+                FaultPoint::RequestBeforeProviderSideEffect,
+                FaultAction::DeferAsync {
+                    operation_id: "async-1".into(),
+                },
+            ),
+            step(
                 "same",
                 1,
                 0,
                 FaultPoint::ProviderTransition,
                 FaultAction::ProviderTransition {
+                    operation_id: "async-1".into(),
                     outcome: AsyncOutcome::Succeeded,
                 },
             ),
@@ -598,6 +666,7 @@ mod tests {
                 1,
                 FaultPoint::ProviderTransition,
                 FaultAction::ProviderTransition {
+                    operation_id: "async-1".into(),
                     outcome: AsyncOutcome::Failed,
                 },
             ),
@@ -609,11 +678,21 @@ mod tests {
 
         let duplicate_sequence = plan(vec![
             step(
+                "defer-async",
+                0,
+                0,
+                FaultPoint::RequestBeforeProviderSideEffect,
+                FaultAction::DeferAsync {
+                    operation_id: "async-1".into(),
+                },
+            ),
+            step(
                 "one",
                 1,
                 0,
                 FaultPoint::ProviderTransition,
                 FaultAction::ProviderTransition {
+                    operation_id: "async-1".into(),
                     outcome: AsyncOutcome::Succeeded,
                 },
             ),
@@ -623,6 +702,7 @@ mod tests {
                 1,
                 FaultPoint::ProviderTransition,
                 FaultAction::ProviderTransition {
+                    operation_id: "async-1".into(),
                     outcome: AsyncOutcome::Failed,
                 },
             ),

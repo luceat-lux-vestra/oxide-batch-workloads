@@ -107,7 +107,8 @@
                     "enum": [
                       "TRANSPORT_FAILURE",
                       "HTTP_FAILURE",
-                      "PERMANENT_BUSINESS_FAILURE"
+                      "PERMANENT_BUSINESS_FAILURE",
+                      "DEFER_ASYNC"
                     ]
                   }
                 }
@@ -157,13 +158,18 @@
                     "const": "STATUS_VISIBILITY"
                   }
                 }
+              },
+              "request_match": {
+                "properties": {
+                  "method": {
+                    "const": "GET"
+                  }
+                }
               }
             },
-            "not": {
-              "required": [
-                "request_match"
-              ]
-            }
+            "required": [
+              "request_match"
+            ]
           }
         },
         {
@@ -292,6 +298,23 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "kind",
+            "operation_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "DEFER_ASYNC"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
             "kind"
           ],
           "properties": {
@@ -325,6 +348,7 @@
           "additionalProperties": false,
           "required": [
             "kind",
+            "operation_id",
             "outcome"
           ],
           "properties": {
@@ -336,6 +360,10 @@
                 "SUCCEEDED",
                 "FAILED"
               ]
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
             }
           }
         },

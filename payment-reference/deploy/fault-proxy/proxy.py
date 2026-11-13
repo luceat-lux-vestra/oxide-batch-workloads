@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import copy
 import http.client
 import json
 import os
@@ -6,7 +7,12 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from request_fault_adapter import FaultPlanValidationError, RequestFaultPlanAdapter
+from request_fault_adapter import (
+    FaultPlanValidationError,
+    PROVIDER_TRANSITION,
+    STATUS_INQUIRY,
+    RequestFaultPlanAdapter,
+)
 
 LISTEN_ADDRESS = os.environ.get("PROXY_LISTEN_ADDRESS", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("PROXY_LISTEN_PORT", "8080"))
@@ -40,6 +46,10 @@ class FaultState:
         self.responded = 0
         self.last_dropped_path = None
         self.last_responded_path = None
+        self.pending_async = {}
+        self.provider_overlays = {}
+        self.status_visibility = {}
+        self.transition_history = []
         self.request_fault_plan.reset()
 
     def arm(self, method, path_suffix):
@@ -95,7 +105,13 @@ class FaultState:
             return False
 
     def load_plan(self, payload):
-        return self.request_fault_plan.load(payload)
+        snapshot = self.request_fault_plan.load(payload)
+        with self.lock:
+            self.pending_async = {}
+            self.provider_overlays = {}
+            self.status_visibility = {}
+            self.transition_history = []
+        return snapshot
 
     def advance_plan(self, offset_ms):
         return self.request_fault_plan.advance(offset_ms)
@@ -105,6 +121,123 @@ class FaultState:
 
     def consume_plan_after_commit(self, method, path):
         return self.request_fault_plan.consume_after_commit(method, path)
+
+    def register_pending_async(self, operation_id, request_record):
+        with self.lock:
+            if operation_id in self.pending_async:
+                raise FaultPlanValidationError(
+                    f"async operation already pending: {operation_id}"
+                )
+            self.pending_async[operation_id] = copy.deepcopy(request_record)
+
+    def pending_async_operation(self, operation_id):
+        with self.lock:
+            operation = self.pending_async.get(operation_id)
+            return copy.deepcopy(operation) if operation is not None else None
+
+    def complete_async_success(self, operation_id, status_path, provider_view, upstream_status):
+        with self.lock:
+            self.pending_async.pop(operation_id, None)
+            self.provider_overlays.pop(status_path, None)
+            self.transition_history.append(
+                {
+                    "operation_id": operation_id,
+                    "outcome": "SUCCEEDED",
+                    "status_path": status_path,
+                    "provider_side_effect": True,
+                    "upstream_status": upstream_status,
+                    "provider_view": copy.deepcopy(provider_view),
+                }
+            )
+
+    def complete_async_failure(self, operation_id, status_path, provider_view):
+        with self.lock:
+            self.pending_async.pop(operation_id, None)
+            self.provider_overlays[status_path] = copy.deepcopy(provider_view)
+            self.transition_history.append(
+                {
+                    "operation_id": operation_id,
+                    "outcome": "FAILED",
+                    "status_path": status_path,
+                    "provider_side_effect": False,
+                    "upstream_status": None,
+                    "provider_view": copy.deepcopy(provider_view),
+                }
+            )
+
+    def provider_overlay(self, path):
+        with self.lock:
+            view = self.provider_overlays.get(path)
+            return copy.deepcopy(view) if view is not None else None
+
+    def apply_status_visibility(self, step):
+        request_match = step["request_match"]
+        key = (request_match["method"], request_match["path_suffix"])
+        visibility = step["action"]["visibility"]
+        with self.lock:
+            if visibility == "IMMEDIATE":
+                self.status_visibility.pop(key, None)
+            else:
+                previous = self.status_visibility.get(key)
+                snapshots = (
+                    copy.deepcopy(previous.get("snapshots", {}))
+                    if previous is not None and previous.get("visibility") == "STALE"
+                    else {}
+                )
+                self.status_visibility[key] = {
+                    "step_id": step["step_id"],
+                    "sequence": step["sequence"],
+                    "visibility": visibility,
+                    "request_match": copy.deepcopy(request_match),
+                    "snapshots": snapshots if visibility == "STALE" else {},
+                }
+
+    def visibility_for(self, method, path):
+        method = method.upper()
+        with self.lock:
+            matches = [
+                rule
+                for rule in self.status_visibility.values()
+                if method == rule["request_match"]["method"]
+                and path.endswith(rule["request_match"]["path_suffix"])
+            ]
+            if not matches:
+                return None
+            return copy.deepcopy(max(matches, key=lambda rule: rule["sequence"]))
+
+    def stale_snapshot(self, method, path):
+        method = method.upper()
+        with self.lock:
+            matches = [
+                rule
+                for rule in self.status_visibility.values()
+                if rule["visibility"] == "STALE"
+                and method == rule["request_match"]["method"]
+                and path.endswith(rule["request_match"]["path_suffix"])
+            ]
+            if not matches:
+                return None
+            rule = max(matches, key=lambda item: item["sequence"])
+            snapshot = rule["snapshots"].get(path)
+            return copy.deepcopy(snapshot) if snapshot is not None else None
+
+    def remember_stale_snapshot(self, method, path, provider_view):
+        method = method.upper()
+        with self.lock:
+            matches = [
+                rule
+                for rule in self.status_visibility.values()
+                if rule["visibility"] == "STALE"
+                and method == rule["request_match"]["method"]
+                and path.endswith(rule["request_match"]["path_suffix"])
+            ]
+            if not matches:
+                return
+            rule = max(matches, key=lambda item: item["sequence"])
+            rule["snapshots"].setdefault(path, copy.deepcopy(provider_view))
+
+    def capture_stale_before_transition(self, status_path, provider_view):
+        self.remember_stale_snapshot("GET", status_path, provider_view)
 
     def snapshot(self):
         with self.lock:
@@ -117,6 +250,10 @@ class FaultState:
                 "responded": self.responded,
                 "last_dropped_path": self.last_dropped_path,
                 "last_responded_path": self.last_responded_path,
+                "pending_async": copy.deepcopy(self.pending_async),
+                "provider_overlays": copy.deepcopy(self.provider_overlays),
+                "status_visibility": copy.deepcopy(list(self.status_visibility.values())),
+                "transition_history": copy.deepcopy(self.transition_history),
             }
         legacy["plan"] = self.request_fault_plan.snapshot()
         return legacy
@@ -167,9 +304,17 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             try:
                 payload = json.loads(body.decode("utf-8") or "{}")
-                self._json(200, STATE.advance_plan(payload["offset_ms"]))
+                result = STATE.advance_plan(payload["offset_ms"])
+                executions = []
+                for step in result["due_events"]:
+                    executions.append(self._execute_timeline_step(step))
+                response = STATE.snapshot()
+                response["timeline_executions"] = executions
+                self._json(200, response)
             except (KeyError, FaultPlanValidationError, TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._json(400, {"error": f"invalid logical-time advance: {exc}"})
+            except (OSError, http.client.HTTPException, RuntimeError) as exc:
+                self._json(502, {"error": f"fault-plan transition execution failed: {exc}"})
             return
         if self.path == "/__fault/drop-next":
             body = self._read_body()
@@ -225,22 +370,60 @@ class Handler(BaseHTTPRequestHandler):
 
     def _proxy(self):
         body = self._read_body()
+        try:
+            self._proxy_with_body(body)
+        except (OSError, http.client.HTTPException, RuntimeError, FaultPlanValidationError) as exc:
+            self._json(502, {"error": f"upstream proxy failure: {exc}"})
+
+    def _proxy_with_body(self, body):
+        if self.command == "GET":
+            visibility = STATE.visibility_for(self.command, self.path)
+            if visibility is not None:
+                if visibility["visibility"] == "NOT_FOUND":
+                    self._json(
+                        404,
+                        {
+                            "error": {
+                                "code": "payment_not_found",
+                                "message": "synthetic provider visibility gap",
+                            }
+                        },
+                    )
+                    return
+                if visibility["visibility"] == "STALE":
+                    snapshot = STATE.stale_snapshot(self.command, self.path)
+                    if snapshot is None:
+                        snapshot = self._read_effective_provider_view(self.path)
+                        STATE.remember_stale_snapshot(self.command, self.path, snapshot)
+                    self._json(200, snapshot)
+                    return
+
+            overlay = STATE.provider_overlay(self.path)
+            if overlay is not None:
+                self._json(200, overlay)
+                return
 
         plan_before = STATE.consume_plan_before(self.command, self.path)
         if plan_before is not None:
-            if plan_before["effect"] == "DROP_BEFORE_UPSTREAM":
+            effect = plan_before["effect"]
+            if effect == "DROP_BEFORE_UPSTREAM":
                 self._drop_downstream()
                 return
-            self._json(
-                plan_before["status"],
-                {
-                    "error": {
-                        "code": plan_before["error_code"],
-                        "message": plan_before["message"],
-                    }
-                },
-            )
-            return
+            if effect == "RESPOND_BEFORE_UPSTREAM":
+                self._json(
+                    plan_before["status"],
+                    {
+                        "error": {
+                            "code": plan_before["error_code"],
+                            "message": plan_before["message"],
+                        }
+                    },
+                )
+                return
+            if effect == "DEFER_ASYNC":
+                self._defer_async_request(plan_before, body)
+                return
+            raise RuntimeError(f"unsupported request fault effect: {effect}")
 
         response_rule = STATE.consume_response(self.command, self.path)
         if response_rule is not None:
@@ -255,6 +438,145 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        status, response_headers, payload = self._send_upstream(
+            self.command,
+            self.path,
+            body,
+            self._forward_headers(body),
+        )
+
+        plan_after = STATE.consume_plan_after_commit(self.command, self.path)
+        if plan_after is not None:
+            self._drop_downstream()
+            return
+
+        if STATE.consume_drop(self.command, self.path):
+            self._drop_downstream()
+            return
+
+        self._write_upstream_response(status, response_headers, payload)
+
+    def _defer_async_request(self, plan_before, body):
+        operation_id = plan_before["operation_id"]
+        status_path = self._status_path_for_mutation(self.path)
+        pending_view = self._read_effective_provider_view(status_path)
+        STATE.register_pending_async(
+            operation_id,
+            {
+                "method": self.command,
+                "path": self.path,
+                "status_path": status_path,
+                "body": body.decode("utf-8"),
+                "headers": self._forward_headers(body),
+                "pending_view": pending_view,
+            },
+        )
+        self._json(200, pending_view)
+
+    def _execute_timeline_step(self, step):
+        if step["point"] == STATUS_INQUIRY:
+            STATE.apply_status_visibility(step)
+            return {
+                "step_id": step["step_id"],
+                "point": step["point"],
+                "visibility": step["action"]["visibility"],
+            }
+
+        if step["point"] != PROVIDER_TRANSITION:
+            raise RuntimeError(f"unsupported timeline step in this checkpoint: {step['point']}")
+
+        action = step["action"]
+        operation_id = action["operation_id"]
+        operation = STATE.pending_async_operation(operation_id)
+        if operation is None:
+            raise RuntimeError(
+                f"provider transition has no pending runtime operation: {operation_id}"
+            )
+
+        status_path = operation["status_path"]
+        pending_view = operation["pending_view"]
+        STATE.capture_stale_before_transition(status_path, pending_view)
+
+        if action["outcome"] == "FAILED":
+            failed_view = copy.deepcopy(pending_view)
+            failed_view["status"] = "failed"
+            version = failed_view.get("version")
+            if isinstance(version, int) and not isinstance(version, bool):
+                failed_view["version"] = version + 1
+            STATE.complete_async_failure(operation_id, status_path, failed_view)
+            return {
+                "step_id": step["step_id"],
+                "point": step["point"],
+                "operation_id": operation_id,
+                "outcome": "FAILED",
+                "provider_side_effect": False,
+                "status_path": status_path,
+            }
+
+        if action["outcome"] != "SUCCEEDED":
+            raise RuntimeError(f"unsupported provider transition outcome: {action['outcome']}")
+
+        status, _, payload = self._send_upstream(
+            operation["method"],
+            operation["path"],
+            operation["body"].encode("utf-8"),
+            operation["headers"],
+        )
+        if status < 200 or status >= 300:
+            raise RuntimeError(
+                f"deferred provider mutation returned HTTP {status} for {operation_id}"
+            )
+        try:
+            provider_view = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"deferred provider mutation returned invalid JSON for {operation_id}: {exc}"
+            ) from exc
+        if not isinstance(provider_view, dict):
+            raise RuntimeError(
+                f"deferred provider mutation returned non-object JSON for {operation_id}"
+            )
+
+        STATE.complete_async_success(operation_id, status_path, provider_view, status)
+        return {
+            "step_id": step["step_id"],
+            "point": step["point"],
+            "operation_id": operation_id,
+            "outcome": "SUCCEEDED",
+            "provider_side_effect": True,
+            "status_path": status_path,
+            "upstream_status": status,
+        }
+
+    def _read_effective_provider_view(self, path):
+        overlay = STATE.provider_overlay(path)
+        if overlay is not None:
+            return overlay
+
+        status, _, payload = self._send_upstream("GET", path, b"", {})
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"provider status lookup returned HTTP {status}: {path}")
+        try:
+            provider_view = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"provider status lookup returned invalid JSON: {path}") from exc
+        if not isinstance(provider_view, dict):
+            raise RuntimeError(f"provider status lookup returned non-object JSON: {path}")
+        return provider_view
+
+    def _send_upstream(self, method, path, body, headers):
+        connection = http.client.HTTPConnection(UPSTREAM_HOST, UPSTREAM_PORT, timeout=10)
+        try:
+            connection.request(method, path, body=body or None, headers=headers)
+            response = connection.getresponse()
+            payload = response.read()
+            response_headers = response.getheaders()
+            STATE.record_forward(method, path)
+            return response.status, response_headers, payload
+        finally:
+            connection.close()
+
+    def _forward_headers(self, body):
         headers = {}
         for name, value in self.headers.items():
             lower = name.lower()
@@ -263,40 +585,28 @@ class Handler(BaseHTTPRequestHandler):
             headers[name] = value
         if body:
             headers["Content-Length"] = str(len(body))
+        return headers
 
-        connection = http.client.HTTPConnection(UPSTREAM_HOST, UPSTREAM_PORT, timeout=10)
-        try:
-            connection.request(self.command, self.path, body=body or None, headers=headers)
-            response = connection.getresponse()
-            payload = response.read()
-            STATE.record_forward(self.command, self.path)
+    @staticmethod
+    def _status_path_for_mutation(path):
+        parts = path.split("?")[0].rstrip("/").split("/")
+        if len(parts) < 4 or parts[1] != "payments":
+            raise FaultPlanValidationError(
+                f"DEFER_ASYNC requires /payments/<id>/<operation> path: {path}"
+            )
+        return "/".join(parts[:-1]) or "/"
 
-            # The upstream response is fully consumed before the downstream
-            # connection is dropped. This deterministically models
-            # commit-success / response-loss ambiguity.
-            plan_after = STATE.consume_plan_after_commit(self.command, self.path)
-            if plan_after is not None:
-                self._drop_downstream()
-                return
-
-            if STATE.consume_drop(self.command, self.path):
-                self._drop_downstream()
-                return
-
-            self.send_response(response.status)
-            for name, value in response.getheaders():
-                lower = name.lower()
-                if lower in HOP_BY_HOP or lower == "content-length":
-                    continue
-                self.send_header(name, value)
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            if payload:
-                self.wfile.write(payload)
-        except (OSError, http.client.HTTPException) as exc:
-            self._json(502, {"error": f"upstream proxy failure: {exc}"})
-        finally:
-            connection.close()
+    def _write_upstream_response(self, status, response_headers, payload):
+        self.send_response(status)
+        for name, value in response_headers:
+            lower = name.lower()
+            if lower in HOP_BY_HOP or lower == "content-length":
+                continue
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if payload:
+            self.wfile.write(payload)
 
     def _drop_downstream(self):
         try:

@@ -5,7 +5,13 @@ import threading
 FAULT_PLAN_VERSION = 1
 REQUEST_BEFORE = "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT"
 REQUEST_AFTER = "REQUEST_AFTER_PROVIDER_COMMIT"
-REQUEST_POINTS = {REQUEST_BEFORE, REQUEST_AFTER}
+STATUS_INQUIRY = "STATUS_INQUIRY"
+PROVIDER_TRANSITION = "PROVIDER_TRANSITION"
+WEBHOOK_DELIVERY = "WEBHOOK_DELIVERY"
+
+_SELECTOR_POINTS = {REQUEST_BEFORE, REQUEST_AFTER, STATUS_INQUIRY}
+_REQUEST_POINTS = {REQUEST_BEFORE, REQUEST_AFTER}
+_TIMELINE_POINTS = {STATUS_INQUIRY, PROVIDER_TRANSITION}
 
 _ALLOWED_TRANSPORT = {"CONNECT", "REQUEST", "TIMEOUT", "CONNECTION_DROP"}
 _ALLOWED_TRANSIENT_HTTP = {429, 502, 503, 504}
@@ -29,9 +35,11 @@ class RequestFaultPlanAdapter:
         with self._lock:
             self._identity = None
             self._now_ms = 0
-            self._scheduled = []
-            self._active = []
-            self._consumed = []
+            self._scheduled_request = []
+            self._active_request_request = []
+            self._scheduled_timeline = []
+            self._consumed_request_request = []
+            self._dispatched_timeline = []
             self._deferred = []
 
     def load(self, payload):
@@ -39,9 +47,11 @@ class RequestFaultPlanAdapter:
         with self._lock:
             self._identity = normalized["identity"]
             self._now_ms = 0
-            self._scheduled = normalized["request_steps"]
-            self._active = []
-            self._consumed = []
+            self._scheduled_request = normalized["request_steps"]
+            self._active_request_request = []
+            self._scheduled_timeline = normalized["timeline_steps"]
+            self._consumed_request_request = []
+            self._dispatched_timeline = []
             self._deferred = normalized["deferred_steps"]
             return self._snapshot_unlocked()
 
@@ -52,10 +62,35 @@ class RequestFaultPlanAdapter:
                 raise FaultPlanValidationError(
                     f"logical time cannot move backward: current={self._now_ms} requested={offset_ms}"
                 )
-            while self._scheduled and self._scheduled[0]["offset_ms"] <= offset_ms:
-                self._active.append(self._scheduled.pop(0))
+
+            while (
+                self._scheduled_request
+                and self._scheduled_request[0]["offset_ms"] <= offset_ms
+            ):
+                self._active_request_request.append(self._scheduled_request.pop(0))
+
+            due_events = []
+            while (
+                self._scheduled_timeline
+                and self._scheduled_timeline[0]["offset_ms"] <= offset_ms
+            ):
+                step = self._scheduled_timeline.pop(0)
+                due_events.append(copy.deepcopy(step))
+                self._dispatched_timeline.append(
+                    {
+                        "step_id": step["step_id"],
+                        "point": step["point"],
+                        "sequence": step["sequence"],
+                        "offset_ms": step["offset_ms"],
+                        "dispatched_at_ms": offset_ms,
+                    }
+                )
+
             self._now_ms = offset_ms
-            return self._snapshot_unlocked()
+            return {
+                "snapshot": self._snapshot_unlocked(),
+                "due_events": due_events,
+            }
 
     def consume_before(self, method, path):
         with self._lock:
@@ -88,6 +123,12 @@ class RequestFaultPlanAdapter:
                     "message": "synthetic permanent business failure",
                     "step": step,
                 }
+            if kind == "DEFER_ASYNC":
+                return {
+                    "effect": "DEFER_ASYNC",
+                    "operation_id": action["operation_id"],
+                    "step": step,
+                }
             raise AssertionError(f"validated unsupported before-side-effect action: {kind}")
 
     def consume_after_commit(self, method, path):
@@ -108,15 +149,15 @@ class RequestFaultPlanAdapter:
 
     def _consume_matching_unlocked(self, point, method, path):
         method = method.upper()
-        for index, step in enumerate(self._active):
+        for index, step in enumerate(self._active_request):
             match = step["request_match"]
             if (
                 step["point"] == point
                 and method == match["method"]
                 and path.endswith(match["path_suffix"])
             ):
-                consumed = self._active.pop(index)
-                self._consumed.append(
+                consumed = self._active_request.pop(index)
+                self._consumed_request.append(
                     {
                         "step_id": consumed["step_id"],
                         "point": consumed["point"],
@@ -134,12 +175,13 @@ class RequestFaultPlanAdapter:
         return {
             "identity": copy.deepcopy(self._identity),
             "now_ms": self._now_ms,
-            "scheduled_request_steps": copy.deepcopy(self._scheduled),
-            "active_request_steps": copy.deepcopy(self._active),
-            "consumed_request_steps": copy.deepcopy(self._consumed),
+            "scheduled_request_steps": copy.deepcopy(self._scheduled_request),
+            "active_request_steps": copy.deepcopy(self._active_request),
+            "consumed_request_steps": copy.deepcopy(self._consumed_request),
+            "scheduled_timeline_steps": copy.deepcopy(self._scheduled_timeline),
+            "dispatched_timeline_steps": copy.deepcopy(self._dispatched_timeline),
             "deferred_steps": copy.deepcopy(self._deferred),
         }
-
 
 def _normalize_plan(payload):
     if not isinstance(payload, dict):
@@ -164,15 +206,20 @@ def _normalize_plan(payload):
     scenario_version = _non_negative_int(payload["scenario_version"], "scenario_version")
     if scenario_version == 0:
         raise FaultPlanValidationError("scenario_version must be greater than zero")
-    seed = _non_negative_int(payload["seed"], "seed")
-    logical_business_time = _non_blank(payload["logical_business_time"], "logical_business_time")
-    scenario_case = _non_blank(payload["scenario_case"], "scenario_case")
-    expected_provider_truth = _non_blank(
-        payload["expected_provider_truth"], "expected_provider_truth"
-    )
-    expected_canonical_outcome = _non_blank(
-        payload["expected_canonical_outcome"], "expected_canonical_outcome"
-    )
+
+    identity = {
+        "fault_plan_version": version,
+        "scenario_version": scenario_version,
+        "seed": _non_negative_int(payload["seed"], "seed"),
+        "logical_business_time": _non_blank(payload["logical_business_time"], "logical_business_time"),
+        "scenario_case": _non_blank(payload["scenario_case"], "scenario_case"),
+        "expected_provider_truth": _non_blank(
+            payload["expected_provider_truth"], "expected_provider_truth"
+        ),
+        "expected_canonical_outcome": _non_blank(
+            payload["expected_canonical_outcome"], "expected_canonical_outcome"
+        ),
+    }
 
     steps = payload["steps"]
     if not isinstance(steps, list) or not steps:
@@ -180,8 +227,12 @@ def _normalize_plan(payload):
 
     step_ids = set()
     sequences = set()
+    async_defer_ids = set()
+    transition_ids = set()
     request_steps = []
+    timeline_steps = []
     deferred_steps = []
+
     for raw_step in steps:
         step = _normalize_step(raw_step)
         if step["step_id"] in step_ids:
@@ -191,35 +242,45 @@ def _normalize_plan(payload):
         step_ids.add(step["step_id"])
         sequences.add(step["sequence"])
 
-        if step["point"] in REQUEST_POINTS:
+        action = step["action"]
+        if action["kind"] == "DEFER_ASYNC":
+            operation_id = action["operation_id"]
+            if operation_id in async_defer_ids:
+                raise FaultPlanValidationError(
+                    f"duplicate deferred async operation_id: {operation_id}"
+                )
+            async_defer_ids.add(operation_id)
+        if step["point"] == PROVIDER_TRANSITION:
+            operation_id = action["operation_id"]
+            if operation_id in transition_ids:
+                raise FaultPlanValidationError(
+                    f"duplicate provider transition operation_id: {operation_id}"
+                )
+            transition_ids.add(operation_id)
+
+        if step["point"] in _REQUEST_POINTS:
             request_steps.append(step)
+        elif step["point"] in _TIMELINE_POINTS:
+            timeline_steps.append(step)
         else:
-            deferred_steps.append(
-                {
-                    "step_id": step["step_id"],
-                    "point": step["point"],
-                    "sequence": step["sequence"],
-                    "offset_ms": step["offset_ms"],
-                }
-            )
+            deferred_steps.append(copy.deepcopy(step))
+
+    unknown_transitions = transition_ids - async_defer_ids
+    if unknown_transitions:
+        raise FaultPlanValidationError(
+            f"provider transition has no matching DEFER_ASYNC operation: {sorted(unknown_transitions)}"
+        )
 
     request_steps.sort(key=lambda step: (step["offset_ms"], step["sequence"]))
+    timeline_steps.sort(key=lambda step: (step["offset_ms"], step["sequence"]))
     deferred_steps.sort(key=lambda step: (step["offset_ms"], step["sequence"]))
 
     return {
-        "identity": {
-            "fault_plan_version": version,
-            "scenario_version": scenario_version,
-            "seed": seed,
-            "logical_business_time": logical_business_time,
-            "scenario_case": scenario_case,
-            "expected_provider_truth": expected_provider_truth,
-            "expected_canonical_outcome": expected_canonical_outcome,
-        },
+        "identity": identity,
         "request_steps": request_steps,
+        "timeline_steps": timeline_steps,
         "deferred_steps": deferred_steps,
     }
-
 
 def _normalize_step(raw):
     if not isinstance(raw, dict):
@@ -227,29 +288,22 @@ def _normalize_step(raw):
 
     base_keys = {"step_id", "sequence", "offset_ms", "point", "action"}
     point = _non_blank(raw.get("point"), "point")
-    request_point = point in REQUEST_POINTS
-    allowed = base_keys | ({"request_match"} if request_point else set())
+    selector_point = point in _SELECTOR_POINTS
+    allowed = base_keys | ({"request_match"} if selector_point else set())
     _exact_keys(raw, allowed, f"fault step {raw.get('step_id', '<unknown>')}")
 
-    step_id = _non_blank(raw["step_id"], "step_id")
-    sequence = _non_negative_int(raw["sequence"], "sequence")
-    offset_ms = _non_negative_int(raw["offset_ms"], "offset_ms")
-    action = _normalize_action(point, raw["action"])
-
-    if request_point:
-        request_match = _normalize_request_match(raw.get("request_match"))
-    else:
-        request_match = None
+    request_match = (
+        _normalize_request_match(raw.get("request_match")) if selector_point else None
+    )
 
     return {
-        "step_id": step_id,
-        "sequence": sequence,
-        "offset_ms": offset_ms,
+        "step_id": _non_blank(raw["step_id"], "step_id"),
+        "sequence": _non_negative_int(raw["sequence"], "sequence"),
+        "offset_ms": _non_negative_int(raw["offset_ms"], "offset_ms"),
         "point": point,
         "request_match": request_match,
-        "action": action,
+        "action": _normalize_action(point, raw["action"]),
     }
-
 
 def _normalize_request_match(raw):
     if not isinstance(raw, dict):
@@ -303,6 +357,13 @@ def _normalize_action(point, raw):
                 "code": _non_blank(raw["code"], "action.code"),
             }
 
+        if kind == "DEFER_ASYNC":
+            _exact_keys(raw, {"kind", "operation_id"}, "DEFER_ASYNC action")
+            return {
+                "kind": kind,
+                "operation_id": _non_blank(raw["operation_id"], "action.operation_id"),
+            }
+
         raise FaultPlanValidationError(
             f"action {kind} is incompatible with {REQUEST_BEFORE}"
         )
@@ -315,33 +376,45 @@ def _normalize_action(point, raw):
             )
         return {"kind": kind}
 
-    if point == "STATUS_INQUIRY":
+    if point == STATUS_INQUIRY:
         _exact_keys(raw, {"kind", "visibility"}, "STATUS_INQUIRY action")
         if kind != "STATUS_VISIBILITY":
-            raise FaultPlanValidationError(f"action {kind} is incompatible with STATUS_INQUIRY")
+            raise FaultPlanValidationError(
+                f"action {kind} is incompatible with {STATUS_INQUIRY}"
+            )
         visibility = _non_blank(raw["visibility"], "action.visibility")
         if visibility not in _ALLOWED_STATUS_VISIBILITY:
-            raise FaultPlanValidationError(f"unsupported status visibility: {visibility}")
+            raise FaultPlanValidationError(
+                f"unsupported status visibility: {visibility}"
+            )
         return {"kind": kind, "visibility": visibility}
 
-    if point == "PROVIDER_TRANSITION":
-        _exact_keys(raw, {"kind", "outcome"}, "PROVIDER_TRANSITION action")
+    if point == PROVIDER_TRANSITION:
+        _exact_keys(raw, {"kind", "operation_id", "outcome"}, "PROVIDER_TRANSITION action")
         if kind != "PROVIDER_TRANSITION":
             raise FaultPlanValidationError(
-                f"action {kind} is incompatible with PROVIDER_TRANSITION"
+                f"action {kind} is incompatible with {PROVIDER_TRANSITION}"
             )
         outcome = _non_blank(raw["outcome"], "action.outcome")
         if outcome not in _ALLOWED_ASYNC_OUTCOME:
             raise FaultPlanValidationError(f"unsupported provider outcome: {outcome}")
-        return {"kind": kind, "outcome": outcome}
+        return {
+            "kind": kind,
+            "operation_id": _non_blank(raw["operation_id"], "action.operation_id"),
+            "outcome": outcome,
+        }
 
-    if point == "WEBHOOK_DELIVERY":
+    if point == WEBHOOK_DELIVERY:
         _exact_keys(raw, {"kind", "delivery", "event_id", "attempt"}, "WEBHOOK action")
         if kind != "WEBHOOK":
-            raise FaultPlanValidationError(f"action {kind} is incompatible with WEBHOOK_DELIVERY")
+            raise FaultPlanValidationError(
+                f"action {kind} is incompatible with {WEBHOOK_DELIVERY}"
+            )
         delivery = _non_blank(raw["delivery"], "action.delivery")
         if delivery not in _ALLOWED_WEBHOOK_DELIVERY:
-            raise FaultPlanValidationError(f"unsupported webhook delivery: {delivery}")
+            raise FaultPlanValidationError(
+                f"unsupported webhook delivery: {delivery}"
+            )
         attempt = _non_negative_int(raw["attempt"], "action.attempt")
         if attempt == 0:
             raise FaultPlanValidationError("webhook attempt must be greater than zero")
@@ -353,7 +426,6 @@ def _normalize_action(point, raw):
         }
 
     raise FaultPlanValidationError(f"unsupported fault point: {point}")
-
 
 def _exact_keys(payload, expected, label):
     actual = set(payload)
