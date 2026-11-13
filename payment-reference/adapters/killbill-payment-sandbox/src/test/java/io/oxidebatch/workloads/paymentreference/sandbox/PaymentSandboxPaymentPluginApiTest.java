@@ -128,6 +128,27 @@ class PaymentSandboxPaymentPluginApiTest {
                 record.getProviderSecondaryIdempotencyKey());
     }
 
+    @Test
+    void successfulProviderCancellationIsProcessedForKillBillVoid() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        UUID authorizeTransactionId = UUID.randomUUID();
+        UUID voidTransactionId = UUID.randomUUID();
+
+        api.authorizePayment(
+                accountId, paymentId, authorizeTransactionId, UUID.randomUUID(),
+                new BigDecimal("7.00"), Currency.USD, Collections.emptyList(), context);
+
+        PaymentTransactionInfoPlugin info = api.voidPayment(
+                accountId, paymentId, voidTransactionId, UUID.randomUUID(),
+                Collections.emptyList(), context);
+
+        assertEquals(PaymentPluginStatus.PROCESSED, info.getStatus());
+        PaymentSandboxTransactionRecord record = dao.findByTransaction(voidTransactionId, tenantId);
+        assertEquals(PaymentPluginStatus.PROCESSED, record.getPluginStatus());
+        assertEquals("cancelled", record.getProviderStatus());
+    }
+
     private static CallContext context(UUID tenantId) {
         return (CallContext) Proxy.newProxyInstance(
                 CallContext.class.getClassLoader(),

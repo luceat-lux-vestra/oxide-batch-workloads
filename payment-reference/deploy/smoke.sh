@@ -3,43 +3,324 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 compose=(docker compose -f compose.yaml)
-port="${KILLBILL_PORT:-8080}"
-base="http://127.0.0.1:${port}"
+
+killbill_port="${KILLBILL_PORT:-8080}"
+gateway_port="${GATEWAY_PORT:-18082}"
+fault_proxy_port="${PAYMENT_SANDBOX_FAULT_PROXY_PORT:-18081}"
+
+killbill_base="http://127.0.0.1:${killbill_port}"
+gateway_base="http://127.0.0.1:${gateway_port}"
+fault_proxy_base="http://127.0.0.1:${fault_proxy_port}"
+
+export KILLBILL_USERNAME="${KILLBILL_USERNAME:-admin}"
+export KILLBILL_PASSWORD="${KILLBILL_PASSWORD:-password}"
+export KILLBILL_API_KEY="${KILLBILL_API_KEY:-pr-smoke-${RANDOM}-${RANDOM}}"
+export KILLBILL_API_SECRET="${KILLBILL_API_SECRET:-pr-secret-${RANDOM}-${RANDOM}-${RANDOM}}"
 
 diagnose() {
   status=$?
   if [ "$status" -ne 0 ]; then
     "${compose[@]}" ps || true
-    "${compose[@]}" logs --no-color --tail=200 killbill killbill-db payment-sandbox || true
+    "${compose[@]}" logs --no-color --tail=250 \
+      gateway gateway-db killbill killbill-db \
+      payment-sandbox-fault-proxy payment-sandbox || true
   fi
   exit "$status"
 }
 trap diagnose EXIT
 
+fail() {
+  printf 'payment-reference smoke failure: %s\n' "$*" >&2
+  return 1
+}
+
+wait_for_url() {
+  local url="$1"
+  local attempts="${2:-90}"
+  for _ in $(seq 1 "$attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  curl --fail --silent --show-error "$url" >/dev/null
+}
+
+post_gateway() {
+  local path="$1"
+  local body="$2"
+  local expected_status="$3"
+  local output="$4"
+  local status
+  status="$(
+    curl --silent --show-error \
+      --output "$output" \
+      --write-out '%{http_code}' \
+      --request POST \
+      --header 'Content-Type: application/json' \
+      --data "$body" \
+      "${gateway_base}${path}"
+  )"
+  if [ "$status" != "$expected_status" ]; then
+    cat "$output" >&2 || true
+    fail "POST ${path}: expected HTTP ${expected_status}, observed ${status}"
+  fi
+}
+
+get_gateway() {
+  local payment_id="$1"
+  local output="$2"
+  local status
+  status="$(
+    curl --silent --show-error \
+      --output "$output" \
+      --write-out '%{http_code}' \
+      "${gateway_base}/payments/${payment_id}"
+  )"
+  if [ "$status" != "200" ]; then
+    cat "$output" >&2 || true
+    fail "GET /payments/${payment_id}: expected HTTP 200, observed ${status}"
+  fi
+}
+
+assert_view() {
+  local file="$1"
+  local payment_state="$2"
+  local operation_state="$3"
+  jq -e \
+    --arg payment_state "$payment_state" \
+    --arg operation_state "$operation_state" \
+    '
+      .paymentState == $payment_state
+      and .lastOperationState == $operation_state
+      and ((.mapping.killbillPaymentId | type) == "string")
+      and ((.mapping.killbillPaymentId | length) > 0)
+      and ((.mapping.killbillTransactionId | type) == "string")
+      and ((.mapping.killbillTransactionId | length) > 0)
+    ' "$file" >/dev/null
+}
+
+killbill_payment() {
+  local payment_id="$1"
+  local output="$2"
+  curl --fail --silent --show-error \
+    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+    -H "X-Killbill-ApiKey: ${KILLBILL_API_KEY}" \
+    -H "X-Killbill-ApiSecret: ${KILLBILL_API_SECRET}" \
+    -H 'X-Killbill-CreatedBy: payment-reference-smoke' \
+    "${killbill_base}/1.0/kb/payments/${payment_id}/?withPluginInfo=true" \
+    >"$output"
+}
+
+provider_payment() {
+  local provider_payment_id="$1"
+  local output="$2"
+  "${compose[@]}" exec -T payment-sandbox \
+    curl --fail --silent --show-error \
+      "http://127.0.0.1:8080/payments/${provider_payment_id}" \
+    >"$output"
+}
+
 "${compose[@]}" up -d --build
 
-for _ in $(seq 1 90); do
-  if curl --fail --silent --show-error "${base}/1.0/healthcheck" >/tmp/payment-reference-health.json 2>/dev/null; then
-    break
-  fi
-  sleep 2
-done
-
-curl --fail --silent --show-error "${base}/1.0/healthcheck" >/tmp/payment-reference-health.json
+wait_for_url "${killbill_base}/1.0/healthcheck"
 
 nodes="$(
   curl --fail --silent --show-error \
-    -u "${KILLBILL_ADMIN_USER:-admin}:${KILLBILL_ADMIN_PASSWORD:-password}" \
-    "${base}/1.0/kb/nodesInfo"
+    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+    "${killbill_base}/1.0/kb/nodesInfo"
 )"
-
 printf '%s' "$nodes" | grep -q 'killbill-payment-sandbox'
 
-"${compose[@]}" exec -T payment-sandbox \
-  curl --fail --silent --show-error http://127.0.0.1:8080/health/ready >/dev/null
+wait_for_url "${fault_proxy_base}/health/ready"
 
-printf 'payment-reference runtime smoke PASS\n'
-printf 'Kill Bill: %s\n' "$base"
+tenant_body="$(
+  jq -nc \
+    --arg api_key "$KILLBILL_API_KEY" \
+    --arg api_secret "$KILLBILL_API_SECRET" \
+    '{apiKey:$api_key,apiSecret:$api_secret}'
+)"
+tenant_status="$(
+  curl --silent --show-error \
+    --output /tmp/payment-reference-tenant.json \
+    --write-out '%{http_code}' \
+    --request POST \
+    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+    --header 'Content-Type: application/json' \
+    --header 'X-Killbill-CreatedBy: payment-reference-smoke' \
+    --data "$tenant_body" \
+    "${killbill_base}/1.0/kb/tenants"
+)"
+if [ "$tenant_status" != "201" ]; then
+  cat /tmp/payment-reference-tenant.json >&2 || true
+  fail "tenant bootstrap expected HTTP 201, observed ${tenant_status}"
+fi
+
+wait_for_url "${gateway_base}/health"
+
+curl --fail --silent --show-error \
+  --request POST \
+  "${fault_proxy_base}/__fault/reset" >/dev/null
+
+# Happy path A: AUTHORIZE -> partial CAPTURE -> full CAPTURE
+#               -> partial REFUND -> full REFUND.
+lifecycle_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}'
+post_gateway "/payments/authorize" "$lifecycle_authorize" 200 /tmp/pr-auth.json
+assert_view /tmp/pr-auth.json AUTHORIZED SUCCEEDED
+
+lifecycle_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth.json)"
+lifecycle_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-auth.json)"
+
+capture_600='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-600","amountMinor":600,"currency":"USD","idempotencyKey":"idem-capture-600"}'
+post_gateway "/payments/payment-lifecycle/capture" "$capture_600" 200 /tmp/pr-capture-600.json
+assert_view /tmp/pr-capture-600.json PARTIALLY_CAPTURED SUCCEEDED
+
+capture_400='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-400","amountMinor":400,"currency":"USD","idempotencyKey":"idem-capture-400"}'
+post_gateway "/payments/payment-lifecycle/capture" "$capture_400" 200 /tmp/pr-capture-400.json
+assert_view /tmp/pr-capture-400.json PAID SUCCEEDED
+
+refund_250='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-250","amountMinor":250,"currency":"USD","idempotencyKey":"idem-refund-250"}'
+post_gateway "/payments/payment-lifecycle/refund" "$refund_250" 200 /tmp/pr-refund-250.json
+assert_view /tmp/pr-refund-250.json PARTIALLY_REFUNDED SUCCEEDED
+
+refund_750='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-750","amountMinor":750,"currency":"USD","idempotencyKey":"idem-refund-750"}'
+post_gateway "/payments/payment-lifecycle/refund" "$refund_750" 200 /tmp/pr-refund-750.json
+assert_view /tmp/pr-refund-750.json REFUNDED SUCCEEDED
+
+get_gateway payment-lifecycle /tmp/pr-lifecycle-get.json
+assert_view /tmp/pr-lifecycle-get.json REFUNDED SUCCEEDED
+
+provider_payment "$lifecycle_provider_id" /tmp/pr-provider-lifecycle.json
+jq -e '
+  .status == "refunded"
+  and .authorized_amount == 1000
+  and .captured_amount == 1000
+  and .refunded_amount == 1000
+' /tmp/pr-provider-lifecycle.json >/dev/null
+
+killbill_payment "$lifecycle_kb_id" /tmp/pr-kb-lifecycle.json
+jq -e '
+  (.transactions | length) == 5
+  and ([.transactions[] | select(.transactionType == "AUTHORIZE")] | length) == 1
+  and ([.transactions[] | select(.transactionType == "CAPTURE")] | length) == 2
+  and ([.transactions[] | select(.transactionType == "REFUND")] | length) == 2
+' /tmp/pr-kb-lifecycle.json >/dev/null
+
+# Exact replay and conflicts must not add another Kill Bill transaction.
+before_replay_count="$(jq -er '.transactions | length' /tmp/pr-kb-lifecycle.json)"
+
+post_gateway "/payments/authorize" "$lifecycle_authorize" 200 /tmp/pr-auth-replay.json
+jq -e \
+  --arg transaction_id "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth.json)" \
+  '.mapping.killbillTransactionId == $transaction_id' \
+  /tmp/pr-auth-replay.json >/dev/null
+
+conflicting_replay='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1100,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}'
+post_gateway "/payments/authorize" "$conflicting_replay" 409 /tmp/pr-auth-conflict.json
+
+operation_id_conflict='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-new-key"}'
+post_gateway "/payments/authorize" "$operation_id_conflict" 409 /tmp/pr-operation-conflict.json
+
+killbill_payment "$lifecycle_kb_id" /tmp/pr-kb-lifecycle-after-replays.json
+after_replay_count="$(jq -er '.transactions | length' /tmp/pr-kb-lifecycle-after-replays.json)"
+[ "$before_replay_count" = "$after_replay_count" ] ||
+  fail "idempotency replay/conflict created a new Kill Bill transaction"
+
+# Happy path B: AUTH_CAPTURE -> PURCHASE semantics.
+purchase='{"merchantId":"merchant-smoke","merchantOrderId":"order-purchase","merchantPaymentId":"payment-purchase","operationId":"op-purchase-001","amountMinor":500,"currency":"USD","paymentMethodToken":"tok-purchase","idempotencyKey":"idem-purchase-001"}'
+post_gateway "/payments/auth-capture" "$purchase" 200 /tmp/pr-purchase.json
+assert_view /tmp/pr-purchase.json PAID SUCCEEDED
+
+purchase_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-purchase.json)"
+provider_payment "$purchase_provider_id" /tmp/pr-provider-purchase.json
+jq -e '
+  .status == "captured"
+  and .authorized_amount == 500
+  and .captured_amount == 500
+' /tmp/pr-provider-purchase.json >/dev/null
+
+# Happy path C: AUTHORIZE -> CANCEL / VOID.
+cancel_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-auth","amountMinor":700,"currency":"USD","paymentMethodToken":"tok-cancel","idempotencyKey":"idem-cancel-auth"}'
+post_gateway "/payments/authorize" "$cancel_authorize" 200 /tmp/pr-cancel-auth.json
+assert_view /tmp/pr-cancel-auth.json AUTHORIZED SUCCEEDED
+
+cancel_mutation='{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-void","amountMinor":700,"currency":"USD","idempotencyKey":"idem-cancel-void"}'
+post_gateway "/payments/payment-cancel/cancel" "$cancel_mutation" 200 /tmp/pr-cancel.json
+assert_view /tmp/pr-cancel.json CANCELLED SUCCEEDED
+
+cancel_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-cancel.json)"
+provider_payment "$cancel_provider_id" /tmp/pr-provider-cancel.json
+jq -e '.status == "cancelled"' /tmp/pr-provider-cancel.json >/dev/null
+
+# Negative ambiguity: provider AUTHORIZE commits, but its HTTP response is
+# dropped once. The plugin must expose UNKNOWN and Gateway replay must not
+# blindly authorize again.
+curl --fail --silent --show-error \
+  --request POST \
+  "${fault_proxy_base}/__fault/reset" >/dev/null
+curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{"method":"POST","path_suffix":"/authorize"}' \
+  "${fault_proxy_base}/__fault/drop-next" >/dev/null
+
+ambiguous_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}'
+post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous.json
+assert_view /tmp/pr-ambiguous.json PAYMENT_UNKNOWN UNKNOWN
+
+ambiguous_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-ambiguous.json)"
+ambiguous_transaction_id="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous.json)"
+
+provider_payment "$ambiguous_provider_id" /tmp/pr-provider-ambiguous.json
+jq -e '
+  .status == "authorized"
+  and .authorized_amount == 777
+' /tmp/pr-provider-ambiguous.json >/dev/null
+
+curl --fail --silent --show-error \
+  "${fault_proxy_base}/__fault/stats" >/tmp/pr-fault-stats-before-replay.json
+jq -e '
+  .dropped == 1
+  and (.last_dropped_path | endswith("/authorize"))
+  and (
+    [.forwarded_by_path | to_entries[]
+      | select(.key | endswith("/authorize"))
+      | .value] | add // 0
+  ) == 1
+' /tmp/pr-fault-stats-before-replay.json >/dev/null
+
+post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous-replay.json
+assert_view /tmp/pr-ambiguous-replay.json PAYMENT_UNKNOWN UNKNOWN
+jq -e \
+  --arg transaction_id "$ambiguous_transaction_id" \
+  '.mapping.killbillTransactionId == $transaction_id' \
+  /tmp/pr-ambiguous-replay.json >/dev/null
+
+curl --fail --silent --show-error \
+  "${fault_proxy_base}/__fault/stats" >/tmp/pr-fault-stats-after-replay.json
+jq -e '
+  .dropped == 1
+  and (
+    [.forwarded_by_path | to_entries[]
+      | select(.key | endswith("/authorize"))
+      | .value] | add // 0
+  ) == 1
+' /tmp/pr-fault-stats-after-replay.json >/dev/null
+
+get_gateway payment-ambiguous /tmp/pr-ambiguous-get.json
+assert_view /tmp/pr-ambiguous-get.json PAYMENT_UNKNOWN UNKNOWN
+
+provider_payment "$ambiguous_provider_id" /tmp/pr-provider-ambiguous-after-replay.json
+jq -e '
+  .status == "authorized"
+  and .authorized_amount == 777
+' /tmp/pr-provider-ambiguous-after-replay.json >/dev/null
+
+printf 'payment-reference end-to-end smoke PASS\n'
+printf 'Gateway: %s\n' "$gateway_base"
+printf 'Kill Bill: %s\n' "$killbill_base"
 printf 'Plugin registration: killbill-payment-sandbox\n'
+printf 'Happy paths: authorize/capture/refund, auth-capture, cancel\n'
+printf 'Negative paths: idempotency conflict, operation-id conflict, response-loss ambiguity\n'
 
 trap - EXIT

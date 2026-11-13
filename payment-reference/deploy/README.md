@@ -1,11 +1,10 @@
 # Third-party deployment pins
 
 This directory freezes the external component inputs selected or qualified for
-payment reference v1 and contains the bounded Kill Bill -> payment-sandbox
-runtime topology. Merchant/Gateway orchestration is still outside this runtime
-checkpoint.
+payment reference v1 and contains the bounded Merchant -> Gateway -> Kill Bill
+-> payment-sandbox runtime used by the canonical online-payment qualification.
 
-The source of truth is `third-party.lock.json`.
+The source of truth for third-party selections is `third-party.lock.json`.
 
 ## Active v1 pins
 
@@ -31,42 +30,75 @@ downloads are forbidden.
 `compose.yaml` is intentionally bounded to:
 
 ```text
-127.0.0.1:8080
-      |
-      v
-  Kill Bill 0.24.22
-      |
-      +-- JDBC --> PostgreSQL 18.6
-      |              + Kill Bill 0.24.22 DDL
-      |              + payment-sandbox plugin DDL
-      |
-      v
+deterministic Merchant requests
+          |
+          v
+Gateway
+  |
+  +-- JDBC --> gateway-db / PostgreSQL 18.6
+  |
+  v
+Kill Bill 0.24.22
+  |
+  +-- JDBC --> killbill-db / PostgreSQL 18.6
+  |              + Kill Bill 0.24.22 DDL
+  |              + payment-sandbox plugin DDL
+  |
+  v
 repository-owned PaymentPluginApi
-      |
-      v
+  |
+  v
+test-only one-shot fault proxy
+  |
+  v
 payment-sandbox v1.5.4
 ```
 
-PostgreSQL and payment-sandbox are not published to the host. The only default
-host listener is Kill Bill on loopback.
+Gateway and Kill Bill are published only on host loopback for the development
+and CI harness. Both PostgreSQL services and payment-sandbox remain internal to
+the Compose network. The fault proxy is transparent unless explicitly armed by
+the smoke test and its control listener is also loopback-only.
 
-The Kill Bill image is pinned to the qualified 0.24.22 image-index digest.
-The DB image remains the separately qualified `postgres:18.6-bookworm` input.
-Its Kill Bill schema is assembled from the exact 0.24.22 source commit; every
-downloaded DDL is verified against its Git blob SHA before it is admitted to the
-image.
+Kill Bill is pinned to the qualified 0.24.22 image-index digest. Its database
+schema is assembled from the exact 0.24.22 source commit and every downloaded
+DDL is verified against its Git blob SHA before admission to the image.
 
-The plugin is built with `mvn verify` and installed into the Kill Bill bundle
-tree through KPM during the derived Kill Bill image build.
+The repository-owned plugin is built with `mvn verify` and installed into the
+Kill Bill bundle tree through KPM during the derived image build. Gateway is
+built from the repository Rust workspace and receives Kill Bill tenant
+credentials only through environment variables.
 
-Run the bounded smoke qualification with:
+## Runtime smoke
+
+Run the bounded qualification with:
 
 ```bash
 bash payment-reference/deploy/smoke.sh
 ```
 
-The smoke requires Kill Bill health, payment-sandbox readiness and observable
-OSGi registration of `killbill-payment-sandbox`.
+The smoke owns local tenant bootstrap; the per-payment Gateway path never
+silently creates or rotates a tenant.
+
+It proves the full Merchant -> Gateway -> Kill Bill -> repository-owned plugin
+-> payment-sandbox path for:
+
+- AUTHORIZE;
+- partial and final CAPTURE;
+- partial and final REFUND;
+- AUTH_CAPTURE / Kill Bill PURCHASE;
+- AUTHORIZE -> CANCEL / Kill Bill VOID;
+- side-effect-free canonical GET.
+
+It also proves negative idempotency behavior by checking that exact replay,
+conflicting idempotency-key reuse and operation-id conflict do not increase the
+Kill Bill transaction count.
+
+For ambiguity, the test-only fault proxy forwards one armed provider mutation
+to payment-sandbox, fully consumes the upstream response, then drops only that
+downstream response. This deterministically models provider commit followed by
+response loss. The smoke requires the provider mutation count to remain one
+across the exact Gateway replay, demonstrating inquiry-before-retry rather than
+blind duplicate mutation.
 
 Hyperswitch remains intentionally deferred. Reintroducing it later requires a
 specific interoperability claim and executable proof that the additional
