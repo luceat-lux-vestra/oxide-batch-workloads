@@ -72,14 +72,22 @@ owner:
 - Kill Bill payment/transaction UUIDs, provider identities, and canonical
   Merchant/Gateway identities remain separate.
 
-The remaining #256 online-path gap is therefore **Reference Merchant -> Gateway
-orchestration**. Broader deterministic failure/async-outcome coverage remains a
-later owner after #256 reaches its stop boundary.
+The Reference Merchant -> Gateway boundary is now implemented on the current
+#256 candidate branch. Merchant payment operations are persisted before the
+outbound call, canonical Gateway outcomes are written back into Merchant payment
+and operation state, and Gateway/Kill Bill/provider identities are retained in
+Merchant mappings/events.
+
+This candidate has **not yet received authoritative PR/CI validation**, so the
+last merged and validated runtime remains #260. Broader deterministic
+failure/async-outcome coverage remains deferred until the remaining #256
+acceptance gaps are handled.
 
 Runtime configuration:
 
 ```text
 MERCHANT_DATABASE_URL
+MERCHANT_GATEWAY_BASE_URL=http://127.0.0.1:8080
 MERCHANT_BIND=127.0.0.1:8081
 
 GATEWAY_DATABASE_URL
@@ -129,9 +137,11 @@ or rotate tenants.
 
 ## Deferred from the current #256 checkpoint
 
-- Reference Merchant -> Gateway HTTP client/orchestration;
+- authoritative PR/CI/runtime validation of the Merchant -> Gateway candidate;
 - full-path provider 503-before-side-effect scenario at the Merchant/Gateway
   integration boundary;
+- retained machine-readable scenario result spanning Merchant/Gateway/provider
+  identities and final states;
 - broader deterministic fault and async/webhook matrix;
 - Hyperswitch interoperability lane;
 - OxideBatch business workloads and release-evidence campaigns.
