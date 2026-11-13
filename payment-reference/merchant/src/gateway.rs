@@ -16,7 +16,7 @@ pub struct GatewayClient {
 pub enum GatewayOutcome {
     View {
         status: u16,
-        view: CanonicalPaymentView,
+        view: Box<CanonicalPaymentView>,
     },
     Rejected {
         status: u16,
@@ -144,12 +144,18 @@ async fn decode_response(
                 "Gateway returned HTTP {status} with an invalid canonical view: {error}"
             ))
         })?;
-        return Ok(GatewayOutcome::View { status, view });
+        return Ok(GatewayOutcome::View {
+            status,
+            view: Box::new(view),
+        });
     }
 
     if status == 409 {
         if let Ok(view) = serde_json::from_slice::<CanonicalPaymentView>(&body) {
-            return Ok(GatewayOutcome::View { status, view });
+            return Ok(GatewayOutcome::View {
+                status,
+                view: Box::new(view),
+            });
         }
     }
 

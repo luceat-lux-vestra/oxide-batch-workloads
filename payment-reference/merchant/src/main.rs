@@ -488,6 +488,7 @@ async fn process_payment_operation(
 
     match outcome {
         GatewayOutcome::View { status, view } => {
+            let view = *view;
             if let Err(message) =
                 validate_gateway_view_identity(merchant_payment_id, &request.operation_id, &view)
             {
