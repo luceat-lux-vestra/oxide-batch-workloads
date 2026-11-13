@@ -874,6 +874,12 @@ async fn persist_unresolved_gateway_outcome(
         .map_err(internal)?;
     }
 
+    let effective_operation_state = if should_change {
+        operation_state_name(operation_state)
+    } else {
+        current_operation_state.as_str()
+    };
+
     sqlx::query(
         "INSERT INTO payment_reference_merchant.business_event
          (aggregate_type, aggregate_id, event_type, payload)
@@ -884,7 +890,7 @@ async fn persist_unresolved_gateway_outcome(
     .bind(
         serde_json::json!({
             "operationId": operation_id,
-            "operationState": operation_state_name(operation_state),
+            "operationState": effective_operation_state,
         })
         .to_string(),
     )

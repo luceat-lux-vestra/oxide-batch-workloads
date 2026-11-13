@@ -53,8 +53,9 @@ The implementation boundary is intentionally narrower than the complete #256
 owner:
 
 - Reference Merchant is a real HTTP/PostgreSQL process and owns
-  customer/order/payment business truth, but it currently prepares Merchant
-  payment state only; it does **not** yet call the Gateway canonical payment API.
+  customer/order/payment business truth. On the current #256 candidate it also
+  persists canonical operation identity before calling the Gateway and writes
+  canonical outcomes back into Merchant state.
 - Gateway is a real HTTP/PostgreSQL process and owns canonical request
   validation, durable idempotency, deterministic Kill Bill identities,
   payment-scoped serialization, inquiry-before-retry, and canonical state
