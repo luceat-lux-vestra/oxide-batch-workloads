@@ -414,6 +414,12 @@ jq -e '
   and ((.forwarded_by_path["POST /payments"] // 0) == 0)
 ' /tmp/pr-fault-stats-provider-503-after-replay.json >/dev/null
 
+# Run the deterministic #263 fault/async matrix against the real payment-sandbox
+# proxy runtime. This writes compact evidence consumed by the retained suite
+# artifact below; it does not create a second evidence format.
+fault_matrix_path="/tmp/payment-reference-fault-matrix.json"
+bash ./fault-matrix-smoke.sh "$fault_proxy_base" "$fault_matrix_path"
+
 # Retain one machine-readable result artifact for the bounded online-path suite.
 # Every value below is sourced from assertions that have already passed above;
 # the result is evidence, not a second execution path.
@@ -433,7 +439,7 @@ ambiguous_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous.json)"
 provider_503_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503.json)"
 provider_503_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503.json)"
 
-jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$scenario_version"   --argjson seed "$scenario_seed"   --arg logical_business_date "$logical_business_date"   --arg lifecycle_kb_id "$lifecycle_kb_id"   --arg lifecycle_provider_id "$lifecycle_provider_id"   --arg lifecycle_auth_tx "$lifecycle_auth_tx"   --arg lifecycle_capture_600_tx "$lifecycle_capture_600_tx"   --arg lifecycle_capture_400_tx "$lifecycle_capture_400_tx"   --arg lifecycle_refund_250_tx "$lifecycle_refund_250_tx"   --arg lifecycle_refund_750_tx "$lifecycle_refund_750_tx"   --arg lifecycle_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth-replay.json)"   --arg lifecycle_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth-replay.json)"   --arg purchase_kb_id "$purchase_kb_id"   --arg purchase_provider_id "$purchase_provider_id"   --arg purchase_tx "$purchase_tx"   --arg cancel_kb_id "$cancel_kb_id"   --arg cancel_provider_id "$cancel_provider_id"   --arg cancel_auth_tx "$cancel_auth_tx"   --arg cancel_void_tx "$cancel_void_tx"   --arg ambiguous_kb_id "$ambiguous_kb_id"   --arg ambiguous_provider_id "$ambiguous_provider_id"   --arg ambiguous_tx "$ambiguous_transaction_id"   --arg ambiguous_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous-replay.json)"   --arg ambiguous_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous-replay.json)"   --arg provider_503_kb_id "$provider_503_kb_id"   --arg provider_503_provider_id "$provider_503_id"   --arg provider_503_tx "$provider_503_tx"   --arg provider_503_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503-replay.json)"   --arg provider_503_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503-replay.json)"   --slurpfile lifecycle_provider /tmp/pr-provider-lifecycle.json   --slurpfile purchase_provider /tmp/pr-provider-purchase.json   --slurpfile cancel_provider /tmp/pr-provider-cancel.json   --slurpfile ambiguous_provider /tmp/pr-provider-ambiguous-after-replay.json   '
+jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$scenario_version"   --argjson seed "$scenario_seed"   --arg logical_business_date "$logical_business_date"   --arg lifecycle_kb_id "$lifecycle_kb_id"   --arg lifecycle_provider_id "$lifecycle_provider_id"   --arg lifecycle_auth_tx "$lifecycle_auth_tx"   --arg lifecycle_capture_600_tx "$lifecycle_capture_600_tx"   --arg lifecycle_capture_400_tx "$lifecycle_capture_400_tx"   --arg lifecycle_refund_250_tx "$lifecycle_refund_250_tx"   --arg lifecycle_refund_750_tx "$lifecycle_refund_750_tx"   --arg lifecycle_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth-replay.json)"   --arg lifecycle_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth-replay.json)"   --arg purchase_kb_id "$purchase_kb_id"   --arg purchase_provider_id "$purchase_provider_id"   --arg purchase_tx "$purchase_tx"   --arg cancel_kb_id "$cancel_kb_id"   --arg cancel_provider_id "$cancel_provider_id"   --arg cancel_auth_tx "$cancel_auth_tx"   --arg cancel_void_tx "$cancel_void_tx"   --arg ambiguous_kb_id "$ambiguous_kb_id"   --arg ambiguous_provider_id "$ambiguous_provider_id"   --arg ambiguous_tx "$ambiguous_transaction_id"   --arg ambiguous_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous-replay.json)"   --arg ambiguous_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous-replay.json)"   --arg provider_503_kb_id "$provider_503_kb_id"   --arg provider_503_provider_id "$provider_503_id"   --arg provider_503_tx "$provider_503_tx"   --arg provider_503_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503-replay.json)"   --arg provider_503_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503-replay.json)"   --slurpfile lifecycle_provider /tmp/pr-provider-lifecycle.json   --slurpfile purchase_provider /tmp/pr-provider-purchase.json   --slurpfile cancel_provider /tmp/pr-provider-cancel.json   --slurpfile ambiguous_provider /tmp/pr-provider-ambiguous-after-replay.json   --slurpfile fault_matrix "$fault_matrix_path"   '
   def identity($case; $expected):
     {
       scenario_version: $scenario_version,
@@ -458,6 +464,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       "payment-reference-online-path-v1";
       "bounded online path invariants hold"
     ),
+    fault_matrix: $fault_matrix[0],
     scenarios: [
       {
         identity: identity(
@@ -627,6 +634,10 @@ jq -e '
   and .schema_id == "https://oxide-batch.dev/payment-reference/scenario-result-v1.schema.json"
   and (.source_revision | type == "string" and length > 0)
   and (.suite.scenario_version == 1)
+  and (.fault_matrix.fault_plan_version == 1)
+  and (.fault_matrix.cases | length == 5)
+  and ([.fault_matrix.cases[].unexpected_invariant_violations | length] | add) == 0
+  and (.fault_matrix.unexpected_invariant_violations | length) == 0
   and (.scenarios | length == 5)
   and ([.scenarios[].unexpected_invariant_violations | length] | add) == 0
   and (.unexpected_invariant_violations | length) == 0
@@ -650,5 +661,6 @@ printf 'Kill Bill: %s\n' "$killbill_base"
 printf 'Plugin registration: killbill-payment-sandbox\n'
 printf 'Happy paths: authorize/capture/refund, auth-capture, cancel\n'
 printf 'Negative paths: idempotency conflict, operation-id conflict, response-loss ambiguity, provider-503-before-side-effect\n'
+printf 'Fault matrix: plan-503, post-commit-loss, async-success/stale-convergence, async-failure, webhook ordering/duplicate/drop/retry\n'
 
 trap - EXIT
