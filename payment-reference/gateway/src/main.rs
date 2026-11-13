@@ -1440,6 +1440,22 @@ async fn load_latest_operation_for_update(
     tx: &mut Transaction<'_, Postgres>,
     merchant_payment_id: &str,
 ) -> Result<PgRow, ApiError> {
+    let merchant_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT merchant_id)
+         FROM payment_reference_gateway.gateway_operation
+         WHERE merchant_payment_id = $1",
+    )
+    .bind(merchant_payment_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(internal)?;
+
+    if merchant_count > 1 {
+        return Err(ApiError::Conflict(
+            "paymentId is ambiguous across merchants".into(),
+        ));
+    }
+
     sqlx::query(
         "SELECT
              operation_id,
