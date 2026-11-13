@@ -241,6 +241,108 @@ class ProxyStatusAsyncIntegrationTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("pending", payment["status"])
 
+    def test_webhook_schedule_delays_duplicates_reorders_and_retries(self):
+        configured = plan(
+            {
+                "step_id": "authorized-first",
+                "sequence": 2,
+                "offset_ms": 100,
+                "point": "WEBHOOK_DELIVERY",
+                "action": {
+                    "kind": "WEBHOOK",
+                    "delivery": "DELIVER",
+                    "event_id": "event-authorized",
+                    "attempt": 1,
+                },
+            },
+            {
+                "step_id": "created-late",
+                "sequence": 1,
+                "offset_ms": 200,
+                "point": "WEBHOOK_DELIVERY",
+                "action": {
+                    "kind": "WEBHOOK",
+                    "delivery": "DELIVER",
+                    "event_id": "event-created",
+                    "attempt": 1,
+                },
+            },
+            {
+                "step_id": "authorized-duplicate",
+                "sequence": 3,
+                "offset_ms": 300,
+                "point": "WEBHOOK_DELIVERY",
+                "action": {
+                    "kind": "WEBHOOK",
+                    "delivery": "DELIVER",
+                    "event_id": "event-authorized",
+                    "attempt": 2,
+                },
+            },
+            {
+                "step_id": "created-drop",
+                "sequence": 4,
+                "offset_ms": 400,
+                "point": "WEBHOOK_DELIVERY",
+                "action": {
+                    "kind": "WEBHOOK",
+                    "delivery": "DROP",
+                    "event_id": "event-created",
+                    "attempt": 2,
+                },
+            },
+            {
+                "step_id": "created-retry",
+                "sequence": 5,
+                "offset_ms": 500,
+                "point": "WEBHOOK_DELIVERY",
+                "action": {
+                    "kind": "WEBHOOK",
+                    "delivery": "DELIVER",
+                    "event_id": "event-created",
+                    "attempt": 3,
+                },
+            },
+        )
+        self.assertEqual(200, self.request_json("POST", "/__fault/load-plan", configured)[0])
+        self.assertEqual(
+            201,
+            self.request_json(
+                "POST",
+                "/__fault/webhook-events",
+                {
+                    "event_id": "event-created",
+                    "payload": {"type": "payment.created"},
+                },
+            )[0],
+        )
+        self.assertEqual(
+            201,
+            self.request_json(
+                "POST",
+                "/__fault/webhook-events",
+                {
+                    "event_id": "event-authorized",
+                    "payload": {"type": "payment.authorized"},
+                },
+            )[0],
+        )
+
+        self.assertEqual(200, self.request_json("POST", "/__fault/advance", {"offset_ms": 99})[0])
+        _, first = self.request_json("POST", "/__fault/advance", {"offset_ms": 100})
+        self.assertEqual("event-authorized", first["webhook"]["delivered_envelopes"][0]["event_id"])
+
+        _, final = self.request_json("POST", "/__fault/advance", {"offset_ms": 500})
+        delivered = final["webhook"]["delivered_envelopes"]
+        self.assertEqual(
+            ["event-authorized", "event-created", "event-authorized", "event-created"],
+            [item["event_id"] for item in delivered],
+        )
+        self.assertEqual(
+            ["DELIVERED", "DELIVERED", "DELIVERED", "DROPPED", "DELIVERED"],
+            [item["outcome"] for item in final["webhook"]["attempts"]],
+        )
+
     def test_before_side_effect_http_failure_never_reaches_upstream(self):
         configured = plan(
             selected_step(

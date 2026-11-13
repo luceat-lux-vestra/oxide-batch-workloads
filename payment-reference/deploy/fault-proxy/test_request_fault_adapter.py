@@ -126,9 +126,9 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
                 )
             )
 
-    def test_webhook_remains_deferred(self):
+    def test_webhook_is_scheduled_as_timeline_event(self):
         adapter = RequestFaultPlanAdapter()
-        snapshot = adapter.load(
+        adapter.load(
             plan(
                 {
                     "step_id": "webhook",
@@ -144,8 +144,41 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
                 }
             )
         )
-        self.assertEqual("webhook", snapshot["deferred_steps"][0]["step_id"])
-        self.assertEqual([], adapter.advance(100)["due_events"])
+        self.assertEqual([], adapter.advance(9)["due_events"])
+        due = adapter.advance(10)["due_events"]
+        self.assertEqual("webhook", due[0]["step_id"])
+
+    def test_duplicate_webhook_attempt_is_rejected(self):
+        adapter = RequestFaultPlanAdapter()
+        with self.assertRaises(FaultPlanValidationError):
+            adapter.load(
+                plan(
+                    {
+                        "step_id": "first",
+                        "sequence": 1,
+                        "offset_ms": 10,
+                        "point": "WEBHOOK_DELIVERY",
+                        "action": {
+                            "kind": "WEBHOOK",
+                            "delivery": "DROP",
+                            "event_id": "event-1",
+                            "attempt": 1,
+                        },
+                    },
+                    {
+                        "step_id": "duplicate",
+                        "sequence": 2,
+                        "offset_ms": 20,
+                        "point": "WEBHOOK_DELIVERY",
+                        "action": {
+                            "kind": "WEBHOOK",
+                            "delivery": "DELIVER",
+                            "event_id": "event-1",
+                            "attempt": 1,
+                        },
+                    },
+                )
+            )
 
     def test_backward_logical_time_is_rejected(self):
         adapter = RequestFaultPlanAdapter()

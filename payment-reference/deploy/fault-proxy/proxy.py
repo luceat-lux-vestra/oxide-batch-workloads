@@ -11,8 +11,10 @@ from request_fault_adapter import (
     FaultPlanValidationError,
     PROVIDER_TRANSITION,
     STATUS_INQUIRY,
+    WEBHOOK_DELIVERY,
     RequestFaultPlanAdapter,
 )
+from webhook_scheduler import WebhookDeliveryScheduler, WebhookScheduleError
 
 LISTEN_ADDRESS = os.environ.get("PROXY_LISTEN_ADDRESS", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("PROXY_LISTEN_PORT", "8080"))
@@ -35,6 +37,7 @@ class FaultState:
     def __init__(self):
         self.lock = threading.Lock()
         self.request_fault_plan = RequestFaultPlanAdapter()
+        self.webhook_scheduler = WebhookDeliveryScheduler()
         self.reset()
 
     def reset(self):
@@ -51,6 +54,7 @@ class FaultState:
         self.status_visibility = {}
         self.transition_history = []
         self.request_fault_plan.reset()
+        self.webhook_scheduler.reset()
 
     def arm(self, method, path_suffix):
         with self.lock:
@@ -111,6 +115,7 @@ class FaultState:
             self.provider_overlays = {}
             self.status_visibility = {}
             self.transition_history = []
+        self.webhook_scheduler.reset()
         return snapshot
 
     def advance_plan(self, offset_ms):
@@ -239,6 +244,27 @@ class FaultState:
     def capture_stale_before_transition(self, status_path, provider_view):
         self.remember_stale_snapshot("GET", status_path, provider_view)
 
+    def register_webhook_event(self, payload):
+        if not isinstance(payload, dict):
+            raise WebhookScheduleError("webhook event registration must be an object")
+        allowed = {"event_id", "payload", "metadata"}
+        extra = set(payload) - allowed
+        if extra:
+            raise WebhookScheduleError(
+                f"webhook event registration has unexpected fields: {sorted(extra)}"
+            )
+        if "event_id" not in payload or "payload" not in payload:
+            raise WebhookScheduleError("event_id and payload are required")
+        return self.webhook_scheduler.register_event(
+            payload["event_id"],
+            payload["payload"],
+            payload.get("metadata"),
+        )
+
+    def dispatch_webhook(self, step):
+        now_ms = self.request_fault_plan.snapshot()["now_ms"]
+        return self.webhook_scheduler.dispatch(step, now_ms)
+
     def snapshot(self):
         with self.lock:
             legacy = {
@@ -256,6 +282,7 @@ class FaultState:
                 "transition_history": copy.deepcopy(self.transition_history),
             }
         legacy["plan"] = self.request_fault_plan.snapshot()
+        legacy["webhook"] = self.webhook_scheduler.snapshot()
         return legacy
 
 
@@ -300,6 +327,14 @@ class Handler(BaseHTTPRequestHandler):
             except (FaultPlanValidationError, TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._json(400, {"error": f"invalid fault plan: {exc}"})
             return
+        if self.path == "/__fault/webhook-events":
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8") or "{}")
+                self._json(201, STATE.register_webhook_event(payload))
+            except (WebhookScheduleError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": f"invalid webhook event: {exc}"})
+            return
         if self.path == "/__fault/advance":
             body = self._read_body()
             try:
@@ -311,7 +346,14 @@ class Handler(BaseHTTPRequestHandler):
                 response = STATE.snapshot()
                 response["timeline_executions"] = executions
                 self._json(200, response)
-            except (KeyError, FaultPlanValidationError, TypeError, ValueError, UnicodeDecodeError) as exc:
+            except (
+                KeyError,
+                FaultPlanValidationError,
+                WebhookScheduleError,
+                TypeError,
+                ValueError,
+                UnicodeDecodeError,
+            ) as exc:
                 self._json(400, {"error": f"invalid logical-time advance: {exc}"})
             except (OSError, http.client.HTTPException, RuntimeError) as exc:
                 self._json(502, {"error": f"fault-plan transition execution failed: {exc}"})
@@ -474,6 +516,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, pending_view)
 
     def _execute_timeline_step(self, step):
+        if step["point"] == WEBHOOK_DELIVERY:
+            return STATE.dispatch_webhook(step)
+
         if step["point"] == STATUS_INQUIRY:
             STATE.apply_status_visibility(step)
             return {

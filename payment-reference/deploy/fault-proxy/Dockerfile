@@ -3,6 +3,7 @@ FROM python:3.13.18-slim-bookworm
 WORKDIR /app
 COPY payment-reference/deploy/fault-proxy/proxy.py /app/proxy.py
 COPY payment-reference/deploy/fault-proxy/request_fault_adapter.py /app/request_fault_adapter.py
+COPY payment-reference/deploy/fault-proxy/webhook_scheduler.py /app/webhook_scheduler.py
 
 USER 65534:65534
 

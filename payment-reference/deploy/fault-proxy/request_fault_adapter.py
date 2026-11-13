@@ -11,7 +11,7 @@ WEBHOOK_DELIVERY = "WEBHOOK_DELIVERY"
 
 _SELECTOR_POINTS = {REQUEST_BEFORE, REQUEST_AFTER, STATUS_INQUIRY}
 _REQUEST_POINTS = {REQUEST_BEFORE, REQUEST_AFTER}
-_TIMELINE_POINTS = {STATUS_INQUIRY, PROVIDER_TRANSITION}
+_TIMELINE_POINTS = {STATUS_INQUIRY, PROVIDER_TRANSITION, WEBHOOK_DELIVERY}
 
 _ALLOWED_TRANSPORT = {"CONNECT", "REQUEST", "TIMEOUT", "CONNECTION_DROP"}
 _ALLOWED_TRANSIENT_HTTP = {429, 502, 503, 504}
@@ -229,6 +229,7 @@ def _normalize_plan(payload):
     sequences = set()
     async_defer_ids = set()
     transition_ids = set()
+    webhook_attempts = set()
     request_steps = []
     timeline_steps = []
     deferred_steps = []
@@ -257,6 +258,15 @@ def _normalize_plan(payload):
                     f"duplicate provider transition operation_id: {operation_id}"
                 )
             transition_ids.add(operation_id)
+
+        if step["point"] == WEBHOOK_DELIVERY:
+            webhook_key = (action["event_id"], action["attempt"])
+            if webhook_key in webhook_attempts:
+                raise FaultPlanValidationError(
+                    "duplicate webhook attempt: "
+                    f"event_id={action['event_id']} attempt={action['attempt']}"
+                )
+            webhook_attempts.add(webhook_key)
 
         if step["point"] in _REQUEST_POINTS:
             request_steps.append(step)

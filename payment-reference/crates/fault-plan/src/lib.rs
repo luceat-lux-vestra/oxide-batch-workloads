@@ -48,6 +48,7 @@ impl FaultPlan {
         let mut sequences = HashSet::new();
         let mut deferred_async_ids = HashSet::new();
         let mut transition_ids = HashSet::new();
+        let mut webhook_attempts = HashSet::new();
         for step in &self.steps {
             step.validate()?;
             if !step_ids.insert(step.step_id.as_str()) {
@@ -70,6 +71,16 @@ impl FaultPlan {
                         return Err(FaultPlanError::DuplicateProviderTransition(
                             operation_id.clone(),
                         ));
+                    }
+                }
+                FaultAction::Webhook {
+                    event_id, attempt, ..
+                } => {
+                    if !webhook_attempts.insert((event_id.clone(), *attempt)) {
+                        return Err(FaultPlanError::DuplicateWebhookAttempt {
+                            event_id: event_id.clone(),
+                            attempt: *attempt,
+                        });
                     }
                 }
                 _ => {}
@@ -387,6 +398,10 @@ pub enum FaultPlanError {
     DuplicateAsyncOperationId(String),
     DuplicateProviderTransition(String),
     OrphanProviderTransition(String),
+    DuplicateWebhookAttempt {
+        event_id: String,
+        attempt: u32,
+    },
     MissingRequestMatch(String),
     UnexpectedRequestMatch(String),
     InvalidRequestMethod(String),
@@ -428,6 +443,12 @@ impl fmt::Display for FaultPlanError {
                 write!(
                     f,
                     "provider transition has no matching DEFER_ASYNC operation: {operation_id}"
+                )
+            }
+            Self::DuplicateWebhookAttempt { event_id, attempt } => {
+                write!(
+                    f,
+                    "duplicate webhook attempt: event_id={event_id} attempt={attempt}"
                 )
             }
             Self::MissingRequestMatch(step_id) => {
