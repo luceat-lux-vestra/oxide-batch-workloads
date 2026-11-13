@@ -798,6 +798,11 @@ pub fn map_payment_outcome_if_present(
         KillBillTransactionStatus::Unknown => {
             (OperationState::Unknown, Some(PaymentState::PaymentUnknown))
         }
+        KillBillTransactionStatus::PaymentFailure
+            if plugin_bool_property(transaction, "retryable")? == Some(true) =>
+        {
+            (OperationState::RetryPending, None)
+        }
         KillBillTransactionStatus::PaymentFailure => (
             OperationState::Failed,
             match operation {
@@ -823,6 +828,35 @@ pub fn map_payment_outcome_if_present(
         provider_operation_id: None,
         provider_idempotency_key: transaction.second_payment_reference_id.clone(),
     }))
+}
+
+fn plugin_bool_property(
+    transaction: &KillBillTransaction,
+    key: &str,
+) -> Result<Option<bool>, KillBillClientError> {
+    let matching: Vec<&KillBillPluginProperty> = transaction
+        .properties
+        .iter()
+        .filter(|property| property.key == key)
+        .collect();
+
+    let property = match matching.as_slice() {
+        [] => return Ok(None),
+        [property] => *property,
+        _ => {
+            return Err(KillBillClientError::invariant(format!(
+                "Kill Bill transaction contains duplicate plugin property {key}"
+            )));
+        }
+    };
+
+    match property.value.as_deref() {
+        Some("true") => Ok(Some(true)),
+        Some("false") => Ok(Some(false)),
+        value => Err(KillBillClientError::invariant(format!(
+            "Kill Bill transaction plugin property {key} is not boolean: {value:?}"
+        ))),
+    }
 }
 
 fn success_payment_state(
@@ -1292,6 +1326,57 @@ mod tests {
         .unwrap();
         assert_eq!(mapped.operation_state, OperationState::Unknown);
         assert_eq!(mapped.payment_state, Some(PaymentState::PaymentUnknown));
+    }
+
+    #[test]
+    fn retryable_plugin_payment_failure_remains_retry_pending() {
+        let mut transaction =
+            transaction_fixture("expected-operation", "AUTHORIZE", "PAYMENT_FAILURE", "5.03");
+        transaction["properties"] = json!([
+            {"key":"retryable","value":"true","isUpdatable":false},
+            {"key":"ambiguous","value":"false","isUpdatable":false}
+        ]);
+        transaction["gatewayErrorCode"] = json!("provider_unavailable");
+
+        let parsed: KillBillPayment =
+            serde_json::from_value(payment_fixture(vec![transaction])).unwrap();
+        let mapped = map_payment_outcome(
+            &parsed,
+            "expected-payment",
+            "expected-operation",
+            PaymentOperationKind::Authorize,
+            Some(503),
+            "USD",
+        )
+        .unwrap();
+
+        assert_eq!(mapped.operation_state, OperationState::RetryPending);
+        assert_eq!(mapped.payment_state, None);
+    }
+
+    #[test]
+    fn non_retryable_payment_failure_remains_terminal_failure() {
+        let mut transaction =
+            transaction_fixture("expected-operation", "AUTHORIZE", "PAYMENT_FAILURE", "5.03");
+        transaction["properties"] = json!([
+            {"key":"retryable","value":"false","isUpdatable":false},
+            {"key":"ambiguous","value":"false","isUpdatable":false}
+        ]);
+
+        let parsed: KillBillPayment =
+            serde_json::from_value(payment_fixture(vec![transaction])).unwrap();
+        let mapped = map_payment_outcome(
+            &parsed,
+            "expected-payment",
+            "expected-operation",
+            PaymentOperationKind::Authorize,
+            Some(503),
+            "USD",
+        )
+        .unwrap();
+
+        assert_eq!(mapped.operation_state, OperationState::Failed);
+        assert_eq!(mapped.payment_state, Some(PaymentState::PaymentFailed));
     }
 
     #[test]
