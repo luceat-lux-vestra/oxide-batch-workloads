@@ -1223,7 +1223,7 @@ async fn commit_initial_view(
     mut tx: Transaction<'_, Postgres>,
     operation_id: &str,
 ) -> Result<(StatusCode, Json<CanonicalPaymentView>), ApiError> {
-    let row = load_operation_by_id(&mut *tx, operation_id).await?;
+    let row = load_operation_by_id(&mut tx, operation_id).await?;
     let view = view_from_row(&row)?;
     let status = response_status(view.last_operation_state);
     tx.commit().await.map_err(internal)?;
@@ -1413,7 +1413,7 @@ async fn get_payment(
         }
     }
 
-    let row = load_operation_by_id(&mut *tx, &operation_id).await?;
+    let row = load_operation_by_id(&mut tx, &operation_id).await?;
     let view = view_from_row(&row)?;
     tx.commit().await.map_err(internal)?;
     Ok(Json(view))

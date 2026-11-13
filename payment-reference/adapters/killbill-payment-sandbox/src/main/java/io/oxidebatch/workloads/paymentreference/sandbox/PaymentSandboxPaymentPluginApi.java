@@ -375,7 +375,9 @@ public final class PaymentSandboxPaymentPluginApi implements PaymentPluginApi {
             case PENDING:
                 return PaymentPluginStatus.PENDING;
             case CANCELED:
-                return PaymentPluginStatus.CANCELED;
+                // A provider-side cancellation is successful completion of
+                // Kill Bill's VOID transaction, not cancellation of the plugin call.
+                return PaymentPluginStatus.PROCESSED;
             case ERROR:
                 return PaymentPluginStatus.ERROR;
             default:

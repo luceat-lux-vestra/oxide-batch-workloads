@@ -58,9 +58,12 @@ Pinned payment-sandbox v1.5.4 states map to the future Kill Bill binding as:
 | `cancelled` | `CANCELED` |
 | `failed` | `ERROR` |
 
-The binding maps these values to Kill Bill `PaymentPluginStatus`. Ambiguous
-mutation transport failures map to Kill Bill `UNDEFINED`, whose contract is
-explicitly “may or may not have succeeded”. The DAO retains Kill Bill payment
+The binding maps these values to Kill Bill `PaymentPluginStatus`. The adapter's
+`CANCELED` value means the provider cancellation succeeded, so a Kill Bill VOID
+is reported as `PROCESSED`; `PaymentPluginStatus.CANCELED` would instead mean
+the plugin transaction itself was cancelled. Ambiguous mutation transport
+failures map to Kill Bill `UNDEFINED`, whose contract is explicitly “may or may
+not have succeeded”. The DAO retains Kill Bill payment
 and transaction IDs, provider payment ID, payment-creation idempotency key, and
 operation idempotency keys. PURCHASE retains both authorize and capture keys.
 
