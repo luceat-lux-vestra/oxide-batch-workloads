@@ -6,10 +6,12 @@ compose=(docker compose -f compose.yaml)
 
 killbill_port="${KILLBILL_PORT:-8080}"
 gateway_port="${GATEWAY_PORT:-18082}"
+merchant_port="${MERCHANT_PORT:-18083}"
 fault_proxy_port="${PAYMENT_SANDBOX_FAULT_PROXY_PORT:-18081}"
 
 killbill_base="http://127.0.0.1:${killbill_port}"
 gateway_base="http://127.0.0.1:${gateway_port}"
+merchant_base="http://127.0.0.1:${merchant_port}"
 fault_proxy_base="http://127.0.0.1:${fault_proxy_port}"
 
 export KILLBILL_USERNAME="${KILLBILL_USERNAME:-admin}"
@@ -22,7 +24,7 @@ diagnose() {
   if [ "$status" -ne 0 ]; then
     "${compose[@]}" ps || true
     "${compose[@]}" logs --no-color --tail=250 \
-      gateway gateway-db killbill killbill-db \
+      merchant merchant-db gateway gateway-db killbill killbill-db \
       payment-sandbox-fault-proxy payment-sandbox || true
   fi
   exit "$status"
@@ -81,6 +83,34 @@ get_gateway() {
     cat "$output" >&2 || true
     fail "GET /payments/${payment_id}: expected HTTP 200, observed ${status}"
   fi
+}
+
+post_merchant() {
+  local path="$1"
+  local body="$2"
+  local expected_status="$3"
+  local output="$4"
+  local status
+  status="$(
+    curl --silent --show-error \
+      --output "$output" \
+      --write-out '%{http_code}' \
+      --request POST \
+      --header 'Content-Type: application/json' \
+      --data "$body" \
+      "${merchant_base}${path}"
+  )"
+  if [ "$status" != "$expected_status" ]; then
+    cat "$output" >&2 || true
+    fail "Merchant POST ${path}: expected HTTP ${expected_status}, observed ${status}"
+  fi
+}
+
+provider_payment_status() {
+  local provider_payment_id="$1"
+  "${compose[@]}" exec -T payment-sandbox \
+    sh -c 'curl --silent --output /dev/null --write-out "%{http_code}" "http://127.0.0.1:8080/payments/$1"' \
+    sh "$provider_payment_id"
 }
 
 assert_view() {
@@ -157,6 +187,7 @@ if [ "$tenant_status" != "201" ]; then
 fi
 
 wait_for_url "${gateway_base}/health"
+wait_for_url "${merchant_base}/health"
 
 curl --fail --silent --show-error \
   --request POST \
@@ -316,11 +347,73 @@ jq -e '
   and .authorized_amount == 777
 ' /tmp/pr-provider-ambiguous-after-replay.json >/dev/null
 
+# ---------------------------------------------------------------------------
+# Integrated Merchant -> Gateway negative: provider 503 before any provider
+# side effect. The one-shot synthetic response is consumed before the proxy
+# opens an upstream connection, so payment-sandbox must observe no create.
+# ---------------------------------------------------------------------------
+post_merchant "/merchants"   '{"merchantId":"merchant-provider-503","displayName":"Provider 503 merchant"}'   201 /tmp/pr-merchant-503-merchant.json
+post_merchant "/customers"   '{"customerId":"customer-provider-503","displayName":"Provider 503 customer"}'   201 /tmp/pr-merchant-503-customer.json
+post_merchant "/orders"   '{"merchantOrderId":"order-provider-503","merchantId":"merchant-provider-503","customerId":"customer-provider-503","amountMinor":503,"currency":"USD"}'   201 /tmp/pr-merchant-503-order.json
+post_merchant "/orders/order-provider-503/payments"   '{"merchantPaymentId":"payment-provider-503","amountMinor":503,"currency":"USD","paymentMethodToken":"tok-provider-503"}'   201 /tmp/pr-merchant-503-payment.json
+
+curl --fail --silent --show-error   --request POST   "${fault_proxy_base}/__fault/reset" >/dev/null
+curl --fail --silent --show-error   --request POST   --header 'Content-Type: application/json'   --data '{"method":"POST","path_suffix":"/payments","status":503,"error_code":"provider_unavailable","message":"synthetic provider unavailable before side effect"}'   "${fault_proxy_base}/__fault/respond-next" >/dev/null
+
+merchant_503_authorize='{"operationId":"op-provider-503","amountMinor":503,"idempotencyKey":"idem-provider-503"}'
+post_merchant   "/payments/payment-provider-503/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503.json
+
+jq -e '
+  .merchantPaymentId == "payment-provider-503"
+  and .operationId == "op-provider-503"
+  and .paymentState == "PAYMENT_PENDING"
+  and .operationState == "RETRY_PENDING"
+  and ((.mapping.killbillPaymentId | type) == "string")
+  and ((.mapping.killbillPaymentId | length) > 0)
+  and ((.mapping.killbillTransactionId | type) == "string")
+  and ((.mapping.killbillTransactionId | length) > 0)
+  and ((.mapping.providerPaymentId | type) == "string")
+  and ((.mapping.providerPaymentId | length) > 0)
+' /tmp/pr-merchant-provider-503.json >/dev/null
+
+provider_503_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-merchant-provider-503.json)"
+
+curl --fail --silent --show-error   "${fault_proxy_base}/__fault/stats" >/tmp/pr-fault-stats-provider-503.json
+jq -e '
+  .responded == 1
+  and (.last_responded_path == "POST /payments")
+  and (.responded_by_path["POST /payments"] == 1)
+  and ((.forwarded_by_path["POST /payments"] // 0) == 0)
+  and .dropped == 0
+' /tmp/pr-fault-stats-provider-503.json >/dev/null
+
+provider_503_status="$(provider_payment_status "$provider_503_id")"
+[ "$provider_503_status" = "404" ] ||
+  fail "provider 503-before-side-effect unexpectedly created payment ${provider_503_id}: HTTP ${provider_503_status}"
+
+# Exact Merchant replay must retain the same retryable canonical operation and
+# still must not forward a provider create.
+post_merchant   "/payments/payment-provider-503/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503-replay.json
+jq -e   --arg kb_payment_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503.json)"   --arg kb_transaction_id "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503.json)"   '
+    .paymentState == "PAYMENT_PENDING"
+    and .operationState == "RETRY_PENDING"
+    and .mapping.killbillPaymentId == $kb_payment_id
+    and .mapping.killbillTransactionId == $kb_transaction_id
+  ' /tmp/pr-merchant-provider-503-replay.json >/dev/null
+
+curl --fail --silent --show-error   "${fault_proxy_base}/__fault/stats" >/tmp/pr-fault-stats-provider-503-after-replay.json
+jq -e '
+  .responded == 1
+  and (.responded_by_path["POST /payments"] == 1)
+  and ((.forwarded_by_path["POST /payments"] // 0) == 0)
+' /tmp/pr-fault-stats-provider-503-after-replay.json >/dev/null
+
 printf 'payment-reference end-to-end smoke PASS\n'
+printf 'Merchant: %s\n' "$merchant_base"
 printf 'Gateway: %s\n' "$gateway_base"
 printf 'Kill Bill: %s\n' "$killbill_base"
 printf 'Plugin registration: killbill-payment-sandbox\n'
 printf 'Happy paths: authorize/capture/refund, auth-capture, cancel\n'
-printf 'Negative paths: idempotency conflict, operation-id conflict, response-loss ambiguity\n'
+printf 'Negative paths: idempotency conflict, operation-id conflict, response-loss ambiguity, provider-503-before-side-effect\n'
 
 trap - EXIT

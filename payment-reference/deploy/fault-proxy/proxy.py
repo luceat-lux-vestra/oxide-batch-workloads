@@ -30,9 +30,13 @@ class FaultState:
 
     def reset(self):
         self.drop_rule = None
+        self.response_rule = None
         self.forwarded_by_path = {}
+        self.responded_by_path = {}
         self.dropped = 0
+        self.responded = 0
         self.last_dropped_path = None
+        self.last_responded_path = None
 
     def arm(self, method, path_suffix):
         with self.lock:
@@ -41,10 +45,36 @@ class FaultState:
                 "path_suffix": path_suffix,
             }
 
+    def arm_response(self, method, path_suffix, status, error_code, message):
+        with self.lock:
+            self.response_rule = {
+                "method": method.upper(),
+                "path_suffix": path_suffix,
+                "status": status,
+                "error_code": error_code,
+                "message": message,
+            }
+
     def record_forward(self, method, path):
         key = f"{method.upper()} {path}"
         with self.lock:
             self.forwarded_by_path[key] = self.forwarded_by_path.get(key, 0) + 1
+
+    def consume_response(self, method, path):
+        with self.lock:
+            rule = self.response_rule
+            if (
+                rule is not None
+                and method.upper() == rule["method"]
+                and path.endswith(rule["path_suffix"])
+            ):
+                self.response_rule = None
+                self.responded += 1
+                key = f"{method.upper()} {path}"
+                self.responded_by_path[key] = self.responded_by_path.get(key, 0) + 1
+                self.last_responded_path = key
+                return dict(rule)
+            return None
 
     def consume_drop(self, method, path):
         with self.lock:
@@ -64,9 +94,13 @@ class FaultState:
         with self.lock:
             return {
                 "armed": self.drop_rule,
+                "response_armed": self.response_rule,
                 "forwarded_by_path": dict(sorted(self.forwarded_by_path.items())),
+                "responded_by_path": dict(sorted(self.responded_by_path.items())),
                 "dropped": self.dropped,
+                "responded": self.responded,
                 "last_dropped_path": self.last_dropped_path,
+                "last_responded_path": self.last_responded_path,
             }
 
 
@@ -118,6 +152,27 @@ class Handler(BaseHTTPRequestHandler):
             STATE.arm(method, path_suffix)
             self._json(200, STATE.snapshot())
             return
+        if self.path == "/__fault/respond-next":
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8") or "{}")
+                method = str(payload.get("method", "POST")).upper()
+                path_suffix = str(payload["path_suffix"])
+                status = int(payload["status"])
+                error_code = str(payload.get("error_code", f"http_{status}"))
+                message = str(payload.get("message", f"synthetic HTTP {status}"))
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": f"invalid response rule: {exc}"})
+                return
+            if not path_suffix.startswith("/"):
+                self._json(400, {"error": "path_suffix must begin with /"})
+                return
+            if status < 400 or status > 599:
+                self._json(400, {"error": "status must be between 400 and 599"})
+                return
+            STATE.arm_response(method, path_suffix, status, error_code, message)
+            self._json(200, STATE.snapshot())
+            return
         self._proxy()
 
     def do_DELETE(self):
@@ -136,6 +191,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _proxy(self):
         body = self._read_body()
+
+        response_rule = STATE.consume_response(self.command, self.path)
+        if response_rule is not None:
+            self._json(
+                response_rule["status"],
+                {
+                    "error": {
+                        "code": response_rule["error_code"],
+                        "message": response_rule["message"],
+                    }
+                },
+            )
+            return
+
         headers = {}
         for name, value in self.headers.items():
             lower = name.lower()
