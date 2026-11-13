@@ -709,6 +709,29 @@ pub fn map_payment_outcome(
     expected_amount_minor: Option<i64>,
     expected_currency: &str,
 ) -> Result<KillBillMappedOutcome, KillBillClientError> {
+    map_payment_outcome_if_present(
+        payment,
+        expected_payment_external_key,
+        expected_transaction_external_key,
+        operation,
+        expected_amount_minor,
+        expected_currency,
+    )?
+    .ok_or_else(|| {
+        KillBillClientError::invariant(format!(
+            "Kill Bill payment does not contain transactionExternalKey {expected_transaction_external_key}"
+        ))
+    })
+}
+
+pub fn map_payment_outcome_if_present(
+    payment: &KillBillPayment,
+    expected_payment_external_key: &str,
+    expected_transaction_external_key: &str,
+    operation: PaymentOperationKind,
+    expected_amount_minor: Option<i64>,
+    expected_currency: &str,
+) -> Result<Option<KillBillMappedOutcome>, KillBillClientError> {
     currency_scale(expected_currency)?;
     if payment.payment_external_key != expected_payment_external_key {
         return Err(KillBillClientError::invariant(format!(
@@ -733,11 +756,7 @@ pub fn map_payment_outcome(
         .collect();
     let transaction = match matching.as_slice() {
         [transaction] => *transaction,
-        [] => {
-            return Err(KillBillClientError::invariant(format!(
-                "Kill Bill payment does not contain transactionExternalKey {expected_transaction_external_key}"
-            )));
-        }
+        [] => return Ok(None),
         _ => {
             return Err(KillBillClientError::invariant(format!(
                 "Kill Bill payment contains duplicate transactionExternalKey {expected_transaction_external_key}"
@@ -752,11 +771,15 @@ pub fn map_payment_outcome(
             transaction.transaction_type
         )));
     }
-    if transaction.currency.as_deref() != Some(expected_currency) {
-        return Err(KillBillClientError::invariant(format!(
-            "Kill Bill transaction currency mismatch: expected {expected_currency}, got {:?}",
-            transaction.currency
-        )));
+    match (operation, transaction.currency.as_deref()) {
+        (PaymentOperationKind::Cancel, None) => {}
+        (_, Some(currency)) if currency == expected_currency => {}
+        _ => {
+            return Err(KillBillClientError::invariant(format!(
+                "Kill Bill transaction currency mismatch: expected {expected_currency}, got {:?}",
+                transaction.currency
+            )));
+        }
     }
     if let Some(expected_amount_minor) = expected_amount_minor {
         let actual_amount = transaction.amount.as_ref().ok_or_else(|| {
@@ -789,12 +812,12 @@ pub fn map_payment_outcome(
                 | PaymentOperationKind::Cancel
                 | PaymentOperationKind::Refund => None,
             },
-        )
+        ),
         KillBillTransactionStatus::PluginFailure
         | KillBillTransactionStatus::PaymentSystemOff => (OperationState::RetryPending, None),
     };
 
-    Ok(KillBillMappedOutcome {
+    Ok(Some(KillBillMappedOutcome {
         killbill_payment_id: payment.payment_id,
         killbill_transaction_id: transaction.transaction_id,
         operation_state,
@@ -802,7 +825,7 @@ pub fn map_payment_outcome(
         provider_payment_id: transaction.first_payment_reference_id.clone(),
         provider_operation_id: None,
         provider_idempotency_key: transaction.second_payment_reference_id.clone(),
-    })
+    }))
 }
 
 fn success_payment_state(
@@ -1224,6 +1247,31 @@ mod tests {
     }
 
     #[test]
+    fn follow_up_mapping_allows_proven_transaction_absence() {
+        let payment: KillBillPayment =
+            serde_json::from_value(payment_fixture(vec![transaction_fixture(
+                "authorize-operation",
+                "AUTHORIZE",
+                "SUCCESS",
+                "12.34",
+            )]))
+            .unwrap();
+
+        assert_eq!(
+            map_payment_outcome_if_present(
+                &payment,
+                "expected-payment",
+                "capture-operation",
+                PaymentOperationKind::Capture,
+                Some(100),
+                "USD",
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn unknown_transaction_maps_to_payment_unknown() {
         let parsed: KillBillPayment =
             serde_json::from_value(payment_fixture(vec![transaction_fixture(
@@ -1244,6 +1292,47 @@ mod tests {
         .unwrap();
         assert_eq!(mapped.operation_state, OperationState::Unknown);
         assert_eq!(mapped.payment_state, Some(PaymentState::PaymentUnknown));
+    }
+
+    #[test]
+    fn void_mapping_accepts_kill_bill_null_amount_and_currency() {
+        let payment: KillBillPayment = serde_json::from_value(json!({
+            "accountId": ACCOUNT_ID,
+            "paymentId": PAYMENT_ID,
+            "paymentExternalKey": "expected-payment",
+            "authAmount": number("12.34"),
+            "capturedAmount": 0,
+            "purchasedAmount": 0,
+            "refundedAmount": 0,
+            "currency": "USD",
+            "paymentMethodId": PAYMENT_METHOD_ID,
+            "transactions": [{
+                "transactionId": TRANSACTION_ID,
+                "transactionExternalKey": "void-operation",
+                "transactionType": "VOID",
+                "status": "SUCCESS",
+                "amount": null,
+                "currency": null,
+                "gatewayErrorCode": null,
+                "gatewayErrorMsg": null,
+                "firstPaymentReferenceId": "provider-payment-1",
+                "secondPaymentReferenceId": "provider-idem-1",
+                "properties": []
+            }]
+        }))
+        .unwrap();
+
+        let mapped = map_payment_outcome(
+            &payment,
+            "expected-payment",
+            "void-operation",
+            PaymentOperationKind::Cancel,
+            None,
+            "USD",
+        )
+        .unwrap();
+        assert_eq!(mapped.operation_state, OperationState::Succeeded);
+        assert_eq!(mapped.payment_state, Some(PaymentState::Cancelled));
     }
 
     #[test]
