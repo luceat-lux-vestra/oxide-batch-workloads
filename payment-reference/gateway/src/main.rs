@@ -1268,7 +1268,20 @@ async fn get_payment(
                     .get_payment_by_id(expected_id)
                     .await
                     .map_err(|error| upstream("Kill Bill GET recovery failed", &error))?;
-                verify_killbill_payment_id(&payment, expected_id)?;
+                if let Err(error) = verify_killbill_payment_id(&payment, expected_id) {
+                    log_killbill_error("Kill Bill GET recovery payment-id conflict", &error);
+                    persist_initial_state(
+                        &mut tx,
+                        &operation_id,
+                        PaymentState::PaymentUnknown,
+                        OperationState::ManualReview,
+                    )
+                    .await?;
+                    tx.commit().await.map_err(internal)?;
+                    return Err(ApiError::Conflict(
+                        "Kill Bill payment id conflicts with the persisted mapping".into(),
+                    ));
+                }
                 Some(payment)
             }
             None => state
