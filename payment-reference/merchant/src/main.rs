@@ -164,14 +164,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/payments/{merchantPaymentId}/capture",
             post(capture_payment),
         )
-        .route(
-            "/payments/{merchantPaymentId}/cancel",
-            post(cancel_payment),
-        )
-        .route(
-            "/payments/{merchantPaymentId}/refund",
-            post(refund_payment),
-        )
+        .route("/payments/{merchantPaymentId}/cancel", post(cancel_payment))
+        .route("/payments/{merchantPaymentId}/refund", post(refund_payment))
         .route("/payments/{merchantPaymentId}", get(get_payment))
         .with_state(AppState { pool, gateway });
 
@@ -630,14 +624,16 @@ async fn persist_operation_identity(
     .await
     .map_err(internal)?;
 
-    if rows.len() != 1 || !stored_operation_matches(
-        &rows[0],
-        merchant_payment_id,
-        operation_id,
-        operation,
-        amount_minor,
-        idempotency_key,
-    )? {
+    if rows.len() != 1
+        || !stored_operation_matches(
+            &rows[0],
+            merchant_payment_id,
+            operation_id,
+            operation,
+            amount_minor,
+            idempotency_key,
+        )?
+    {
         return Err(ApiError::Conflict(
             "operationId or idempotencyKey conflicts with a prior Merchant mutation".into(),
         ));
@@ -655,20 +651,22 @@ fn stored_operation_matches(
     idempotency_key: &str,
 ) -> Result<bool, ApiError> {
     let stored_amount: Option<i64> = row.try_get("amount_minor").map_err(internal)?;
-    Ok(row.try_get::<String, _>("operation_id").map_err(internal)? == operation_id
-        && row
-            .try_get::<String, _>("merchant_payment_id")
-            .map_err(internal)?
-            == merchant_payment_id
-        && row
-            .try_get::<String, _>("operation_kind")
-            .map_err(internal)?
-            == operation.as_str()
-        && row
-            .try_get::<String, _>("idempotency_key")
-            .map_err(internal)?
-            == idempotency_key
-        && stored_amount == Some(amount_minor))
+    Ok(
+        row.try_get::<String, _>("operation_id").map_err(internal)? == operation_id
+            && row
+                .try_get::<String, _>("merchant_payment_id")
+                .map_err(internal)?
+                == merchant_payment_id
+            && row
+                .try_get::<String, _>("operation_kind")
+                .map_err(internal)?
+                == operation.as_str()
+            && row
+                .try_get::<String, _>("idempotency_key")
+                .map_err(internal)?
+                == idempotency_key
+            && stored_amount == Some(amount_minor),
+    )
 }
 
 fn validate_gateway_view_identity(

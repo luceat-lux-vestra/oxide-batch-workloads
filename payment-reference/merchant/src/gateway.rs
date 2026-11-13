@@ -129,7 +129,9 @@ fn mutation_url(
     Ok(url)
 }
 
-async fn decode_response(response: reqwest::Response) -> Result<GatewayOutcome, GatewayClientError> {
+async fn decode_response(
+    response: reqwest::Response,
+) -> Result<GatewayOutcome, GatewayClientError> {
     let status = response.status().as_u16();
     let body = response
         .bytes()
