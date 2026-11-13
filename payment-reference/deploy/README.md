@@ -30,9 +30,11 @@ downloads are forbidden.
 `compose.yaml` is intentionally bounded to:
 
 ```text
-deterministic Merchant requests
-          |
-          v
+Reference Merchant
+  |
+  +-- JDBC --> merchant-db / PostgreSQL 18.6
+  |
+  v
 Gateway
   |
   +-- JDBC --> gateway-db / PostgreSQL 18.6
@@ -54,10 +56,11 @@ test-only one-shot fault proxy
 payment-sandbox v1.5.4
 ```
 
-Gateway and Kill Bill are published only on host loopback for the development
-and CI harness. Both PostgreSQL services and payment-sandbox remain internal to
-the Compose network. The fault proxy is transparent unless explicitly armed by
-the smoke test and its control listener is also loopback-only.
+Merchant, Gateway and Kill Bill are published only on host loopback for the
+development and CI harness. Merchant/Gateway/Kill Bill communicate over the
+internal Compose network. All PostgreSQL services and payment-sandbox remain
+internal-only. The fault proxy is transparent unless explicitly armed by the
+smoke test and its control listener is also loopback-only.
 
 Kill Bill is pinned to the qualified 0.24.22 image-index digest. Its database
 schema is assembled from the exact 0.24.22 source commit and every downloaded
@@ -76,18 +79,24 @@ Run the bounded qualification with:
 bash payment-reference/deploy/smoke.sh
 ```
 
+On success the local default result is written to
+`payment-reference/deploy/evidence/payment-reference-scenario-result.json`.
+Set `PAYMENT_REFERENCE_RESULT_PATH` to redirect it. Generated local JSON is
+ignored by Git; CI writes the same contract into the runner temp directory and
+uploads it as the `payment-reference-scenario-result` artifact for seven days.
+
 The smoke owns local tenant bootstrap; the per-payment Gateway path never
 silently creates or rotates a tenant.
 
-It proves the full Merchant -> Gateway -> Kill Bill -> repository-owned plugin
--> payment-sandbox path for:
+The merged baseline proves the canonical Gateway -> Kill Bill ->
+repository-owned plugin -> payment-sandbox lifecycle for AUTHORIZE, partial/final
+CAPTURE, partial/final REFUND, AUTH_CAPTURE/PURCHASE, CANCEL/VOID and
+side-effect-free GET.
 
-- AUTHORIZE;
-- partial and final CAPTURE;
-- partial and final REFUND;
-- AUTH_CAPTURE / Kill Bill PURCHASE;
-- AUTHORIZE -> CANCEL / Kill Bill VOID;
-- side-effect-free canonical GET.
+The current #256 candidate additionally places the Reference Merchant service
+and its PostgreSQL truth in the Compose path. Its bounded integrated negative
+scenario prepares Merchant state, calls Merchant AUTHORIZE, and traverses
+Merchant -> Gateway -> Kill Bill -> plugin -> fault proxy.
 
 It also proves negative idempotency behavior by checking that exact replay,
 conflicting idempotency-key reuse and operation-id conflict do not increase the
@@ -96,9 +105,39 @@ Kill Bill transaction count.
 For ambiguity, the test-only fault proxy forwards one armed provider mutation
 to payment-sandbox, fully consumes the upstream response, then drops only that
 downstream response. This deterministically models provider commit followed by
-response loss. The smoke requires the provider mutation count to remain one
-across the exact Gateway replay, demonstrating inquiry-before-retry rather than
-blind duplicate mutation.
+response loss.
+
+For the bounded 503-before-side-effect scenario, the same proxy can instead
+consume a one-shot synthetic HTTP response **before opening any upstream
+connection**. The candidate smoke arms HTTP 503 on the provider's initial
+`POST /payments`, requires the Merchant result to remain
+`PAYMENT_PENDING / RETRY_PENDING`, requires the proxy upstream-forward count
+for that provider create to remain zero, and requires direct provider lookup to
+return 404. Exact Merchant replay must retain the same Kill Bill identity and
+still create no provider payment.
+
+## Machine-readable scenario evidence
+
+`../scenarios/v1/scenario-result.schema.json` defines the retained result
+contract. The smoke emits one v1 JSON document containing five bounded cases:
+
+- authorize -> capture -> refund lifecycle;
+- auth-capture / purchase;
+- authorize -> cancel / void;
+- provider commit followed by response loss;
+- provider 503 before side effect through Reference Merchant -> Gateway.
+
+Every case retains deterministic scenario identity, Merchant operation/payment
+IDs, Kill Bill payment/transaction IDs, provider payment identity, final
+canonical state, final provider state, replay observations, and an
+`unexpected_invariant_violations` array. Successful qualification requires
+every unexpected-invariant array to be empty and requires all executed replay
+checks to preserve the same Kill Bill identity without a duplicate provider
+mutation.
+
+The result also records `source_revision` from the executing environment
+(`GITHUB_SHA` in GitHub Actions, otherwise `local`). It is evidence for the
+exact executed runtime, not a replacement for the smoke assertions themselves.
 
 Hyperswitch remains intentionally deferred. Reintroducing it later requires a
 specific interoperability claim and executable proof that the additional

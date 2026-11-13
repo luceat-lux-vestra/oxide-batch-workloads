@@ -62,7 +62,7 @@ impl PaymentOperationKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PaymentState {
     Created,
@@ -77,7 +77,7 @@ pub enum PaymentState {
     PaymentUnknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum OperationState {
     Pending,
@@ -88,7 +88,7 @@ pub enum OperationState {
     ManualReview,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentMutationRequest {
     pub merchant_id: String,
@@ -173,7 +173,7 @@ impl CanonicalMutation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalPaymentMapping {
     pub merchant_payment_id: String,
@@ -187,7 +187,7 @@ pub struct ExternalPaymentMapping {
     pub provider_idempotency_key: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalPaymentView {
     pub merchant_payment_id: String,
