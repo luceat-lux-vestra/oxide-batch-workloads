@@ -89,12 +89,50 @@ pub struct FaultStep {
     pub sequence: u32,
     pub offset_ms: u64,
     pub point: FaultPoint,
+    pub request_match: Option<RequestMatch>,
     pub action: FaultAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestMatch {
+    pub method: String,
+    pub path_suffix: String,
+}
+
+impl RequestMatch {
+    fn validate(&self) -> Result<(), FaultPlanError> {
+        require_non_blank("request_match.method", &self.method)?;
+        require_non_blank("request_match.path_suffix", &self.path_suffix)?;
+        if !self.method.bytes().all(|byte| byte.is_ascii_uppercase()) {
+            return Err(FaultPlanError::InvalidRequestMethod(self.method.clone()));
+        }
+        if !self.path_suffix.starts_with('/') {
+            return Err(FaultPlanError::InvalidRequestPath(
+                self.path_suffix.clone(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl FaultStep {
     fn validate(&self) -> Result<(), FaultPlanError> {
         require_non_blank("step_id", &self.step_id)?;
+
+        let request_point = matches!(
+            self.point,
+            FaultPoint::RequestBeforeProviderSideEffect | FaultPoint::RequestAfterProviderCommit
+        );
+        match (request_point, self.request_match.as_ref()) {
+            (true, Some(request_match)) => request_match.validate()?,
+            (true, None) => {
+                return Err(FaultPlanError::MissingRequestMatch(self.step_id.clone()));
+            }
+            (false, Some(_)) => {
+                return Err(FaultPlanError::UnexpectedRequestMatch(self.step_id.clone()));
+            }
+            (false, None) => {}
+        }
 
         let compatible = matches!(
             (&self.point, &self.action),
@@ -132,7 +170,10 @@ impl FaultStep {
                     return Err(FaultPlanError::UnsupportedHttpStatus(*status));
                 }
             }
-            FaultAction::PermanentBusinessFailure { code } => {
+            FaultAction::PermanentBusinessFailure { status, code } => {
+                if !(400..=499).contains(status) || *status == 429 {
+                    return Err(FaultPlanError::UnsupportedBusinessFailureStatus(*status));
+                }
                 require_non_blank("business_failure.code", code)?;
             }
             FaultAction::Webhook {
@@ -173,6 +214,7 @@ pub enum FaultAction {
         status: u16,
     },
     PermanentBusinessFailure {
+        status: u16,
         code: String,
     },
     CommitThenDropResponse,
@@ -303,12 +345,17 @@ pub enum FaultPlanError {
     EmptySteps,
     DuplicateStepId(String),
     DuplicateSequence(u32),
+    MissingRequestMatch(String),
+    UnexpectedRequestMatch(String),
+    InvalidRequestMethod(String),
+    InvalidRequestPath(String),
     IncompatibleAction {
         step_id: String,
         point: FaultPoint,
         action_kind: &'static str,
     },
     UnsupportedHttpStatus(u16),
+    UnsupportedBusinessFailureStatus(u16),
     ZeroWebhookAttempt,
     BackwardTime {
         current_ms: u64,
@@ -329,6 +376,18 @@ impl fmt::Display for FaultPlanError {
             Self::DuplicateSequence(sequence) => {
                 write!(f, "duplicate step sequence: {sequence}")
             }
+            Self::MissingRequestMatch(step_id) => {
+                write!(f, "request fault step {step_id} requires request_match")
+            }
+            Self::UnexpectedRequestMatch(step_id) => {
+                write!(f, "non-request fault step {step_id} must not define request_match")
+            }
+            Self::InvalidRequestMethod(method) => {
+                write!(f, "request_match.method must be uppercase ASCII: {method:?}")
+            }
+            Self::InvalidRequestPath(path) => {
+                write!(f, "request_match.path_suffix must begin with '/': {path:?}")
+            }
             Self::IncompatibleAction {
                 step_id,
                 point,
@@ -339,6 +398,9 @@ impl fmt::Display for FaultPlanError {
             ),
             Self::UnsupportedHttpStatus(status) => {
                 write!(f, "unsupported injected HTTP status: {status}")
+            }
+            Self::UnsupportedBusinessFailureStatus(status) => {
+                write!(f, "unsupported permanent business failure HTTP status: {status}")
             }
             Self::ZeroWebhookAttempt => write!(f, "webhook attempt must be greater than zero"),
             Self::BackwardTime {
@@ -385,11 +447,21 @@ mod tests {
         point: FaultPoint,
         action: FaultAction,
     ) -> FaultStep {
+        let request_match = matches!(
+            point,
+            FaultPoint::RequestBeforeProviderSideEffect | FaultPoint::RequestAfterProviderCommit
+        )
+        .then(|| RequestMatch {
+            method: "POST".into(),
+            path_suffix: "/payments".into(),
+        });
+
         FaultStep {
             step_id: step_id.into(),
             sequence,
             offset_ms,
             point,
+            request_match,
             action,
         }
     }

@@ -6,6 +6,8 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from request_fault_adapter import FaultPlanValidationError, RequestFaultPlanAdapter
+
 LISTEN_ADDRESS = os.environ.get("PROXY_LISTEN_ADDRESS", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("PROXY_LISTEN_PORT", "8080"))
 UPSTREAM_HOST = os.environ.get("UPSTREAM_HOST", "payment-sandbox")
@@ -26,6 +28,7 @@ HOP_BY_HOP = {
 class FaultState:
     def __init__(self):
         self.lock = threading.Lock()
+        self.request_fault_plan = RequestFaultPlanAdapter()
         self.reset()
 
     def reset(self):
@@ -37,6 +40,7 @@ class FaultState:
         self.responded = 0
         self.last_dropped_path = None
         self.last_responded_path = None
+        self.request_fault_plan.reset()
 
     def arm(self, method, path_suffix):
         with self.lock:
@@ -90,9 +94,21 @@ class FaultState:
                 return True
             return False
 
+    def load_plan(self, payload):
+        return self.request_fault_plan.load(payload)
+
+    def advance_plan(self, offset_ms):
+        return self.request_fault_plan.advance(offset_ms)
+
+    def consume_plan_before(self, method, path):
+        return self.request_fault_plan.consume_before(method, path)
+
+    def consume_plan_after_commit(self, method, path):
+        return self.request_fault_plan.consume_after_commit(method, path)
+
     def snapshot(self):
         with self.lock:
-            return {
+            legacy = {
                 "armed": self.drop_rule,
                 "response_armed": self.response_rule,
                 "forwarded_by_path": dict(sorted(self.forwarded_by_path.items())),
@@ -102,6 +118,8 @@ class FaultState:
                 "last_dropped_path": self.last_dropped_path,
                 "last_responded_path": self.last_responded_path,
             }
+        legacy["plan"] = self.request_fault_plan.snapshot()
+        return legacy
 
 
 STATE = FaultState()
@@ -136,6 +154,22 @@ class Handler(BaseHTTPRequestHandler):
             with STATE.lock:
                 STATE.reset()
             self._json(200, STATE.snapshot())
+            return
+        if self.path == "/__fault/load-plan":
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8") or "{}")
+                self._json(200, STATE.load_plan(payload))
+            except (FaultPlanValidationError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": f"invalid fault plan: {exc}"})
+            return
+        if self.path == "/__fault/advance":
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8") or "{}")
+                self._json(200, STATE.advance_plan(payload["offset_ms"]))
+            except (KeyError, FaultPlanValidationError, TypeError, ValueError, UnicodeDecodeError) as exc:
+                self._json(400, {"error": f"invalid logical-time advance: {exc}"})
             return
         if self.path == "/__fault/drop-next":
             body = self._read_body()
@@ -192,6 +226,22 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy(self):
         body = self._read_body()
 
+        plan_before = STATE.consume_plan_before(self.command, self.path)
+        if plan_before is not None:
+            if plan_before["effect"] == "DROP_BEFORE_UPSTREAM":
+                self._drop_downstream()
+                return
+            self._json(
+                plan_before["status"],
+                {
+                    "error": {
+                        "code": plan_before["error_code"],
+                        "message": plan_before["message"],
+                    }
+                },
+            )
+            return
+
         response_rule = STATE.consume_response(self.command, self.path)
         if response_rule is not None:
             self._json(
@@ -224,13 +274,13 @@ class Handler(BaseHTTPRequestHandler):
             # The upstream response is fully consumed before the downstream
             # connection is dropped. This deterministically models
             # commit-success / response-loss ambiguity.
+            plan_after = STATE.consume_plan_after_commit(self.command, self.path)
+            if plan_after is not None:
+                self._drop_downstream()
+                return
+
             if STATE.consume_drop(self.command, self.path):
-                try:
-                    self.connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                self.connection.close()
-                self.close_connection = True
+                self._drop_downstream()
                 return
 
             self.send_response(response.status)
@@ -247,6 +297,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, {"error": f"upstream proxy failure: {exc}"})
         finally:
             connection.close()
+
+    def _drop_downstream(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.connection.close()
+        self.close_connection = True
 
     def _json(self, status, payload):
         body = json.dumps(payload, sort_keys=True).encode("utf-8")

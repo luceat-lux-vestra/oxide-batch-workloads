@@ -85,6 +85,9 @@
         },
         "action": {
           "$ref": "#/$defs/fault_action"
+        },
+        "request_match": {
+          "$ref": "#/$defs/request_match"
         }
       },
       "allOf": [
@@ -109,7 +112,10 @@
                   }
                 }
               }
-            }
+            },
+            "required": [
+              "request_match"
+            ]
           }
         },
         {
@@ -129,7 +135,10 @@
                   }
                 }
               }
-            }
+            },
+            "required": [
+              "request_match"
+            ]
           }
         },
         {
@@ -149,6 +158,11 @@
                   }
                 }
               }
+            },
+            "not": {
+              "required": [
+                "request_match"
+              ]
             }
           }
         },
@@ -169,6 +183,11 @@
                   }
                 }
               }
+            },
+            "not": {
+              "required": [
+                "request_match"
+              ]
             }
           }
         },
@@ -189,6 +208,11 @@
                   }
                 }
               }
+            },
+            "not": {
+              "required": [
+                "request_match"
+              ]
             }
           }
         }
@@ -243,6 +267,7 @@
           "additionalProperties": false,
           "required": [
             "kind",
+            "status",
             "code"
           ],
           "properties": {
@@ -252,6 +277,14 @@
             "code": {
               "type": "string",
               "minLength": 1
+            },
+            "status": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 499,
+              "not": {
+                "const": 429
+              }
             }
           }
         },
@@ -336,6 +369,24 @@
           }
         }
       ]
+    },
+    "request_match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path_suffix"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "pattern": "^[A-Z]+$"
+        },
+        "path_suffix": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
     }
   }
 }
