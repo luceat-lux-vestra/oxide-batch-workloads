@@ -80,7 +80,9 @@ and operation state, and Gateway/Kill Bill/provider identities are retained in
 Merchant mappings/events.
 
 This candidate has **not yet received authoritative PR/CI validation**, so the
-last merged and validated runtime remains #260. Broader deterministic
+last merged and validated runtime remains #260. The candidate runtime harness
+now also contains a deterministic provider-503-before-side-effect scenario
+through Reference Merchant -> Gateway. Broader deterministic
 failure/async-outcome coverage remains deferred until the remaining #256
 acceptance gaps are handled.
 
@@ -138,9 +140,8 @@ or rotate tenants.
 
 ## Deferred from the current #256 checkpoint
 
-- authoritative PR/CI/runtime validation of the Merchant -> Gateway candidate;
-- full-path provider 503-before-side-effect scenario at the Merchant/Gateway
-  integration boundary;
+- authoritative PR/CI/runtime validation of the Merchant -> Gateway and
+  provider-503-before-side-effect candidates;
 - retained machine-readable scenario result spanning Merchant/Gateway/provider
   identities and final states;
 - broader deterministic fault and async/webhook matrix;
