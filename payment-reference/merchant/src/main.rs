@@ -507,7 +507,7 @@ async fn process_payment_operation(
                 .await?;
                 return Err(ApiError::Upstream(message.to_owned()));
             }
-            persist_gateway_view(
+            let merchant_payment_state = persist_gateway_view(
                 &state.pool,
                 merchant_payment_id,
                 &request.operation_id,
@@ -522,7 +522,7 @@ async fn process_payment_operation(
                 Json(MerchantPaymentOperationView {
                     merchant_payment_id: merchant_payment_id.to_owned(),
                     merchant_order_id: context.merchant_order_id,
-                    payment_state: view.payment_state,
+                    payment_state: merchant_payment_state,
                     operation_id: request.operation_id,
                     operation_state: view.last_operation_state,
                     mapping: view.mapping,
@@ -690,19 +690,8 @@ async fn persist_gateway_view(
     merchant_payment_id: &str,
     operation_id: &str,
     view: &CanonicalPaymentView,
-) -> Result<(), ApiError> {
+) -> Result<PaymentState, ApiError> {
     let mut tx = pool.begin().await.map_err(internal)?;
-
-    sqlx::query(
-        "UPDATE payment_reference_merchant.merchant_payment
-         SET payment_state = $2, updated_at = NOW()
-         WHERE merchant_payment_id = $1",
-    )
-    .bind(merchant_payment_id)
-    .bind(payment_state_name(view.payment_state))
-    .execute(&mut *tx)
-    .await
-    .map_err(internal)?;
 
     sqlx::query(
         "UPDATE payment_reference_merchant.merchant_payment_operation
@@ -715,64 +704,77 @@ async fn persist_gateway_view(
     .await
     .map_err(internal)?;
 
-    sqlx::query(
-        "INSERT INTO payment_reference_merchant.external_payment_mapping
-         (
-             merchant_payment_id,
-             gateway_operation_id,
-             killbill_payment_id,
-             killbill_transaction_id,
-             hyperswitch_payment_id,
-             hyperswitch_attempt_id,
-             provider_payment_id,
-             provider_operation_id,
-             provider_idempotency_key
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (merchant_payment_id) DO UPDATE
-         SET gateway_operation_id = EXCLUDED.gateway_operation_id,
-             killbill_payment_id = COALESCE(
-                 EXCLUDED.killbill_payment_id,
-                 payment_reference_merchant.external_payment_mapping.killbill_payment_id
-             ),
-             killbill_transaction_id = COALESCE(
-                 EXCLUDED.killbill_transaction_id,
-                 payment_reference_merchant.external_payment_mapping.killbill_transaction_id
-             ),
-             hyperswitch_payment_id = COALESCE(
-                 EXCLUDED.hyperswitch_payment_id,
-                 payment_reference_merchant.external_payment_mapping.hyperswitch_payment_id
-             ),
-             hyperswitch_attempt_id = COALESCE(
-                 EXCLUDED.hyperswitch_attempt_id,
-                 payment_reference_merchant.external_payment_mapping.hyperswitch_attempt_id
-             ),
-             provider_payment_id = COALESCE(
-                 EXCLUDED.provider_payment_id,
-                 payment_reference_merchant.external_payment_mapping.provider_payment_id
-             ),
-             provider_operation_id = COALESCE(
-                 EXCLUDED.provider_operation_id,
-                 payment_reference_merchant.external_payment_mapping.provider_operation_id
-             ),
-             provider_idempotency_key = COALESCE(
-                 EXCLUDED.provider_idempotency_key,
-                 payment_reference_merchant.external_payment_mapping.provider_idempotency_key
-             ),
-             updated_at = NOW()",
-    )
-    .bind(merchant_payment_id)
-    .bind(&view.mapping.gateway_operation_id)
-    .bind(&view.mapping.killbill_payment_id)
-    .bind(&view.mapping.killbill_transaction_id)
-    .bind(&view.mapping.hyperswitch_payment_id)
-    .bind(&view.mapping.hyperswitch_attempt_id)
-    .bind(&view.mapping.provider_payment_id)
-    .bind(&view.mapping.provider_operation_id)
-    .bind(&view.mapping.provider_idempotency_key)
-    .execute(&mut *tx)
-    .await
-    .map_err(internal)?;
+    if is_latest_operation(&mut tx, merchant_payment_id, operation_id).await? {
+        sqlx::query(
+            "UPDATE payment_reference_merchant.merchant_payment
+             SET payment_state = $2, updated_at = NOW()
+             WHERE merchant_payment_id = $1",
+        )
+        .bind(merchant_payment_id)
+        .bind(payment_state_name(view.payment_state))
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+
+        sqlx::query(
+            "INSERT INTO payment_reference_merchant.external_payment_mapping
+             (
+                 merchant_payment_id,
+                 gateway_operation_id,
+                 killbill_payment_id,
+                 killbill_transaction_id,
+                 hyperswitch_payment_id,
+                 hyperswitch_attempt_id,
+                 provider_payment_id,
+                 provider_operation_id,
+                 provider_idempotency_key
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (merchant_payment_id) DO UPDATE
+             SET gateway_operation_id = EXCLUDED.gateway_operation_id,
+                 killbill_payment_id = COALESCE(
+                     EXCLUDED.killbill_payment_id,
+                     payment_reference_merchant.external_payment_mapping.killbill_payment_id
+                 ),
+                 killbill_transaction_id = COALESCE(
+                     EXCLUDED.killbill_transaction_id,
+                     payment_reference_merchant.external_payment_mapping.killbill_transaction_id
+                 ),
+                 hyperswitch_payment_id = COALESCE(
+                     EXCLUDED.hyperswitch_payment_id,
+                     payment_reference_merchant.external_payment_mapping.hyperswitch_payment_id
+                 ),
+                 hyperswitch_attempt_id = COALESCE(
+                     EXCLUDED.hyperswitch_attempt_id,
+                     payment_reference_merchant.external_payment_mapping.hyperswitch_attempt_id
+                 ),
+                 provider_payment_id = COALESCE(
+                     EXCLUDED.provider_payment_id,
+                     payment_reference_merchant.external_payment_mapping.provider_payment_id
+                 ),
+                 provider_operation_id = COALESCE(
+                     EXCLUDED.provider_operation_id,
+                     payment_reference_merchant.external_payment_mapping.provider_operation_id
+                 ),
+                 provider_idempotency_key = COALESCE(
+                     EXCLUDED.provider_idempotency_key,
+                     payment_reference_merchant.external_payment_mapping.provider_idempotency_key
+                 ),
+                 updated_at = NOW()",
+        )
+        .bind(merchant_payment_id)
+        .bind(&view.mapping.gateway_operation_id)
+        .bind(&view.mapping.killbill_payment_id)
+        .bind(&view.mapping.killbill_transaction_id)
+        .bind(&view.mapping.hyperswitch_payment_id)
+        .bind(&view.mapping.hyperswitch_attempt_id)
+        .bind(&view.mapping.provider_payment_id)
+        .bind(&view.mapping.provider_operation_id)
+        .bind(&view.mapping.provider_idempotency_key)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    }
 
     let payload = serde_json::to_string(view).map_err(internal)?;
     sqlx::query(
@@ -786,8 +788,38 @@ async fn persist_gateway_view(
     .await
     .map_err(internal)?;
 
+    let payment_state: String = sqlx::query_scalar(
+        "SELECT payment_state
+         FROM payment_reference_merchant.merchant_payment
+         WHERE merchant_payment_id = $1",
+    )
+    .bind(merchant_payment_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(internal)?;
+
     tx.commit().await.map_err(internal)?;
-    Ok(())
+    parse_payment_state(&payment_state)
+}
+
+async fn is_latest_operation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    merchant_payment_id: &str,
+    operation_id: &str,
+) -> Result<bool, ApiError> {
+    let latest_operation_id: String = sqlx::query_scalar(
+        "SELECT operation_id
+         FROM payment_reference_merchant.merchant_payment_operation
+         WHERE merchant_payment_id = $1
+         ORDER BY created_at DESC, operation_id DESC
+         LIMIT 1",
+    )
+    .bind(merchant_payment_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(internal)?;
+
+    Ok(latest_operation_id == operation_id)
 }
 
 async fn persist_unresolved_gateway_outcome(
@@ -798,26 +830,49 @@ async fn persist_unresolved_gateway_outcome(
     event_type: &str,
 ) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(internal)?;
-    sqlx::query(
-        "UPDATE payment_reference_merchant.merchant_payment
-         SET payment_state = 'PAYMENT_UNKNOWN', updated_at = NOW()
-         WHERE merchant_payment_id = $1",
+    let current_operation_state: String = sqlx::query_scalar(
+        "SELECT operation_state
+         FROM payment_reference_merchant.merchant_payment_operation
+         WHERE operation_id = $1
+         FOR UPDATE",
     )
-    .bind(merchant_payment_id)
-    .execute(&mut *tx)
+    .bind(operation_id)
+    .fetch_one(&mut *tx)
     .await
     .map_err(internal)?;
 
-    sqlx::query(
-        "UPDATE payment_reference_merchant.merchant_payment_operation
-         SET operation_state = $2, updated_at = NOW()
-         WHERE operation_id = $1",
-    )
-    .bind(operation_id)
-    .bind(operation_state_name(operation_state))
-    .execute(&mut *tx)
-    .await
-    .map_err(internal)?;
+    let terminal = matches!(
+        current_operation_state.as_str(),
+        "SUCCEEDED" | "FAILED" | "MANUAL_REVIEW"
+    );
+    let override_terminal = operation_state == OperationState::ManualReview;
+    let should_change = !terminal || override_terminal;
+    let latest = is_latest_operation(&mut tx, merchant_payment_id, operation_id).await?;
+
+    if latest && should_change {
+        sqlx::query(
+            "UPDATE payment_reference_merchant.merchant_payment
+             SET payment_state = 'PAYMENT_UNKNOWN', updated_at = NOW()
+             WHERE merchant_payment_id = $1",
+        )
+        .bind(merchant_payment_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    }
+
+    if should_change {
+        sqlx::query(
+            "UPDATE payment_reference_merchant.merchant_payment_operation
+             SET operation_state = $2, updated_at = NOW()
+             WHERE operation_id = $1",
+        )
+        .bind(operation_id)
+        .bind(operation_state_name(operation_state))
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    }
 
     sqlx::query(
         "INSERT INTO payment_reference_merchant.business_event
@@ -852,7 +907,8 @@ async fn persist_rejected_gateway_operation(
     sqlx::query(
         "UPDATE payment_reference_merchant.merchant_payment_operation
          SET operation_state = 'FAILED', updated_at = NOW()
-         WHERE operation_id = $1",
+         WHERE operation_id = $1
+           AND operation_state IN ('PENDING', 'UNKNOWN', 'RETRY_PENDING')",
     )
     .bind(operation_id)
     .execute(&mut *tx)
@@ -908,6 +964,24 @@ fn operation_state_name(state: OperationState) -> &'static str {
         OperationState::Unknown => "UNKNOWN",
         OperationState::RetryPending => "RETRY_PENDING",
         OperationState::ManualReview => "MANUAL_REVIEW",
+    }
+}
+
+fn parse_payment_state(value: &str) -> Result<PaymentState, ApiError> {
+    match value {
+        "CREATED" => Ok(PaymentState::Created),
+        "PAYMENT_PENDING" => Ok(PaymentState::PaymentPending),
+        "AUTHORIZED" => Ok(PaymentState::Authorized),
+        "PARTIALLY_CAPTURED" => Ok(PaymentState::PartiallyCaptured),
+        "PAID" => Ok(PaymentState::Paid),
+        "CANCELLED" => Ok(PaymentState::Cancelled),
+        "PARTIALLY_REFUNDED" => Ok(PaymentState::PartiallyRefunded),
+        "REFUNDED" => Ok(PaymentState::Refunded),
+        "PAYMENT_FAILED" => Ok(PaymentState::PaymentFailed),
+        "PAYMENT_UNKNOWN" => Ok(PaymentState::PaymentUnknown),
+        _ => Err(ApiError::Internal(format!(
+            "unknown persisted Merchant payment state: {value}"
+        ))),
     }
 }
 

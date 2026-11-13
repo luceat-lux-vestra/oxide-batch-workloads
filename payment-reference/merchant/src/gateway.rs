@@ -99,32 +99,33 @@ fn mutation_url(
     merchant_payment_id: &str,
 ) -> Result<Url, GatewayClientError> {
     let mut url = base_url.clone();
-    let mut segments = url.path_segments_mut().map_err(|_| {
-        GatewayClientError::InvalidBaseUrl("URL cannot be used as a hierarchical base".into())
-    })?;
-    segments.clear();
-    segments.push("payments");
-    match operation {
-        PaymentOperationKind::Authorize => {
-            segments.push("authorize");
-        }
-        PaymentOperationKind::AuthCapture => {
-            segments.push("auth-capture");
-        }
-        PaymentOperationKind::Capture => {
-            segments.push(merchant_payment_id);
-            segments.push("capture");
-        }
-        PaymentOperationKind::Cancel => {
-            segments.push(merchant_payment_id);
-            segments.push("cancel");
-        }
-        PaymentOperationKind::Refund => {
-            segments.push(merchant_payment_id);
-            segments.push("refund");
+    {
+        let mut segments = url.path_segments_mut().map_err(|_| {
+            GatewayClientError::InvalidBaseUrl("URL cannot be used as a hierarchical base".into())
+        })?;
+        segments.clear();
+        segments.push("payments");
+        match operation {
+            PaymentOperationKind::Authorize => {
+                segments.push("authorize");
+            }
+            PaymentOperationKind::AuthCapture => {
+                segments.push("auth-capture");
+            }
+            PaymentOperationKind::Capture => {
+                segments.push(merchant_payment_id);
+                segments.push("capture");
+            }
+            PaymentOperationKind::Cancel => {
+                segments.push(merchant_payment_id);
+                segments.push("cancel");
+            }
+            PaymentOperationKind::Refund => {
+                segments.push(merchant_payment_id);
+                segments.push("refund");
+            }
         }
     }
-    drop(segments);
     Ok(url)
 }
 
@@ -211,7 +212,9 @@ mod tests {
 
     #[test]
     fn rejects_non_http_gateway_base_urls() {
-        let error = GatewayClient::new("file:///tmp/gateway").unwrap_err();
+        let error = GatewayClient::new("file:///tmp/gateway")
+            .err()
+            .expect("file URL must be rejected");
         assert!(matches!(error, GatewayClientError::InvalidBaseUrl(_)));
     }
 }
