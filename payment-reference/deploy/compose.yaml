@@ -14,6 +14,23 @@ services:
     networks:
       - payment-reference
 
+  gateway-db:
+    image: postgres:18.6-bookworm
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway-local-only
+    volumes:
+      - gateway-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 20
+    networks:
+      - payment-reference
+
   payment-sandbox:
     build:
       context: ./payment-sandbox
@@ -36,6 +53,21 @@ services:
     networks:
       - payment-reference
 
+  payment-sandbox-fault-proxy:
+    build:
+      context: ../..
+      dockerfile: payment-reference/deploy/fault-proxy/Dockerfile
+    environment:
+      UPSTREAM_HOST: payment-sandbox
+      UPSTREAM_PORT: "8080"
+    depends_on:
+      payment-sandbox:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PAYMENT_SANDBOX_FAULT_PROXY_PORT:-18081}:8080"
+    networks:
+      - payment-reference
+
   killbill:
     build:
       context: ../..
@@ -46,19 +78,42 @@ services:
       KILLBILL_DAO_PASSWORD: killbill
       KILLBILL_CATALOG_URI: SpyCarAdvanced.xml
       KILLBILL_SERVER_TEST_MODE: "true"
-      KB_org_killbill_billing_plugin_paymentSandbox_baseUri: http://payment-sandbox:8080/
+      KB_org_killbill_billing_plugin_paymentSandbox_baseUri: http://payment-sandbox-fault-proxy:8080/
     depends_on:
       killbill-db:
         condition: service_healthy
-      payment-sandbox:
-        condition: service_healthy
+      payment-sandbox-fault-proxy:
+        condition: service_started
     ports:
       - "127.0.0.1:${KILLBILL_PORT:-8080}:8080"
     networks:
       - payment-reference
 
+  gateway:
+    build:
+      context: ../..
+      dockerfile: payment-reference/deploy/gateway/Dockerfile
+    environment:
+      GATEWAY_DATABASE_URL: postgres://gateway:gateway-local-only@gateway-db:5432/gateway?sslmode=disable
+      GATEWAY_BIND: 0.0.0.0:8080
+      KILLBILL_BASE_URL: http://killbill:8080/
+      KILLBILL_USERNAME: ${KILLBILL_USERNAME:-}
+      KILLBILL_PASSWORD: ${KILLBILL_PASSWORD:-}
+      KILLBILL_API_KEY: ${KILLBILL_API_KEY:-}
+      KILLBILL_API_SECRET: ${KILLBILL_API_SECRET:-}
+    depends_on:
+      gateway-db:
+        condition: service_healthy
+      killbill:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-18082}:8080"
+    networks:
+      - payment-reference
+
 volumes:
   killbill-db:
+  gateway-db:
   payment-sandbox-data:
 
 networks:
