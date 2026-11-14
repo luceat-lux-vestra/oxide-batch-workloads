@@ -30,7 +30,24 @@ target/debug/payment-reconciliation-postgres migrate
 
 PAYMENT_REFERENCE_RESULT_PATH="${RUNNER_TEMP:-/tmp}/payment-reference-scenario-result.json"   "$repo_root/payment-reference/deploy/smoke.sh"
 
-business_date="$(date -u +%F)"
+business_dates="$(
+  cd "$repo_root/payment-reference/deploy"
+  docker compose -f compose.yaml exec -T merchant-db     psql -U merchant -d merchant -Atc "
+      SELECT DISTINCT (mp.created_at AT TIME ZONE 'UTC')::date::text
+      FROM payment_reference_merchant.merchant_payment mp
+      JOIN payment_reference_merchant.orders o
+        ON o.merchant_order_id = mp.merchant_order_id
+      WHERE o.merchant_id = 'merchant-smoke'
+        AND mp.payment_state IN ('AUTHORIZED', 'PAID', 'REFUNDED')
+      ORDER BY 1"
+)"
+business_date="$(printf '%s\n' "$business_dates" | sed '/^$/d' | head -n 1)"
+business_date_count="$(printf '%s\n' "$business_dates" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [[ "$business_date_count" != "1" || -z "$business_date" ]]; then
+  echo "expected exactly one stable merchant-smoke UTC business date, observed: $business_dates" >&2
+  exit 1
+fi
+
 merchant_db="postgresql://merchant:merchant-local-only@127.0.0.1:15435/merchant"
 provider_base="http://127.0.0.1:18084"
 
