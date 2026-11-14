@@ -1,3 +1,4 @@
+mod evidence;
 mod failpoint;
 mod finalize;
 mod finalize_failpoint;
@@ -194,9 +195,13 @@ async fn main() -> Result<()> {
             database_url,
             snapshot_id,
         } => {
-            let report = snapshot::verify_source_snapshot(&database_url, &snapshot_id).await?;
+            let report = evidence::verify(&database_url, &snapshot_id).await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(())
+            if report.violations.is_empty() {
+                Ok(())
+            } else {
+                bail!("independent verification reported {} violation(s)", report.violations.len())
+            }
         }
         Command::Run {
             database_url,
