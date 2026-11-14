@@ -196,7 +196,9 @@ pub async fn run(
 ) -> anyhow::Result<String> {
     let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
-    prepare_run(database_url, &run_id, snapshot_id).await?;
+    if !prepare_run(database_url, &run_id, snapshot_id).await? {
+        return Ok(run_id);
+    }
 
     let clock = Arc::new(SystemClock);
     let repository = PostgresJobRepository::connect(pg_config(database_url)?, clock).await?;
@@ -264,7 +266,7 @@ pub async fn run(
     Ok(run_id)
 }
 
-async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> anyhow::Result<()> {
+async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> anyhow::Result<bool> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect(database_url)
@@ -299,6 +301,25 @@ async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> any
         anyhow::bail!("reconciliation run is already finalized as {state}");
     }
 
+    let processing_state: String = row.try_get("processing_state")?;
+    match processing_state.as_str() {
+        "PROCESSED" => {
+            pool.close().await;
+            return Ok(false);
+        }
+        "PROCESSING" => {
+            pool.close().await;
+            anyhow::bail!(
+                "reconciliation run is already PROCESSING; checkpoint 5 recovery is required"
+            );
+        }
+        "PENDING" | "FAILED" => {}
+        other => {
+            pool.close().await;
+            anyhow::bail!("unsupported reconciliation processing state: {other}");
+        }
+    }
+
     sqlx::query(
         "UPDATE payment_reconciliation.reconciliation_run
          SET processing_state = 'PROCESSING', updated_at = NOW()
@@ -309,7 +330,7 @@ async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> any
     .await?;
 
     pool.close().await;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

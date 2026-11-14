@@ -525,6 +525,7 @@ pub(crate) async fn load_integrity_checked_snapshot(
     database_url: &str,
     snapshot_id: &str,
 ) -> Result<SnapshotBundle> {
+    validate_snapshot_identity(snapshot_id)?;
     let pool = workload_pool(database_url).await?;
     let bundle = load_snapshot(&pool, snapshot_id).await?;
     validate_bundle_integrity(&bundle)?;
