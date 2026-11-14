@@ -73,13 +73,11 @@ impl FaultPlan {
                 }
                 FaultAction::Webhook {
                     event_id, attempt, ..
-                } => {
-                    if !webhook_attempts.insert((event_id.clone(), *attempt)) {
-                        return Err(FaultPlanError::DuplicateWebhookAttempt {
-                            event_id: event_id.clone(),
-                            attempt: *attempt,
-                        });
-                    }
+                } if !webhook_attempts.insert((event_id.clone(), *attempt)) => {
+                    return Err(FaultPlanError::DuplicateWebhookAttempt {
+                        event_id: event_id.clone(),
+                        attempt: *attempt,
+                    });
                 }
                 _ => {}
             }
