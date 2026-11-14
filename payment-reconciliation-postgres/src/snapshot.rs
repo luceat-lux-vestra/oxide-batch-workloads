@@ -582,7 +582,7 @@ async fn load_snapshot(pool: &PgPool, snapshot_id: &str) -> Result<SnapshotBundl
                 refunded_amount_minor: row.try_get("refunded_amount_minor")?,
             })
         })
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
     let provider_rows = sqlx::query(
         r#"
@@ -617,7 +617,7 @@ async fn load_snapshot(pool: &PgPool, snapshot_id: &str) -> Result<SnapshotBundl
                 provider_version: row.try_get("provider_version")?,
             })
         })
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
     Ok(SnapshotBundle {
         metadata,
