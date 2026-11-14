@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 # Workload-owned CI contract entrypoint for payment-reconciliation-postgres.
-# Checkpoint 2 intentionally validates only the scaffold/compile surface.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 stage="${1:?usage: ci/validate <ci|msrv>}"
+export DATABASE_URL="${DATABASE_URL:-postgresql://oxide_batch_workload:oxide_batch_workload@127.0.0.1:5436/payment_reconciliation_workload}"
+
+if docker compose version >/dev/null 2>&1; then
+  compose() { docker compose "$@"; }
+else
+  compose() { docker-compose "$@"; }
+fi
+
+start_postgres() {
+  compose up -d --wait --wait-timeout 60
+}
+
+stop_postgres() {
+  compose down --volumes
+}
 
 run_ci_stage() {
   cargo fmt --check
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
-  cargo test --locked
+
+  trap stop_postgres EXIT
+  start_postgres
+  cargo test --locked -- --test-threads=1
 }
 
 run_msrv_stage() {

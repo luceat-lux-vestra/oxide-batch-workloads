@@ -158,3 +158,44 @@ payment-reconciliation-postgres finalize \
 ```
 
 Crash/recovery injection and replay evidence remain checkpoint 5 work.
+
+
+## Checkpoint 5 — hard-crash recovery and replay matrix
+
+The workload now exposes deterministic crash synchronization on the shipped
+binary rather than using sleep-based timing or self-abort:
+
+```text
+run ... --fail-at-chunk N \
+  --failure-mode during-write|after-business-commit \
+  --pause-for-kill <marker>
+
+finalize ... \
+  --finalize-crash-point before-commit|after-commit \
+  --pause-for-kill <marker>
+```
+
+An armed failpoint writes its PID and semantic boundary to the marker and then
+blocks. The integration harness waits for that exact marker and delivers a real
+external `SIGKILL` to the child process.
+
+`recover --snapshot-id <id>` resolves the exact immutable snapshot identity,
+finds the matching OxideBatch `JobInstance`, and uses the public
+`RecoveryRequest::mark_failed` / repository recovery API. It never mutates
+`oxide_batch` tables directly. Only after framework recovery commits does the
+workload-owned run transition from `PROCESSING` back to `PENDING`; a new
+process then invokes `run` and resumes from the durable checkpoint.
+
+The checkpoint-5 integration matrix proves:
+
+- kill after detail INSERT but before chunk commit -> that chunk rolls back;
+- kill immediately after atomic chunk commit -> detail + checkpoint remain
+  durable together and are not duplicated on continuation;
+- completed processing alone publishes nothing;
+- kill before finalization commit -> no verdict/publication is durable;
+- kill after finalization/publication commit but before caller acknowledgement
+  -> replay returns the already-committed result with one publication row;
+- repeated CLEAR finalization remains exactly one publication;
+- repeated HELD finalization remains zero publications.
+
+Retained campaign evidence is intentionally still checkpoint 6 work.
