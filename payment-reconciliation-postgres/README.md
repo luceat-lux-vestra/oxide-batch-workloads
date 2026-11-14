@@ -14,47 +14,100 @@ rust-version = "1.95"
 ```
 
 The committed lockfile is derived from the repository's already validated
-`postgres-local-partition` dependency graph with only the root package name
-changed. The direct dependency set is intentionally identical at this scaffold
-checkpoint so `cargo --locked` remains deterministic without introducing an
-unreviewed dependency update.
+`postgres-local-partition` dependency graph. Checkpoint 3 changes only feature
+activation on already-resolved dependencies; it does not introduce a new direct
+package.
 
-## Checkpoint 2 boundary
+## Checkpoint 3 boundary
 
-Implemented in this checkpoint:
+Implemented:
 
-- real-workload registry entry;
-- exact published OxideBatch dependency and committed lockfile;
-- workload-owned initial PostgreSQL schema;
-- frozen CLI command surface;
-- workload-owned `ci/validate <ci|msrv>`.
+- workload migration execution;
+- real Merchant PostgreSQL snapshot acquisition under a repeatable-read,
+  read-only transaction;
+- v1 scope filtering by Reference Merchant `merchant_id` and Merchant
+  `created_at` projected to a UTC business date;
+- stable v1 Merchant states only: `AUTHORIZED`, `PAID`, `REFUNDED`;
+- internal financial totals derived only from `SUCCEEDED` Merchant operations;
+- provider acquisition only through payment-sandbox's supported
+  `GET /payments/{provider_payment_id}` response;
+- fail-closed base acquisition: the independently derived oracle must report
+  `CLEAR` before a base snapshot is persisted;
+- canonical source-row digests;
+- deterministic derived scenarios:
+  - `missing-provider`
+  - `missing-internal`
+  - `duplicate-provider`
+  - `amount-mismatch`
+- source-only independent oracle covering all seven frozen classifications;
+- stored-digest recomputation and scenario expectation checking in `verify`.
 
-Intentionally not implemented yet:
+Still intentionally unimplemented:
 
-- Merchant/provider snapshot acquisition;
-- deterministic mismatch scenario derivation;
 - OxideBatch reconciliation processing;
+- CLEAR/HELD finalization/publication;
 - crash/recovery;
-- CLEAR/HELD finalization and publication;
-- independent business oracle;
+- reset behavior;
 - retained Evidence Contract v2 artifacts.
 
-Every CLI command currently fails closed with an explicit scaffold-only message.
-That is deliberate: later checkpoints implement each responsibility without
-silently claiming behavior at this boundary.
+## Source boundary
 
-## Frozen commands
+The batch workload never reads Kill Bill internals or payment-sandbox storage.
 
 ```text
-payment-reconciliation-postgres migrate
-payment-reconciliation-postgres snapshot
-payment-reconciliation-postgres derive-scenario
-payment-reconciliation-postgres run
-payment-reconciliation-postgres recover
-payment-reconciliation-postgres finalize
-payment-reconciliation-postgres verify
-payment-reconciliation-postgres reset
+Reference Merchant PostgreSQL
+        |
+        | repeatable-read source projection
+        v
+internal_payment_snapshot
+
+external_payment_mapping.provider_payment_id
+        |
+        | supported HTTP GET
+        v
+payment-sandbox /payments/{id}
+        |
+        v
+provider_payment_snapshot
 ```
 
-The migration owns only the `payment_reconciliation` schema. It does not modify
-payment-reference source schemas or OxideBatch framework metadata.
+The two representations are frozen before any later OxideBatch job begins.
+Recovery must reuse the recorded snapshot digests rather than silently refresh
+external state.
+
+Provider HTTP acquisition currently shells out directly to `curl` without a
+shell, with a bounded connect/overall timeout. This matches the existing
+payment-reference runtime dependency and avoids introducing a second HTTP client
+dependency into the validation subject.
+
+## Commands implemented in checkpoint 3
+
+```text
+payment-reconciliation-postgres migrate --database-url <url>
+
+payment-reconciliation-postgres snapshot \
+  --database-url <workload-db> \
+  --merchant-database-url <merchant-db> \
+  --provider-base-url <payment-sandbox-or-fault-proxy-base> \
+  --snapshot-id <id> \
+  --business-date YYYY-MM-DD \
+  --provider-scope <merchant-id>
+
+payment-reconciliation-postgres derive-scenario \
+  --database-url <workload-db> \
+  --base-snapshot-id <clear-id> \
+  --snapshot-id <derived-id> \
+  --scenario missing-provider|missing-internal|duplicate-provider|amount-mismatch \
+  [--delta-minor 1]
+
+payment-reconciliation-postgres verify \
+  --database-url <workload-db> \
+  --snapshot-id <id>
+```
+
+`verify` is deliberately source-only at this checkpoint. It independently
+recomputes snapshot digests and the expected `CLEAR | HELD` verdict; it does
+not yet validate production reconciliation/finalization rows.
+
+The migration owns only the `payment_reconciliation` schema. It does not
+modify payment-reference source schemas or OxideBatch framework metadata.
