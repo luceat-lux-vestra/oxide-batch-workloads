@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 
 use crate::failpoint::{FailingTransactionManager, FailingWriter, Failpoint, FailureMode};
-use crate::model::{SnapshotBundle, CONTRACT_VERSION};
+use crate::model::{hex_digest, SnapshotBundle, CONTRACT_VERSION};
 use crate::processor::{ReconciliationProcessor, ReconciliationSourceRow};
 
 const JOB_NAME: &str = "payment-reconciliation-postgres-v1";
@@ -125,7 +125,8 @@ pub fn run_id(bundle: &SnapshotBundle) -> String {
         hasher.update(value.as_bytes());
         hasher.update([0]);
     }
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    hex_digest(digest.as_ref())
 }
 
 fn source_query(snapshot_id: &str) -> String {

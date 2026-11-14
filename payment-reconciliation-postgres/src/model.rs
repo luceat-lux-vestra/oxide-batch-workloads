@@ -4,6 +4,16 @@ use sha2::{Digest, Sha256};
 pub const CONTRACT_VERSION: &str = "payment-reconciliation-v1";
 pub const DEFAULT_POLICY_VERSION: &str = "payment-reconciliation-policy-v1";
 
+pub fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMetadata {
     pub snapshot_id: String,
@@ -68,7 +78,8 @@ where
         hasher.update(encoded);
         hasher.update(b"\n");
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    Ok(hex_digest(digest.as_ref()))
 }
 
 trait RowIdentity {

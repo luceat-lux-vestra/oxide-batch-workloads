@@ -286,7 +286,10 @@ fn derive_finalization(details: &[FinalizationDetail]) -> Result<(String, i64, i
         business_state,
         mismatch_count,
         aggregate_delta_minor,
-        format!("{:x}", hasher.finalize()),
+        {
+            let digest = hasher.finalize();
+            crate::model::hex_digest(digest.as_ref())
+        },
     ))
 }
 

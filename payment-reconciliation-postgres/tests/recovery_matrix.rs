@@ -42,6 +42,7 @@ struct VerifyEnvelope {
     campaign_issue: u32,
     classification: String,
     snapshot: serde_json::Value,
+    base_snapshot: Option<serde_json::Value>,
     oracle: serde_json::Value,
     actual: serde_json::Value,
     violations: Vec<String>,
@@ -87,6 +88,7 @@ fn retain_evidence(
             "schema_version": report.schema_version,
             "campaign_issue": report.campaign_issue,
             "snapshot": report.snapshot,
+            "base_snapshot": report.base_snapshot,
             "oracle": report.oracle,
             "actual": report.actual,
             "violations": report.violations
@@ -152,6 +154,16 @@ async fn pool() -> PgPool {
         .expect("connect test postgres")
 }
 
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
+}
+
 fn digest<T: Serialize + Clone>(rows: &[(String, T)]) -> String {
     let mut rows = rows.to_vec();
     rows.sort_by(|left, right| left.0.cmp(&right.0));
@@ -160,7 +172,8 @@ fn digest<T: Serialize + Clone>(rows: &[(String, T)]) -> String {
         hasher.update(serde_json::to_vec(&row).expect("serialize source row"));
         hasher.update(b"\n");
     }
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    bytes_to_hex(digest.as_ref())
 }
 
 async fn migrate() {

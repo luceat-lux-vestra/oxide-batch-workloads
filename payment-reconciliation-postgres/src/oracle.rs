@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::model::{InternalSnapshotRow, ProviderSnapshotRow};
+use crate::model::{hex_digest, InternalSnapshotRow, ProviderSnapshotRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -111,7 +111,10 @@ pub fn reconcile(
         business_state,
         mismatch_count,
         aggregate_delta_minor,
-        result_digest: format!("{:x}", hasher.finalize()),
+        result_digest: {
+            let digest = hasher.finalize();
+            hex_digest(digest.as_ref())
+        },
         details,
     })
 }
