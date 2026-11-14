@@ -1,6 +1,10 @@
+mod finalize;
+mod job;
 mod model;
 mod oracle;
+mod processor;
 mod snapshot;
+mod writer;
 
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
@@ -72,12 +76,26 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         delta_minor: i64,
     },
-    /// Execute reconciliation processing through OxideBatch.
-    Run,
+    /// Execute reconciliation processing through OxideBatch over one frozen snapshot.
+    Run {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        snapshot_id: String,
+        #[arg(long, default_value_t = job::DEFAULT_CHUNK_SIZE)]
+        chunk_size: u32,
+        #[arg(long, default_value_t = job::DEFAULT_PAGE_SIZE)]
+        page_size: usize,
+    },
     /// Continue a crashed execution through public OxideBatch recovery APIs.
     Recover,
     /// Derive CLEAR/HELD and cross the authoritative publication boundary.
-    Finalize,
+    Finalize {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        snapshot_id: String,
+    },
     /// Independently verify the frozen source snapshot and expected business verdict.
     Verify {
         #[arg(long, env = "DATABASE_URL")]
@@ -161,15 +179,38 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        Command::Run => checkpoint_four("run"),
-        Command::Recover => checkpoint_four("recover"),
-        Command::Finalize => checkpoint_four("finalize"),
-        Command::Reset => checkpoint_four("reset"),
+        Command::Run {
+            database_url,
+            snapshot_id,
+            chunk_size,
+            page_size,
+        } => {
+            let run_id = job::run(&database_url, &snapshot_id, chunk_size, page_size).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "run_id": run_id,
+                    "snapshot_id": snapshot_id,
+                    "processing_state": "PROCESSED"
+                }))?
+            );
+            Ok(())
+        }
+        Command::Recover => checkpoint_five("recover"),
+        Command::Finalize {
+            database_url,
+            snapshot_id,
+        } => {
+            let report = finalize::finalize(&database_url, &snapshot_id).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Command::Reset => checkpoint_five("reset"),
     }
 }
 
-fn checkpoint_four(command: &str) -> Result<()> {
-    bail!("{command} remains intentionally unimplemented before issue #148 checkpoint 4")
+fn checkpoint_five(command: &str) -> Result<()> {
+    bail!("{command} remains intentionally unimplemented before issue #148 checkpoint 5")
 }
 
 #[cfg(test)]

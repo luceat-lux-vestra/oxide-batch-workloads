@@ -42,6 +42,10 @@ struct ProviderPaymentResponse {
 }
 
 pub async fn migrate(database_url: &str) -> Result<()> {
+    let config = oxide_batch::PostgresConfig::new(database_url)?
+        .with_tls_mode(oxide_batch::TlsMode::Plaintext);
+    oxide_batch::PostgresMigrator::migrate(&config).await?;
+
     let pool = workload_pool(database_url).await?;
     sqlx::migrate!().run(&pool).await?;
     Ok(())
@@ -515,6 +519,17 @@ async fn persist_snapshot(pool: &PgPool, bundle: &SnapshotBundle, mutation_recip
 
     tx.commit().await?;
     Ok(())
+}
+
+pub(crate) async fn load_integrity_checked_snapshot(
+    database_url: &str,
+    snapshot_id: &str,
+) -> Result<SnapshotBundle> {
+    let pool = workload_pool(database_url).await?;
+    let bundle = load_snapshot(&pool, snapshot_id).await?;
+    validate_bundle_integrity(&bundle)?;
+    pool.close().await;
+    Ok(bundle)
 }
 
 async fn load_snapshot(pool: &PgPool, snapshot_id: &str) -> Result<SnapshotBundle> {

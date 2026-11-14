@@ -113,3 +113,48 @@ not yet validate production reconciliation/finalization rows.
 
 The migration owns only the `payment_reconciliation` schema. It does not
 modify payment-reference source schemas or OxideBatch framework metadata.
+
+
+## Checkpoint 4 — OxideBatch processing and publication boundary
+
+Implemented in checkpoint 4:
+
+- released `postgres_paging_reader` over the frozen snapshot tables, ordered by
+  `provider_payment_id`;
+- SQL aggregation only for per-side row counts and representative fields;
+  business classification remains processor-owned;
+- identifying OxideBatch job parameters:
+  `contract_version`, `business_date`, `provider_scope`, `scenario_case`,
+  both snapshot digests, and `policy_version`;
+- deterministic run identity derived from exactly those identifying values;
+- processor-owned seven-way classification;
+- released `postgres_batch_writer` under
+  `ChunkDeliveryMode::AtomicSameResource`;
+- idempotent detail upsert keyed by `(run_id, provider_payment_id)`;
+- separate finalization transaction that independently derives mismatch count,
+  aggregate financial delta, `CLEAR | HELD`, and a canonical result digest;
+- publication invariant:
+  - `CLEAR -> exactly one published_reconciliation row`;
+  - `HELD -> zero published_reconciliation rows`;
+- finalization replay checks the already-stored verdict/digest and remains
+  idempotent.
+
+The OxideBatch job never publishes directly. A completed framework execution
+moves the workload-owned run to `PROCESSED`; only `finalize` may make a
+publication authoritative.
+
+### Processing commands
+
+```text
+payment-reconciliation-postgres run \
+  --database-url <workload-db> \
+  --snapshot-id <frozen-snapshot> \
+  [--chunk-size 100] \
+  [--page-size 250]
+
+payment-reconciliation-postgres finalize \
+  --database-url <workload-db> \
+  --snapshot-id <frozen-snapshot>
+```
+
+Crash/recovery injection and replay evidence remain checkpoint 5 work.
