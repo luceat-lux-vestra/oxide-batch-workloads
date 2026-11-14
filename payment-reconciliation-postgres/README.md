@@ -124,8 +124,8 @@ Implemented in checkpoint 4:
 - SQL aggregation only for per-side row counts and representative fields;
   business classification remains processor-owned;
 - identifying OxideBatch job parameters:
-  `contract_version`, `business_date`, `provider_scope`, `scenario_case`,
-  both snapshot digests, and `policy_version`;
+  `snapshot_id`, `contract_version`, `business_date`, `provider_scope`,
+  `scenario_case`, both snapshot digests, and `policy_version`;
 - deterministic run identity derived from exactly those identifying values;
 - processor-owned seven-way classification;
 - released `postgres_batch_writer` under

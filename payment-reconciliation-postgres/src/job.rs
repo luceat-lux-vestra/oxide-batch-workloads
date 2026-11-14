@@ -79,6 +79,7 @@ fn revisions(namespace: ComponentStreamIdentity) -> anyhow::Result<ChunkComponen
 fn parameters(bundle: &SnapshotBundle) -> anyhow::Result<JobParameters> {
     let metadata = &bundle.metadata;
     Ok(JobParameters::try_from_iter([
+        identifying("snapshot_id", &metadata.snapshot_id)?,
         identifying("contract_version", CONTRACT_VERSION)?,
         identifying("business_date", &metadata.business_date)?,
         identifying("provider_scope", &metadata.provider_scope)?,
@@ -109,6 +110,7 @@ pub fn run_id(bundle: &SnapshotBundle) -> String {
     let metadata = &bundle.metadata;
     let mut hasher = Sha256::new();
     for value in [
+        metadata.snapshot_id.as_str(),
         CONTRACT_VERSION,
         metadata.business_date.as_str(),
         metadata.provider_scope.as_str(),
