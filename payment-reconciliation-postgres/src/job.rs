@@ -1,4 +1,6 @@
 use std::num::NonZeroU64;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
 use oxide_batch::item_components::{
@@ -8,15 +10,17 @@ use oxide_batch::{
     Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
     ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
     ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
-    InFlightPolicy, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, NoopChunkCompletion,
-    ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresJobRepository, ReaderError, SequentialIdGenerator, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepName, StopSource, SystemClock, TlsMode,
+    BatchStatus, FailureCategory, FailureId, InFlightPolicy, JobInstanceKey, JobLauncher, JobName,
+    JobParameter, JobParameters, JobRepository, NoopChunkCompletion, ParameterName, ParameterRole,
+    ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresJobRepository, ReaderError,
+    RecoveryRequest, SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepName, StopSource, SystemClock, TlsMode,
 };
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
+use crate::failpoint::{FailingTransactionManager, FailingWriter, FailureMode, Failpoint};
 use crate::model::{SnapshotBundle, CONTRACT_VERSION};
 use crate::processor::{ReconciliationProcessor, ReconciliationSourceRow};
 
@@ -195,6 +199,9 @@ pub async fn run(
     snapshot_id: &str,
     chunk_size: u32,
     page_size: usize,
+    fail_at_chunk: u32,
+    failure_mode: FailureMode,
+    pause_for_kill: Option<PathBuf>,
 ) -> anyhow::Result<String> {
     let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
@@ -217,8 +224,25 @@ pub async fn run(
         namespace.clone(),
     )?;
 
-    let transactions =
+    let failpoint = match (fail_at_chunk, pause_for_kill) {
+        (0, None) => Failpoint::disabled(),
+        (0, Some(_)) => anyhow::bail!("--pause-for-kill requires --fail-at-chunk >= 1"),
+        (_, None) => anyhow::bail!("--fail-at-chunk requires --pause-for-kill"),
+        (target, Some(marker)) => Failpoint::armed(target, failure_mode, marker)?,
+    };
+    let chunk_ordinal = Arc::new(AtomicU32::new(0));
+    let raw_transactions =
         PostgresChunkTransactionManager::new(repository.clone(), state_provider());
+    let transactions = FailingTransactionManager::new(
+        raw_transactions,
+        Arc::clone(&chunk_ordinal),
+        failpoint.clone(),
+    );
+    let writer = FailingWriter::new(
+        crate::writer::writer()?,
+        Arc::clone(&chunk_ordinal),
+        failpoint,
+    );
     let step = ChunkStep::new(
         StepName::new("reconcile_frozen_payment_snapshot")?,
         ChunkSize::new(chunk_size)?,
@@ -226,7 +250,7 @@ pub async fn run(
         ReconciliationProcessor {
             run_id: run_id.clone(),
         },
-        crate::writer::writer()?,
+        writer,
         Arc::new(transactions),
         Arc::new(NoopChunkCompletion),
     )
@@ -247,7 +271,7 @@ pub async fn run(
 
     let status = report.launch().job_execution().metadata().status();
     repository.close().await?;
-    if status != oxide_batch::BatchStatus::Completed {
+    if status != BatchStatus::Completed {
         anyhow::bail!("reconciliation execution ended with status {status}, not Completed");
     }
 
@@ -333,6 +357,103 @@ async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> any
 
     pool.close().await;
     Ok(true)
+}
+
+pub async fn recover(database_url: &str, snapshot_id: &str) -> anyhow::Result<String> {
+    let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
+    let run_id = run_id(&bundle);
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await?;
+    let run_state: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT processing_state, business_state
+         FROM payment_reconciliation.reconciliation_run
+         WHERE run_id = $1",
+    )
+    .bind(&run_id)
+    .fetch_optional(&pool)
+    .await?;
+    let Some((processing_state, business_state)) = run_state else {
+        pool.close().await;
+        anyhow::bail!("reconciliation run does not exist for snapshot {snapshot_id}");
+    };
+    if business_state.is_some() {
+        pool.close().await;
+        anyhow::bail!("finalized reconciliation runs are not recovery candidates");
+    }
+    if processing_state != "PROCESSING" {
+        pool.close().await;
+        anyhow::bail!(
+            "recovery requires workload state PROCESSING, observed {processing_state}"
+        );
+    }
+
+    let clock = Arc::new(SystemClock);
+    let repository = PostgresJobRepository::connect(pg_config(database_url)?, clock).await?;
+    let job_parameters = parameters(&bundle)?;
+    let key = JobInstanceKey::new(JobName::new(JOB_NAME)?, &job_parameters);
+
+    let mut unit = repository.begin().await?;
+    let instance = unit
+        .find_job_instance(&key)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("no OxideBatch JobInstance matches the frozen snapshot identity"))?;
+    let execution = unit
+        .job_executions(instance.id())
+        .await?
+        .into_iter()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("matching OxideBatch JobInstance has no executions"))?;
+    unit.rollback().await?;
+
+    if !matches!(
+        execution.metadata().status(),
+        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown
+    ) {
+        pool.close().await;
+        repository.close().await?;
+        anyhow::bail!(
+            "latest OxideBatch execution status is {}, not a hard-crash recovery candidate",
+            execution.metadata().status()
+        );
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"payment-reconciliation-hard-crash-recovery-v1\0");
+    hasher.update(run_id.as_bytes());
+    let evidence_digest: [u8; 32] = hasher.finalize().into();
+
+    let request = RecoveryRequest::mark_failed(
+        execution.version(),
+        "PAYMENT_RECONCILIATION_HARD_CRASH_RECOVERY",
+        "payment-reconciliation-postgres-cli",
+        evidence_digest,
+        FailureCategory::PermanentInfrastructure,
+        FailureId::new(1)?,
+    )?;
+    let mut unit = repository.begin().await?;
+    unit.recover_job_execution(execution.id(), &request).await?;
+    unit.commit().await?;
+    repository.close().await?;
+
+    let updated = sqlx::query(
+        "UPDATE payment_reconciliation.reconciliation_run
+         SET processing_state = 'PENDING', updated_at = NOW()
+         WHERE run_id = $1
+           AND processing_state = 'PROCESSING'
+           AND business_state IS NULL",
+    )
+    .bind(&run_id)
+    .execute(&pool)
+    .await?;
+    pool.close().await;
+    if updated.rows_affected() != 1 {
+        anyhow::bail!("workload recovery state transition did not update exactly one run");
+    }
+
+    Ok(run_id)
 }
 
 #[cfg(test)]

@@ -1,4 +1,6 @@
+mod failpoint;
 mod finalize;
+mod finalize_failpoint;
 mod job;
 mod model;
 mod oracle;
@@ -86,9 +88,24 @@ enum Command {
         chunk_size: u32,
         #[arg(long, default_value_t = job::DEFAULT_PAGE_SIZE)]
         page_size: usize,
+        #[arg(long, default_value_t = 0)]
+        fail_at_chunk: u32,
+        #[arg(long, value_enum, default_value = "during-write")]
+        failure_mode: failpoint::FailureMode,
+        #[arg(long)]
+        pause_for_kill: Option<std::path::PathBuf>,
     },
-    /// Continue a crashed execution through public OxideBatch recovery APIs.
-    Recover,
+    /// Continue a hard-crashed execution through public OxideBatch recovery APIs.
+    Recover {
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
+        #[arg(long)]
+        snapshot_id: String,
+        #[arg(long, value_enum)]
+        finalize_crash_point: Option<finalize_failpoint::FinalizeCrashPoint>,
+        #[arg(long)]
+        pause_for_kill: Option<std::path::PathBuf>,
+    },
     /// Derive CLEAR/HELD and cross the authoritative publication boundary.
     Finalize {
         #[arg(long, env = "DATABASE_URL")]
@@ -184,8 +201,20 @@ async fn main() -> Result<()> {
             snapshot_id,
             chunk_size,
             page_size,
+            fail_at_chunk,
+            failure_mode,
+            pause_for_kill,
         } => {
-            let run_id = job::run(&database_url, &snapshot_id, chunk_size, page_size).await?;
+            let run_id = job::run(
+                &database_url,
+                &snapshot_id,
+                chunk_size,
+                page_size,
+                fail_at_chunk,
+                failure_mode,
+                pause_for_kill,
+            )
+            .await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -196,21 +225,43 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Command::Recover => checkpoint_five("recover"),
-        Command::Finalize {
+        Command::Recover {
             database_url,
             snapshot_id,
         } => {
-            let report = finalize::finalize(&database_url, &snapshot_id).await?;
+            let run_id = job::recover(&database_url, &snapshot_id).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "run_id": run_id,
+                    "snapshot_id": snapshot_id,
+                    "recovery_state": "PENDING"
+                }))?
+            );
+            Ok(())
+        },
+        Command::Finalize {
+            database_url,
+            snapshot_id,
+            finalize_crash_point,
+            pause_for_kill,
+        } => {
+            let report = finalize::finalize(
+                &database_url,
+                &snapshot_id,
+                finalize_crash_point,
+                pause_for_kill,
+            )
+            .await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        Command::Reset => checkpoint_five("reset"),
+        Command::Reset => checkpoint_six("reset"),
     }
 }
 
-fn checkpoint_five(command: &str) -> Result<()> {
-    bail!("{command} remains intentionally unimplemented before issue #148 checkpoint 5")
+fn checkpoint_six(command: &str) -> Result<()> {
+    bail!("{command} remains intentionally unimplemented before issue #148 checkpoint 6")
 }
 
 #[cfg(test)]

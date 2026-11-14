@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,19 +45,34 @@ struct CanonicalDetail {
     refunded_delta_minor: Option<i64>,
 }
 
-pub async fn finalize(database_url: &str, snapshot_id: &str) -> Result<FinalizationReport> {
+pub async fn finalize(
+    database_url: &str,
+    snapshot_id: &str,
+    crash_point: Option<crate::finalize_failpoint::FinalizeCrashPoint>,
+    pause_for_kill: Option<PathBuf>,
+) -> Result<FinalizationReport> {
     let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = crate::job::run_id(&bundle);
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect(database_url)
         .await?;
-    let report = finalize_with_pool(&pool, &run_id).await?;
+    let crash = match (crash_point, pause_for_kill) {
+        (None, None) => None,
+        (Some(point), Some(marker)) => Some((point, marker)),
+        (Some(_), None) => bail!("--finalize-crash-point requires --pause-for-kill"),
+        (None, Some(_)) => bail!("--pause-for-kill requires --finalize-crash-point"),
+    };
+    let report = finalize_with_pool(&pool, &run_id, crash).await?;
     pool.close().await;
     Ok(report)
 }
 
-async fn finalize_with_pool(pool: &PgPool, run_id: &str) -> Result<FinalizationReport> {
+async fn finalize_with_pool(
+    pool: &PgPool,
+    run_id: &str,
+    crash: Option<(crate::finalize_failpoint::FinalizeCrashPoint, PathBuf)>,
+) -> Result<FinalizationReport> {
     let mut tx = pool.begin().await?;
     let run = sqlx::query(
         "SELECT processing_state, business_state, mismatch_count,
@@ -183,7 +200,24 @@ async fn finalize_with_pool(pool: &PgPool, run_id: &str) -> Result<FinalizationR
         _ => {}
     }
 
+    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::BeforeCommit, marker)) = crash.as_ref() {
+        crate::finalize_failpoint::pause(
+            marker,
+            crate::finalize_failpoint::FinalizeCrashPoint::BeforeCommit,
+        )
+        .await;
+    }
+
     tx.commit().await?;
+
+    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::AfterCommit, marker)) = crash.as_ref() {
+        crate::finalize_failpoint::pause(
+            marker,
+            crate::finalize_failpoint::FinalizeCrashPoint::AfterCommit,
+        )
+        .await;
+    }
+
     Ok(FinalizationReport {
         run_id: run_id.to_owned(),
         business_state,
