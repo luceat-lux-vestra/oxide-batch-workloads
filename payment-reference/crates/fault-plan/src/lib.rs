@@ -26,9 +26,7 @@ pub struct FaultPlan {
 impl FaultPlan {
     pub fn validate(&self) -> Result<(), FaultPlanError> {
         if self.fault_plan_version != FAULT_PLAN_VERSION {
-            return Err(FaultPlanError::UnsupportedVersion(
-                self.fault_plan_version,
-            ));
+            return Err(FaultPlanError::UnsupportedVersion(self.fault_plan_version));
         }
         if self.scenario_version == 0 {
             return Err(FaultPlanError::ZeroScenarioVersion);
@@ -144,9 +142,7 @@ impl RequestMatch {
             return Err(FaultPlanError::InvalidRequestMethod(self.method.clone()));
         }
         if !self.path_suffix.starts_with('/') {
-            return Err(FaultPlanError::InvalidRequestPath(
-                self.path_suffix.clone(),
-            ));
+            return Err(FaultPlanError::InvalidRequestPath(self.path_suffix.clone()));
         }
         Ok(())
     }
@@ -190,10 +186,7 @@ impl FaultStep {
             ) | (
                 FaultPoint::ProviderTransition,
                 FaultAction::ProviderTransition { .. }
-            ) | (
-                FaultPoint::WebhookDelivery,
-                FaultAction::Webhook { .. }
-            )
+            ) | (FaultPoint::WebhookDelivery, FaultAction::Webhook { .. })
         );
 
         if !compatible {
@@ -437,7 +430,10 @@ impl fmt::Display for FaultPlanError {
                 write!(f, "duplicate deferred async operation_id: {operation_id}")
             }
             Self::DuplicateProviderTransition(operation_id) => {
-                write!(f, "duplicate provider transition operation_id: {operation_id}")
+                write!(
+                    f,
+                    "duplicate provider transition operation_id: {operation_id}"
+                )
             }
             Self::OrphanProviderTransition(operation_id) => {
                 write!(
@@ -455,10 +451,16 @@ impl fmt::Display for FaultPlanError {
                 write!(f, "request fault step {step_id} requires request_match")
             }
             Self::UnexpectedRequestMatch(step_id) => {
-                write!(f, "non-request fault step {step_id} must not define request_match")
+                write!(
+                    f,
+                    "non-request fault step {step_id} must not define request_match"
+                )
             }
             Self::InvalidRequestMethod(method) => {
-                write!(f, "request_match.method must be uppercase ASCII: {method:?}")
+                write!(
+                    f,
+                    "request_match.method must be uppercase ASCII: {method:?}"
+                )
             }
             Self::InvalidRequestPath(path) => {
                 write!(f, "request_match.path_suffix must begin with '/': {path:?}")
@@ -475,7 +477,10 @@ impl fmt::Display for FaultPlanError {
                 write!(f, "unsupported injected HTTP status: {status}")
             }
             Self::UnsupportedBusinessFailureStatus(status) => {
-                write!(f, "unsupported permanent business failure HTTP status: {status}")
+                write!(
+                    f,
+                    "unsupported permanent business failure HTTP status: {status}"
+                )
             }
             Self::ZeroWebhookAttempt => write!(f, "webhook attempt must be greater than zero"),
             Self::BackwardTime {
@@ -579,7 +584,9 @@ mod tests {
         let due = scheduler.advance_to(100).unwrap();
 
         assert_eq!(
-            due.iter().map(|step| step.step_id.as_str()).collect::<Vec<_>>(),
+            due.iter()
+                .map(|step| step.step_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["first", "second"]
         );
         assert_eq!(scheduler.next_due_at(), Some(200));
