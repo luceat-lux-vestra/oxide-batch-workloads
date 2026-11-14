@@ -1,0 +1,49 @@
+name: Temporary #148 lockfile refresh
+
+on:
+  push:
+    branches:
+      - issue-148-payment-reconciliation-scaffold
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-148-lockfile-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-148-payment-reconciliation-scaffold
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+
+      - name: Refresh exact lockfile and commit only Cargo.lock
+        working-directory: payment-reconciliation-postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+          cd ..
+          if git diff --quiet -- payment-reconciliation-postgres/Cargo.lock; then
+            echo "Cargo.lock already current"
+            exit 0
+          fi
+          git diff --check -- payment-reconciliation-postgres/Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add payment-reconciliation-postgres/Cargo.lock
+          git commit -m "chore(payment-reconciliation): refresh exact lockfile (#148)"
+          git push origin HEAD:issue-148-payment-reconciliation-scaffold
