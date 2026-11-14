@@ -73,7 +73,6 @@ impl ItemProcessor<ReconciliationSourceRow, ReconciliationDetailRow> for Reconci
         }
 
         let classification = classify(item);
-        let paired = item.internal_row_count == 1 && item.provider_row_count == 1;
 
         Ok(ProcessOutcome::Item(ReconciliationDetailRow {
             run_id: self.run_id.clone(),
@@ -85,21 +84,12 @@ impl ItemProcessor<ReconciliationSourceRow, ReconciliationDetailRow> for Reconci
             provider_currency: item.provider_currency.clone(),
             internal_status: item.internal_status.clone(),
             provider_status: item.provider_status.clone(),
-            authorized_delta_minor: paired_delta(
-                paired,
-                item.internal_authorized_amount_minor,
-                item.provider_authorized_amount_minor,
-            ),
-            captured_delta_minor: paired_delta(
-                paired,
-                item.internal_captured_amount_minor,
-                item.provider_captured_amount_minor,
-            ),
-            refunded_delta_minor: paired_delta(
-                paired,
-                item.internal_refunded_amount_minor,
-                item.provider_refunded_amount_minor,
-            ),
+            authorized_delta_minor: item.provider_authorized_amount_minor
+                - item.internal_authorized_amount_minor,
+            captured_delta_minor: item.provider_captured_amount_minor
+                - item.internal_captured_amount_minor,
+            refunded_delta_minor: item.provider_refunded_amount_minor
+                - item.internal_refunded_amount_minor,
         }))
     }
 }
@@ -127,13 +117,6 @@ pub fn classify(item: &ReconciliationSourceRow) -> Classification {
     }
 }
 
-fn paired_delta(paired: bool, internal: i64, provider: i64) -> i64 {
-    if paired {
-        provider.saturating_sub(internal)
-    } else {
-        0
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -13,7 +13,7 @@ pub struct FinalizationReport {
     pub published_count: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct FinalizationDetail {
     provider_payment_id: String,
     classification: String,
@@ -26,6 +26,21 @@ struct FinalizationDetail {
     authorized_delta_minor: i64,
     captured_delta_minor: i64,
     refunded_delta_minor: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CanonicalDetail {
+    provider_payment_id: String,
+    classification: String,
+    internal_row_count: i64,
+    provider_row_count: i64,
+    internal_currency: Option<String>,
+    provider_currency: Option<String>,
+    internal_status: Option<String>,
+    provider_status: Option<String>,
+    authorized_delta_minor: Option<i64>,
+    captured_delta_minor: Option<i64>,
+    refunded_delta_minor: Option<i64>,
 }
 
 pub async fn finalize(database_url: &str, snapshot_id: &str) -> Result<FinalizationReport> {
@@ -179,6 +194,26 @@ async fn finalize_with_pool(pool: &PgPool, run_id: &str) -> Result<FinalizationR
     })
 }
 
+fn canonical_detail(detail: &FinalizationDetail) -> CanonicalDetail {
+    let internal_single = detail.internal_row_count == 1;
+    let provider_single = detail.provider_row_count == 1;
+    let paired = internal_single && provider_single;
+
+    CanonicalDetail {
+        provider_payment_id: detail.provider_payment_id.clone(),
+        classification: detail.classification.clone(),
+        internal_row_count: detail.internal_row_count,
+        provider_row_count: detail.provider_row_count,
+        internal_currency: internal_single.then(|| detail.internal_currency.clone()),
+        provider_currency: provider_single.then(|| detail.provider_currency.clone()),
+        internal_status: internal_single.then(|| detail.internal_status.clone()),
+        provider_status: provider_single.then(|| detail.provider_status.clone()),
+        authorized_delta_minor: paired.then_some(detail.authorized_delta_minor),
+        captured_delta_minor: paired.then_some(detail.captured_delta_minor),
+        refunded_delta_minor: paired.then_some(detail.refunded_delta_minor),
+    }
+}
+
 fn derive_finalization(details: &[FinalizationDetail]) -> Result<(String, i64, i64, String)> {
     let mismatch_count = details
         .iter()
@@ -199,8 +234,13 @@ fn derive_finalization(details: &[FinalizationDetail]) -> Result<(String, i64, i
     }
     .to_owned();
 
+    let canonical = details
+        .iter()
+        .map(canonical_detail)
+        .collect::<Vec<_>>();
+
     let mut hasher = Sha256::new();
-    hasher.update(serde_json::to_vec(details)?);
+    hasher.update(serde_json::to_vec(&canonical)?);
     hasher.update(b"\n");
     hasher.update(aggregate_delta_minor.to_string().as_bytes());
     hasher.update(b"\n");

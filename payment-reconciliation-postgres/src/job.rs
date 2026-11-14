@@ -8,7 +8,7 @@ use oxide_batch::{
     Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
     ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
     ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
-    InFlightPolicy, JobLauncher, JobName, JobParameter, JobParameters, NoopChunkCompletion,
+    InFlightPolicy, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, NoopChunkCompletion,
     ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
     PostgresJobRepository, ReaderError, SequentialIdGenerator, StateLimits, StateSchemaId,
@@ -146,9 +146,9 @@ fn source_query(snapshot_id: &str) -> String {
                 COUNT(*)::BIGINT AS row_count,
                 MAX(currency) AS currency,
                 MAX(normalized_status) AS normalized_status,
-                MAX(authorized_amount_minor)::BIGINT AS authorized_amount_minor,
-                MAX(captured_amount_minor)::BIGINT AS captured_amount_minor,
-                MAX(refunded_amount_minor)::BIGINT AS refunded_amount_minor
+                SUM(authorized_amount_minor)::BIGINT AS authorized_amount_minor,
+                SUM(captured_amount_minor)::BIGINT AS captured_amount_minor,
+                SUM(refunded_amount_minor)::BIGINT AS refunded_amount_minor
             FROM payment_reconciliation.internal_payment_snapshot
             WHERE snapshot_id = '{snapshot_id}'
             GROUP BY provider_payment_id
@@ -159,9 +159,9 @@ fn source_query(snapshot_id: &str) -> String {
                 COUNT(*)::BIGINT AS row_count,
                 MAX(currency) AS currency,
                 MAX(normalized_status) AS normalized_status,
-                MAX(authorized_amount_minor)::BIGINT AS authorized_amount_minor,
-                MAX(captured_amount_minor)::BIGINT AS captured_amount_minor,
-                MAX(refunded_amount_minor)::BIGINT AS refunded_amount_minor
+                SUM(authorized_amount_minor)::BIGINT AS authorized_amount_minor,
+                SUM(captured_amount_minor)::BIGINT AS captured_amount_minor,
+                SUM(refunded_amount_minor)::BIGINT AS refunded_amount_minor
             FROM payment_reconciliation.provider_payment_snapshot
             WHERE snapshot_id = '{snapshot_id}'
             GROUP BY provider_payment_id
