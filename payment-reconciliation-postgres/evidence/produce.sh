@@ -14,7 +14,12 @@ rm -rf validation
 mkdir -p validation
 cp evidence/verify-retained-evidence.py validation/verify-retained-evidence.py
 
-cargo fmt --check
+cargo fmt
+if ! git diff --quiet -- .; then
+  git diff -- . > "${RUNNER_TEMP:-/tmp}/payment-reconciliation-rustfmt.patch"
+  echo "rustfmt changes are required; formatting patch captured" >&2
+  exit 42
+fi
 cargo clippy --locked --all-targets -- -D warnings
 cargo build --locked --all-targets
 python3 evidence/test_verify_retained_evidence.py
