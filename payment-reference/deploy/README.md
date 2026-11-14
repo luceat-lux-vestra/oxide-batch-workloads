@@ -58,9 +58,25 @@ payment-sandbox v1.5.4
 
 Merchant, Gateway and Kill Bill are published only on host loopback for the
 development and CI harness. Merchant/Gateway/Kill Bill communicate over the
-internal Compose network. All PostgreSQL services and payment-sandbox remain
-internal-only. The fault proxy is transparent unless explicitly armed by the
-smoke test and its control listener is also loopback-only.
+internal Compose network.
+
+For the #148 reconciliation workload only, two additional loopback-only
+diagnostic/read paths are exposed without changing the online-payment topology:
+
+- `MERCHANT_DB_PORT` (default `15435`) -> `merchant-db:5432`, used to freeze
+  the Merchant-owned internal representation under a read-only transaction;
+- `PAYMENT_SANDBOX_DIRECT_PORT` (default `18084`) ->
+  `payment-sandbox:8080`, used only for the provider's supported
+  `GET /payments/{provider_payment_id}` truth read.
+
+The canonical Gateway/Kill Bill path still reaches payment-sandbox through the
+fault proxy. The direct provider port is not a mutation path for campaign
+evidence and must not be substituted for the canonical online-payment path.
+Both diagnostic paths bind to `127.0.0.1` only.
+
+The fault proxy is transparent unless explicitly armed by the smoke test and
+its control listener is also loopback-only. Kill Bill and Gateway databases
+remain internal-only.
 
 Kill Bill is pinned to the qualified 0.24.22 image-index digest. Its database
 schema is assembled from the exact 0.24.22 source commit and every downloaded

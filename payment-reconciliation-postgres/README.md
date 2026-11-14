@@ -76,7 +76,9 @@ Recovery must reuse the recorded snapshot digests rather than silently refresh
 external state.
 
 Provider HTTP acquisition currently shells out directly to `curl` without a
-shell, with a bounded connect/overall timeout. This matches the existing
+shell, with a bounded connect/overall timeout. The intended source is the
+loopback-only direct payment-sandbox port (`PAYMENT_SANDBOX_DIRECT_PORT`, default
+`18084`), never the fault-proxy endpoint. This matches the existing
 payment-reference runtime dependency and avoids introducing a second HTTP client
 dependency into the validation subject.
 

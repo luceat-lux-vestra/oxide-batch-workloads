@@ -445,7 +445,7 @@ async fn persist_snapshot(pool: &PgPool, bundle: &SnapshotBundle, mutation_recip
     .bind(&bundle.metadata.business_date)
     .bind(&bundle.metadata.provider_scope)
     .bind(&bundle.metadata.scenario_case)
-    .bind(&bundle.metadata.base_snapshot_id)
+    .bind(bundle.metadata.base_snapshot_id.as_deref())
     .bind(&bundle.metadata.internal_snapshot_digest)
     .bind(&bundle.metadata.provider_snapshot_digest)
     .bind(&bundle.metadata.policy_version)
