@@ -4,17 +4,30 @@
     {
       "name": "csv-postgres",
       "path": "csv-postgres",
-      "msrv": { "declared": true }
+      "msrv": {
+        "declared": true
+      }
+    },
+    {
+      "name": "payment-reconciliation-postgres",
+      "path": "payment-reconciliation-postgres",
+      "msrv": {
+        "declared": true
+      }
     },
     {
       "name": "postgres-local-partition",
       "path": "postgres-local-partition",
-      "msrv": { "declared": true }
+      "msrv": {
+        "declared": true
+      }
     },
     {
       "name": "postgres-postgres",
       "path": "postgres-postgres",
-      "msrv": { "declared": true }
+      "msrv": {
+        "declared": true
+      }
     }
   ],
   "fixtures": [

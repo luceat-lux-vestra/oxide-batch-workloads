@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Workload-owned CI contract entrypoint for payment-reconciliation-postgres.
+# Checkpoint 2 intentionally validates only the scaffold/compile surface.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+stage="${1:?usage: ci/validate <ci|msrv>}"
+
+run_ci_stage() {
+  cargo fmt --check
+  cargo clippy --locked --all-targets -- -D warnings
+  cargo build --locked --all-targets
+  cargo test --locked
+}
+
+run_msrv_stage() {
+  cargo build --locked --all-targets
+}
+
+case "$stage" in
+  ci)
+    run_ci_stage
+    ;;
+  msrv)
+    run_msrv_stage
+    ;;
+  *)
+    echo "unknown stage: $stage" >&2
+    exit 1
+    ;;
+esac
