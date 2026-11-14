@@ -282,15 +282,10 @@ fn derive_finalization(details: &[FinalizationDetail]) -> Result<(String, i64, i
     hasher.update(b"\n");
     hasher.update(business_state.as_bytes());
 
-    Ok((
-        business_state,
-        mismatch_count,
-        aggregate_delta_minor,
-        {
-            let digest = hasher.finalize();
-            crate::model::hex_digest(digest.as_ref())
-        },
-    ))
+    Ok((business_state, mismatch_count, aggregate_delta_minor, {
+        let digest = hasher.finalize();
+        crate::model::hex_digest(digest.as_ref())
+    }))
 }
 
 #[cfg(test)]
