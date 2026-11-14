@@ -53,7 +53,8 @@ pub struct ActualDetail {
 }
 
 pub async fn verify(database_url: &str, snapshot_id: &str) -> Result<ProducerEvidence> {
-    let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
+    let bundle =
+        crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let oracle = reconcile(&bundle.internal, &bundle.provider)?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)

@@ -7,7 +7,8 @@ use crate::processor::ReconciliationDetailRow;
 
 const COLUMNS_PER_ROW: usize = 12;
 
-pub fn writer() -> Result<PostgresBatchWriter<ReconciliationDetailRow>, PostgresComponentConfigError> {
+pub fn writer() -> Result<PostgresBatchWriter<ReconciliationDetailRow>, PostgresComponentConfigError>
+{
     postgres_batch_writer(
         "INSERT INTO payment_reconciliation.reconciliation_detail          (run_id, provider_payment_id, classification, internal_row_count, provider_row_count,           internal_currency, provider_currency, internal_status, provider_status,           authorized_delta_minor, captured_delta_minor, refunded_delta_minor) VALUES",
         None::<&str>,

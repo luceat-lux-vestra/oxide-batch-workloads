@@ -7,11 +7,11 @@ use oxide_batch::item_components::{
     postgres_paging_reader, KeysetColumn, PostgresPagingFormat, PostgresRow,
 };
 use oxide_batch::{
-    Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
-    ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
+    BatchStatus, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
+    ChunkDeliveryMode, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
     ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
-    BatchStatus, FailureCategory, FailureId, InFlightPolicy, JobInstanceKey, JobLauncher, JobName,
-    JobParameter, JobParameters, JobRepository, NoopChunkCompletion, ParameterName, ParameterRole,
+    FailureCategory, FailureId, InFlightPolicy, JobInstanceKey, JobLauncher, JobName, JobParameter,
+    JobParameters, JobRepository, NoopChunkCompletion, ParameterName, ParameterRole,
     ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresJobRepository, ReaderError,
     RecoveryRequest, SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion,
@@ -20,15 +20,17 @@ use oxide_batch::{
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use crate::failpoint::{FailingTransactionManager, FailingWriter, FailureMode, Failpoint};
+use crate::failpoint::{FailingTransactionManager, FailingWriter, Failpoint, FailureMode};
 use crate::model::{SnapshotBundle, CONTRACT_VERSION};
 use crate::processor::{ReconciliationProcessor, ReconciliationSourceRow};
 
 const JOB_NAME: &str = "payment-reconciliation-postgres-v1";
 const DEFINITION_REVISION: &str = "payment-reconciliation-postgres-paging-v1";
-const READER_NAMESPACE: &str = "oxide-batch-workloads.payment-reconciliation-postgres.paging-reader";
+const READER_NAMESPACE: &str =
+    "oxide-batch-workloads.payment-reconciliation-postgres.paging-reader";
 const CHECKPOINT_SCHEMA: &str = "oxide-batch-workloads.payment-reconciliation-postgres.checkpoint";
-const CONTEXT_SCHEMA: &str = "oxide-batch-workloads.payment-reconciliation-postgres.execution-context";
+const CONTEXT_SCHEMA: &str =
+    "oxide-batch-workloads.payment-reconciliation-postgres.execution-context";
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 100;
 pub const DEFAULT_PAGE_SIZE: usize = 250;
@@ -103,10 +105,7 @@ fn parameters(bundle: &SnapshotBundle) -> anyhow::Result<JobParameters> {
 fn identifying(name: &str, value: &str) -> anyhow::Result<(ParameterName, JobParameter)> {
     Ok((
         ParameterName::new(name)?,
-        JobParameter::new(
-            ParameterValue::string(value)?,
-            ParameterRole::Identifying,
-        ),
+        JobParameter::new(ParameterValue::string(value)?, ParameterRole::Identifying),
     ))
 }
 
@@ -204,7 +203,8 @@ pub async fn run(
     pause_for_kill: Option<PathBuf>,
     pause_after_processing_commit: Option<PathBuf>,
 ) -> anyhow::Result<String> {
-    let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
+    let bundle =
+        crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
     if !prepare_run(database_url, &run_id, snapshot_id).await? {
         return Ok(run_id);
@@ -369,7 +369,8 @@ async fn prepare_run(database_url: &str, run_id: &str, snapshot_id: &str) -> any
 }
 
 pub async fn recover(database_url: &str, snapshot_id: &str) -> anyhow::Result<String> {
-    let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
+    let bundle =
+        crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
 
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -394,9 +395,7 @@ pub async fn recover(database_url: &str, snapshot_id: &str) -> anyhow::Result<St
     }
     if processing_state != "PROCESSING" {
         pool.close().await;
-        anyhow::bail!(
-            "recovery requires workload state PROCESSING, observed {processing_state}"
-        );
+        anyhow::bail!("recovery requires workload state PROCESSING, observed {processing_state}");
     }
 
     let clock = Arc::new(SystemClock);
@@ -405,10 +404,9 @@ pub async fn recover(database_url: &str, snapshot_id: &str) -> anyhow::Result<St
     let key = JobInstanceKey::new(JobName::new(JOB_NAME)?, &job_parameters);
 
     let mut unit = repository.begin().await?;
-    let instance = unit
-        .find_job_instance(&key)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("no OxideBatch JobInstance matches the frozen snapshot identity"))?;
+    let instance = unit.find_job_instance(&key).await?.ok_or_else(|| {
+        anyhow::anyhow!("no OxideBatch JobInstance matches the frozen snapshot identity")
+    })?;
     let execution = unit
         .job_executions(instance.id())
         .await?

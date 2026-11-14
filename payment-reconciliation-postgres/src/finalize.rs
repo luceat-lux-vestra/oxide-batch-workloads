@@ -51,7 +51,8 @@ pub async fn finalize(
     crash_point: Option<crate::finalize_failpoint::FinalizeCrashPoint>,
     pause_for_kill: Option<PathBuf>,
 ) -> Result<FinalizationReport> {
-    let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
+    let bundle =
+        crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = crate::job::run_id(&bundle);
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
@@ -200,7 +201,9 @@ async fn finalize_with_pool(
         _ => {}
     }
 
-    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::BeforeCommit, marker)) = crash.as_ref() {
+    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::BeforeCommit, marker)) =
+        crash.as_ref()
+    {
         crate::finalize_failpoint::pause(
             marker,
             crate::finalize_failpoint::FinalizeCrashPoint::BeforeCommit,
@@ -210,7 +213,9 @@ async fn finalize_with_pool(
 
     tx.commit().await?;
 
-    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::AfterCommit, marker)) = crash.as_ref() {
+    if let Some((crate::finalize_failpoint::FinalizeCrashPoint::AfterCommit, marker)) =
+        crash.as_ref()
+    {
         crate::finalize_failpoint::pause(
             marker,
             crate::finalize_failpoint::FinalizeCrashPoint::AfterCommit,
@@ -268,10 +273,7 @@ fn derive_finalization(details: &[FinalizationDetail]) -> Result<(String, i64, i
     }
     .to_owned();
 
-    let canonical = details
-        .iter()
-        .map(canonical_detail)
-        .collect::<Vec<_>>();
+    let canonical = details.iter().map(canonical_detail).collect::<Vec<_>>();
 
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec(&canonical)?);

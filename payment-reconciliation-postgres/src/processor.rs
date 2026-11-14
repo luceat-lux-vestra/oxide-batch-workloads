@@ -117,7 +117,6 @@ pub fn classify(item: &ReconciliationSourceRow) -> Classification {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

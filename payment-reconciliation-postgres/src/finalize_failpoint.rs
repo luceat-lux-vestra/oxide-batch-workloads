@@ -15,7 +15,10 @@ pub async fn pause(marker: &PathBuf, point: FinalizeCrashPoint) {
         FinalizeCrashPoint::AfterCommit => "finalize-after-commit",
     };
     if let Err(error) = std::fs::write(marker, format!("{pid}\n{label}\n")) {
-        eprintln!("finalize failpoint could not write marker {}: {error}", marker.display());
+        eprintln!(
+            "finalize failpoint could not write marker {}: {error}",
+            marker.display()
+        );
         std::process::abort();
     }
     std::future::pending::<()>().await;

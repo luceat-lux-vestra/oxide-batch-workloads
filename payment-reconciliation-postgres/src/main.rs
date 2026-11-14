@@ -200,7 +200,10 @@ async fn main() -> Result<()> {
             if report.violations.is_empty() {
                 Ok(())
             } else {
-                bail!("independent verification reported {} violation(s)", report.violations.len())
+                bail!(
+                    "independent verification reported {} violation(s)",
+                    report.violations.len()
+                )
             }
         }
         Command::Run {
@@ -248,7 +251,7 @@ async fn main() -> Result<()> {
                 }))?
             );
             Ok(())
-        },
+        }
         Command::Finalize {
             database_url,
             snapshot_id,

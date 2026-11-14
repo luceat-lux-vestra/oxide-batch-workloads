@@ -79,7 +79,10 @@ impl<I: Send + Sync, W: ItemWriter<I>> ItemWriter<I> for FailingWriter<W> {
     ) -> Result<WriteOutcome, WriterError> {
         let outcome = self.inner.write(items, context).await?;
         let ordinal = self.ordinal.load(Ordering::SeqCst);
-        if self.failpoint.should_fire(ordinal, FailureMode::DuringWrite) {
+        if self
+            .failpoint
+            .should_fire(ordinal, FailureMode::DuringWrite)
+        {
             self.failpoint.pause("chunk-during-write").await;
             return Err(WriterError::with_category(
                 FailureCategory::TransientInfrastructure,

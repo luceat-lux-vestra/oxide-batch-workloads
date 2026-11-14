@@ -36,7 +36,6 @@ struct ProviderRow {
     provider_version: i64,
 }
 
-
 #[derive(Debug, Deserialize)]
 struct VerifyEnvelope {
     schema_version: u32,
@@ -71,7 +70,10 @@ fn retain_evidence(
     let report = verify_report(snapshot_id);
     assert_eq!(report.schema_version, 1);
     assert_eq!(report.campaign_issue, 148);
-    assert!(report.violations.is_empty(), "producer verifier must be clean");
+    assert!(
+        report.violations.is_empty(),
+        "producer verifier must be clean"
+    );
 
     let value = json!({
         "schema_version": 1,
@@ -116,7 +118,10 @@ fn unique(label: &str) -> String {
 }
 
 fn marker(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("payment-reconciliation-{label}-{}.marker", unique("m")))
+    std::env::temp_dir().join(format!(
+        "payment-reconciliation-{label}-{}.marker",
+        unique("m")
+    ))
 }
 
 fn bin() -> Command {
@@ -126,7 +131,9 @@ fn bin() -> Command {
 }
 
 fn output(mut command: Command) -> Output {
-    command.output().expect("spawn payment-reconciliation-postgres")
+    command
+        .output()
+        .expect("spawn payment-reconciliation-postgres")
 }
 
 fn assert_success(output: &Output, label: &str) {
@@ -140,7 +147,9 @@ fn assert_success(output: &Output, label: &str) {
 }
 
 async fn pool() -> PgPool {
-    PgPool::connect(&database_url()).await.expect("connect test postgres")
+    PgPool::connect(&database_url())
+        .await
+        .expect("connect test postgres")
 }
 
 fn digest<T: Serialize + Clone>(rows: &[(String, T)]) -> String {
@@ -290,11 +299,7 @@ fn run(snapshot_id: &str) -> Output {
     })
 }
 
-fn spawn_crashing_run(
-    snapshot_id: &str,
-    failure_mode: &str,
-    marker: &Path,
-) -> Child {
+fn spawn_crashing_run(snapshot_id: &str, failure_mode: &str, marker: &Path) -> Child {
     bin()
         .arg("run")
         .arg("--snapshot-id")
@@ -339,16 +344,15 @@ fn recover(snapshot_id: &str) -> Output {
 fn finalize(snapshot_id: &str) -> Output {
     output({
         let mut command = bin();
-        command.arg("finalize").arg("--snapshot-id").arg(snapshot_id);
+        command
+            .arg("finalize")
+            .arg("--snapshot-id")
+            .arg(snapshot_id);
         command
     })
 }
 
-fn spawn_crashing_finalize(
-    snapshot_id: &str,
-    crash_point: &str,
-    marker: &Path,
-) -> Child {
+fn spawn_crashing_finalize(snapshot_id: &str, crash_point: &str, marker: &Path) -> Child {
     bin()
         .arg("finalize")
         .arg("--snapshot-id")
@@ -483,7 +487,10 @@ async fn hard_crash_during_chunk_write_rolls_back_and_recovers_in_new_process() 
     assert_success(&run(&snapshot), "restart after before-commit crash");
     assert_eq!(detail_count(&snapshot).await, 5);
     assert_success(&finalize(&snapshot), "finalize recovered run");
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
     retain_evidence(
         "hard-crash-during-write",
         "deterministic-frozen-recovery-fixture",
@@ -519,7 +526,10 @@ async fn hard_crash_after_chunk_commit_preserves_checkpoint_and_avoids_duplicate
     assert_success(&run(&snapshot), "restart after committed chunk crash");
     assert_eq!(detail_count(&snapshot).await, 5);
     assert_success(&finalize(&snapshot), "finalize after recovery");
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
     retain_evidence(
         "hard-crash-after-chunk-commit",
         "deterministic-frozen-recovery-fixture",
@@ -537,7 +547,8 @@ async fn hard_crash_after_chunk_commit_preserves_checkpoint_and_avoids_duplicate
 }
 
 #[tokio::test]
-async fn process_death_after_processing_commit_still_publishes_nothing_until_new_process_finalizes() {
+async fn process_death_after_processing_commit_still_publishes_nothing_until_new_process_finalizes()
+{
     let snapshot = insert_clear_snapshot(3).await;
     let path = marker("after-processing");
     let mut child = spawn_after_processing_commit(&snapshot, &path);
@@ -547,8 +558,14 @@ async fn process_death_after_processing_commit_still_publishes_nothing_until_new
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), None, 0));
 
     let result = finalize(&snapshot);
-    assert_success(&result, "separate-process finalization after processing-process death");
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_success(
+        &result,
+        "separate-process finalization after processing-process death",
+    );
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
     retain_evidence(
         "hard-crash-after-processing-commit",
         "deterministic-frozen-recovery-fixture",
@@ -576,7 +593,10 @@ async fn hard_crash_before_finalize_commit_leaves_no_publication_and_replay_conv
 
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), None, 0));
     assert_success(&finalize(&snapshot), "replay finalize after rollback");
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
     retain_evidence(
         "hard-crash-before-finalize-commit",
         "deterministic-frozen-recovery-fixture",
@@ -602,9 +622,18 @@ async fn hard_crash_after_publication_commit_replays_without_duplicate_publicati
     assert_eq!(wait_marker(&path), child.id());
     kill(&mut child);
 
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
-    assert_success(&finalize(&snapshot), "replay finalize after committed response loss");
-    assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
+    assert_success(
+        &finalize(&snapshot),
+        "replay finalize after committed response loss",
+    );
+    assert_eq!(
+        run_state(&snapshot).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
     retain_evidence(
         "hard-crash-after-publication-commit",
         "deterministic-frozen-recovery-fixture",
@@ -626,14 +655,20 @@ async fn clear_and_held_finalization_replay_preserve_publication_cardinality() {
     assert_success(&run(&clear), "clear run");
     assert_success(&finalize(&clear), "clear finalize one");
     assert_success(&finalize(&clear), "clear finalize replay");
-    assert_eq!(run_state(&clear).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    assert_eq!(
+        run_state(&clear).await,
+        ("PROCESSED".into(), Some("CLEAR".into()), 1)
+    );
 
     let base = insert_clear_snapshot(3).await;
     let held = derive_amount_mismatch(&base).await;
     assert_success(&run(&held), "held run");
     assert_success(&finalize(&held), "held finalize one");
     assert_success(&finalize(&held), "held finalize replay");
-    assert_eq!(run_state(&held).await, ("PROCESSED".into(), Some("HELD".into()), 0));
+    assert_eq!(
+        run_state(&held).await,
+        ("PROCESSED".into(), Some("HELD".into()), 0)
+    );
     retain_evidence(
         "clear-finalize-replay",
         "deterministic-frozen-recovery-fixture",

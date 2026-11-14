@@ -118,10 +118,16 @@ mod tests {
 
     #[test]
     fn status_normalization_matches_frozen_v1_scope() {
-        assert_eq!(normalize_internal_status("AUTHORIZED").unwrap(), "AUTHORIZED");
+        assert_eq!(
+            normalize_internal_status("AUTHORIZED").unwrap(),
+            "AUTHORIZED"
+        );
         assert_eq!(normalize_internal_status("PAID").unwrap(), "CAPTURED");
         assert_eq!(normalize_internal_status("REFUNDED").unwrap(), "REFUNDED");
-        assert_eq!(normalize_provider_status("authorized").unwrap(), "AUTHORIZED");
+        assert_eq!(
+            normalize_provider_status("authorized").unwrap(),
+            "AUTHORIZED"
+        );
         assert_eq!(normalize_provider_status("captured").unwrap(), "CAPTURED");
         assert_eq!(normalize_provider_status("refunded").unwrap(), "REFUNDED");
         assert!(normalize_internal_status("PAYMENT_UNKNOWN").is_err());

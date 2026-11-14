@@ -77,9 +77,8 @@ pub async fn acquire_base_snapshot(request: AcquireRequest<'_>) -> Result<Snapsh
 
     let mut provider = Vec::with_capacity(internal.len());
     for row in &internal {
-        provider.push(
-            fetch_provider_row(request.provider_base_url, &row.provider_payment_id).await?,
-        );
+        provider
+            .push(fetch_provider_row(request.provider_base_url, &row.provider_payment_id).await?);
     }
 
     let oracle = reconcile(&internal, &provider)?;
@@ -226,7 +225,10 @@ pub async fn derive_scenario(request: DeriveRequest<'_>) -> Result<SnapshotBundl
     Ok(bundle)
 }
 
-pub async fn verify_source_snapshot(database_url: &str, snapshot_id: &str) -> Result<serde_json::Value> {
+pub async fn verify_source_snapshot(
+    database_url: &str,
+    snapshot_id: &str,
+) -> Result<serde_json::Value> {
     let pool = workload_pool(database_url).await?;
     let bundle = load_snapshot(&pool, snapshot_id).await?;
     validate_bundle_integrity(&bundle)?;
@@ -363,7 +365,10 @@ async fn load_merchant_rows(
     Ok(result)
 }
 
-async fn fetch_provider_row(base_url: &str, provider_payment_id: &str) -> Result<ProviderSnapshotRow> {
+async fn fetch_provider_row(
+    base_url: &str,
+    provider_payment_id: &str,
+) -> Result<ProviderSnapshotRow> {
     validate_provider_id(provider_payment_id)?;
     let base_url = base_url.trim_end_matches('/');
     if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
@@ -425,7 +430,11 @@ async fn fetch_provider_row(base_url: &str, provider_payment_id: &str) -> Result
     })
 }
 
-async fn persist_snapshot(pool: &PgPool, bundle: &SnapshotBundle, mutation_recipe: &str) -> Result<()> {
+async fn persist_snapshot(
+    pool: &PgPool,
+    bundle: &SnapshotBundle,
+    mutation_recipe: &str,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
