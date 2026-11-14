@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oxide-batch.dev/payment-reference/fault-plan-v1.schema.json",
+  "title": "Payment Reference Fault Plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fault_plan_version",
+    "scenario_version",
+    "seed",
+    "logical_business_time",
+    "scenario_case",
+    "expected_provider_truth",
+    "expected_canonical_outcome",
+    "steps"
+  ],
+  "properties": {
+    "fault_plan_version": {
+      "const": 1
+    },
+    "scenario_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "logical_business_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scenario_case": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_provider_truth": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_canonical_outcome": {
+      "type": "string",
+      "minLength": 1
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/fault_step"
+      }
+    }
+  },
+  "$defs": {
+    "fault_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_id",
+        "sequence",
+        "offset_ms",
+        "point",
+        "action"
+      ],
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offset_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "point": {
+          "enum": [
+            "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+            "REQUEST_AFTER_PROVIDER_COMMIT",
+            "STATUS_INQUIRY",
+            "PROVIDER_TRANSITION",
+            "WEBHOOK_DELIVERY"
+          ]
+        },
+        "action": {
+          "$ref": "#/$defs/fault_action"
+        },
+        "request_match": {
+          "$ref": "#/$defs/request_match"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "point": {
+                "const": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "TRANSPORT_FAILURE",
+                      "HTTP_FAILURE",
+                      "PERMANENT_BUSINESS_FAILURE",
+                      "DEFER_ASYNC"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "request_match"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "point": {
+                "const": "REQUEST_AFTER_PROVIDER_COMMIT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "const": "COMMIT_THEN_DROP_RESPONSE"
+                  }
+                }
+              }
+            },
+            "required": [
+              "request_match"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "point": {
+                "const": "STATUS_INQUIRY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "const": "STATUS_VISIBILITY"
+                  }
+                }
+              },
+              "request_match": {
+                "properties": {
+                  "method": {
+                    "const": "GET"
+                  }
+                }
+              }
+            },
+            "required": [
+              "request_match"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "point": {
+                "const": "PROVIDER_TRANSITION"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "const": "PROVIDER_TRANSITION"
+                  }
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "request_match"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "point": {
+                "const": "WEBHOOK_DELIVERY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "kind": {
+                    "const": "WEBHOOK"
+                  }
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "request_match"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "fault_action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "class"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TRANSPORT_FAILURE"
+            },
+            "class": {
+              "enum": [
+                "CONNECT",
+                "REQUEST",
+                "TIMEOUT",
+                "CONNECTION_DROP"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "status"
+          ],
+          "properties": {
+            "kind": {
+              "const": "HTTP_FAILURE"
+            },
+            "status": {
+              "enum": [
+                429,
+                502,
+                503,
+                504
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "status",
+            "code"
+          ],
+          "properties": {
+            "kind": {
+              "const": "PERMANENT_BUSINESS_FAILURE"
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 499,
+              "not": {
+                "const": 429
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operation_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "DEFER_ASYNC"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "COMMIT_THEN_DROP_RESPONSE"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "visibility"
+          ],
+          "properties": {
+            "kind": {
+              "const": "STATUS_VISIBILITY"
+            },
+            "visibility": {
+              "enum": [
+                "IMMEDIATE",
+                "NOT_FOUND",
+                "STALE"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "operation_id",
+            "outcome"
+          ],
+          "properties": {
+            "kind": {
+              "const": "PROVIDER_TRANSITION"
+            },
+            "outcome": {
+              "enum": [
+                "SUCCEEDED",
+                "FAILED"
+              ]
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "delivery",
+            "event_id",
+            "attempt"
+          ],
+          "properties": {
+            "kind": {
+              "const": "WEBHOOK"
+            },
+            "delivery": {
+              "enum": [
+                "DELIVER",
+                "DROP"
+              ]
+            },
+            "event_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "request_match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "path_suffix"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "pattern": "^[A-Z]+$"
+        },
+        "path_suffix": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    }
+  }
+}

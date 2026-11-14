@@ -13,20 +13,35 @@
     "unexpected_invariant_violations"
   ],
   "properties": {
-    "result_version": { "const": 1 },
+    "result_version": {
+      "const": 1
+    },
     "schema_id": {
       "const": "https://oxide-batch.dev/payment-reference/scenario-result-v1.schema.json"
     },
-    "source_revision": { "type": "string", "minLength": 1 },
-    "suite": { "$ref": "#/$defs/scenario_identity" },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "suite": {
+      "$ref": "#/$defs/scenario_identity"
+    },
     "scenarios": {
       "type": "array",
       "minItems": 5,
-      "items": { "$ref": "#/$defs/scenario_result" }
+      "items": {
+        "$ref": "#/$defs/scenario_result"
+      }
     },
     "unexpected_invariant_violations": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "fault_matrix": {
+      "$ref": "#/$defs/fault_matrix"
     }
   },
   "$defs": {
@@ -41,11 +56,25 @@
         "expected_outcome"
       ],
       "properties": {
-        "scenario_version": { "const": 1 },
-        "seed": { "type": "integer", "minimum": 0 },
-        "logical_business_date": { "type": "string", "format": "date" },
-        "scenario_case": { "type": "string", "minLength": 1 },
-        "expected_outcome": { "type": "string", "minLength": 1 }
+        "scenario_version": {
+          "const": 1
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logical_business_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "scenario_case": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_outcome": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "scenario_result": {
@@ -60,14 +89,27 @@
         "unexpected_invariant_violations"
       ],
       "properties": {
-        "identity": { "$ref": "#/$defs/scenario_identity" },
-        "system_ids": { "$ref": "#/$defs/system_ids" },
-        "final_canonical_state": { "$ref": "#/$defs/canonical_state" },
-        "provider_state": { "$ref": "#/$defs/provider_state" },
-        "replay": { "$ref": "#/$defs/replay_result" },
+        "identity": {
+          "$ref": "#/$defs/scenario_identity"
+        },
+        "system_ids": {
+          "$ref": "#/$defs/system_ids"
+        },
+        "final_canonical_state": {
+          "$ref": "#/$defs/canonical_state"
+        },
+        "provider_state": {
+          "$ref": "#/$defs/provider_state"
+        },
+        "replay": {
+          "$ref": "#/$defs/replay_result"
+        },
         "unexpected_invariant_violations": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -84,30 +126,60 @@
         "provider_payment_id"
       ],
       "properties": {
-        "merchant_id": { "type": "string", "minLength": 1 },
-        "merchant_order_id": { "type": "string", "minLength": 1 },
-        "merchant_payment_id": { "type": "string", "minLength": 1 },
+        "merchant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "merchant_order_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "merchant_payment_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "operation_ids": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "killbill_payment_id": { "type": "string", "minLength": 1 },
+        "killbill_payment_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "killbill_transaction_ids": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
-        "provider_payment_id": { "type": "string", "minLength": 1 }
+        "provider_payment_id": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "canonical_state": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["payment_state", "operation_state"],
+      "required": [
+        "payment_state",
+        "operation_state"
+      ],
       "properties": {
-        "payment_state": { "type": "string", "minLength": 1 },
-        "operation_state": { "type": "string", "minLength": 1 }
+        "payment_state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation_state": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "provider_state": {
@@ -121,11 +193,33 @@
         "refunded_amount_minor"
       ],
       "properties": {
-        "exists": { "type": "boolean" },
-        "status": { "type": ["string", "null"] },
-        "authorized_amount_minor": { "type": ["integer", "null"] },
-        "captured_amount_minor": { "type": ["integer", "null"] },
-        "refunded_amount_minor": { "type": ["integer", "null"] }
+        "exists": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authorized_amount_minor": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "captured_amount_minor": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "refunded_amount_minor": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
       }
     },
     "replay_result": {
@@ -139,13 +233,242 @@
         "conflict_http_statuses"
       ],
       "properties": {
-        "performed": { "type": "boolean" },
-        "same_killbill_payment_id": { "type": ["boolean", "null"] },
-        "same_killbill_transaction_id": { "type": ["boolean", "null"] },
-        "duplicate_provider_mutation_observed": { "type": ["boolean", "null"] },
+        "performed": {
+          "type": "boolean"
+        },
+        "same_killbill_payment_id": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "same_killbill_transaction_id": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "duplicate_provider_mutation_observed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "conflict_http_statuses": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 100, "maximum": 599 }
+          "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          }
+        }
+      }
+    },
+    "fault_matrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fault_plan_version",
+        "cases",
+        "unexpected_invariant_violations"
+      ],
+      "properties": {
+        "fault_plan_version": {
+          "const": 1
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/fault_matrix_case"
+          }
+        },
+        "unexpected_invariant_violations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "fault_matrix_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_case",
+        "plan_identity",
+        "provider_payment_id",
+        "caller_outcome",
+        "target_forward_count",
+        "provider_side_effect_observed",
+        "provider_state_sequence",
+        "inquiry_sequence",
+        "consumed_request_steps",
+        "dispatched_timeline_steps",
+        "webhook_attempts",
+        "unexpected_invariant_violations"
+      ],
+      "properties": {
+        "scenario_case": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan_identity": {
+          "$ref": "#/$defs/fault_plan_identity"
+        },
+        "provider_payment_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "caller_outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_forward_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provider_side_effect_observed": {
+          "type": "boolean"
+        },
+        "provider_state_sequence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "inquiry_sequence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inquiry_observation"
+          }
+        },
+        "consumed_request_steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dispatched_timeline_steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "webhook_attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/webhook_attempt"
+          }
+        },
+        "unexpected_invariant_violations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "fault_plan_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fault_plan_version",
+        "scenario_version",
+        "seed",
+        "logical_business_time",
+        "scenario_case",
+        "expected_provider_truth",
+        "expected_canonical_outcome"
+      ],
+      "properties": {
+        "fault_plan_version": {
+          "const": 1
+        },
+        "scenario_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logical_business_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scenario_case": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_provider_truth": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_canonical_outcome": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "inquiry_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "offset_ms",
+        "visibility",
+        "observed_status"
+      ],
+      "properties": {
+        "offset_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "visibility": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_status": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "webhook_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "attempt",
+        "outcome",
+        "dispatched_at_ms"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outcome": {
+          "enum": [
+            "DELIVERED",
+            "DROPPED"
+          ]
+        },
+        "dispatched_at_ms": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }
