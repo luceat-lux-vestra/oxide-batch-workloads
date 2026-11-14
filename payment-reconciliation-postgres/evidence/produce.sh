@@ -30,6 +30,32 @@ target/debug/payment-reconciliation-postgres migrate
 
 PAYMENT_REFERENCE_RESULT_PATH="${RUNNER_TEMP:-/tmp}/payment-reference-scenario-result.json"   "$repo_root/payment-reference/deploy/smoke.sh"
 
+# Build one stable Reference Merchant-owned payment. The baseline smoke's
+# stable happy paths intentionally exercise Gateway directly; its existing
+# integrated Merchant case is a retry-pending provider-503 negative case.
+merchant_base="http://127.0.0.1:18083"
+fault_proxy_base="http://127.0.0.1:18081"
+curl --fail --silent --show-error --request POST "$fault_proxy_base/__fault/reset" >/dev/null
+
+post_json() {
+  local url="$1"
+  local body="$2"
+  local output="$3"
+  curl --fail --silent --show-error --request POST --header 'Content-Type: application/json' --data "$body" "$url" >"$output"
+}
+
+post_json "$merchant_base/merchants" '{"merchantId":"merchant-evidence","displayName":"Reconciliation evidence merchant"}' "${RUNNER_TEMP:-/tmp}/evidence-merchant.json"
+post_json "$merchant_base/customers" '{"customerId":"customer-evidence","displayName":"Reconciliation evidence customer"}' "${RUNNER_TEMP:-/tmp}/evidence-customer.json"
+post_json "$merchant_base/orders" '{"merchantOrderId":"order-evidence","merchantId":"merchant-evidence","customerId":"customer-evidence","amountMinor":1000,"currency":"USD"}' "${RUNNER_TEMP:-/tmp}/evidence-order.json"
+post_json "$merchant_base/orders/order-evidence/payments" '{"merchantPaymentId":"payment-evidence","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-evidence"}' "${RUNNER_TEMP:-/tmp}/evidence-payment.json"
+post_json "$merchant_base/payments/payment-evidence/auth-capture" '{"operationId":"op-evidence-auth-capture","amountMinor":1000,"idempotencyKey":"idem-evidence-auth-capture"}' "${RUNNER_TEMP:-/tmp}/evidence-auth-capture.json"
+
+jq -e '.merchantPaymentId == "payment-evidence"
+  and .paymentState == "PAID"
+  and .operationState == "SUCCEEDED"
+  and ((.mapping.providerPaymentId | type) == "string")
+  and ((.mapping.providerPaymentId | length) > 0)' "${RUNNER_TEMP:-/tmp}/evidence-auth-capture.json" >/dev/null
+
 business_dates="$(
   cd "$repo_root/payment-reference/deploy"
   docker compose -f compose.yaml exec -T merchant-db     psql -U merchant -d merchant -Atc "
@@ -37,21 +63,21 @@ business_dates="$(
       FROM payment_reference_merchant.merchant_payment mp
       JOIN payment_reference_merchant.orders o
         ON o.merchant_order_id = mp.merchant_order_id
-      WHERE o.merchant_id = 'merchant-smoke'
+      WHERE o.merchant_id = 'merchant-evidence'
         AND mp.payment_state IN ('AUTHORIZED', 'PAID', 'REFUNDED')
       ORDER BY 1"
 )"
 business_date="$(printf '%s\n' "$business_dates" | sed '/^$/d' | head -n 1)"
 business_date_count="$(printf '%s\n' "$business_dates" | sed '/^$/d' | wc -l | tr -d ' ')"
 if [[ "$business_date_count" != "1" || -z "$business_date" ]]; then
-  echo "expected exactly one stable merchant-smoke UTC business date, observed: $business_dates" >&2
+  echo "expected exactly one stable merchant-evidence UTC business date, observed: $business_dates" >&2
   exit 1
 fi
 
 merchant_db="postgresql://merchant:merchant-local-only@127.0.0.1:15435/merchant"
 provider_base="http://127.0.0.1:18084"
 
-target/debug/payment-reconciliation-postgres snapshot   --database-url "$DATABASE_URL"   --merchant-database-url "$merchant_db"   --provider-base-url "$provider_base"   --snapshot-id evidence-live-clear   --business-date "$business_date"   --provider-scope merchant-smoke
+target/debug/payment-reconciliation-postgres snapshot   --database-url "$DATABASE_URL"   --merchant-database-url "$merchant_db"   --provider-base-url "$provider_base"   --snapshot-id evidence-live-clear   --business-date "$business_date"   --provider-scope merchant-evidence
 
 for spec in   "business-missing-provider:evidence-missing-provider:missing-provider"   "business-missing-internal:evidence-missing-internal:missing-internal"   "business-duplicate-provider:evidence-duplicate-provider:duplicate-provider"   "business-amount-mismatch:evidence-amount-mismatch:amount-mismatch"; do
   IFS=: read -r _scenario snapshot scenario <<<"$spec"
