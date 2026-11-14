@@ -73,7 +73,9 @@ load_plan() {
 }
 
 advance_to() {
-  request_json POST /__fault/advance "{"offset_ms":$1}" 200 "$2"
+  local body
+  body="$(jq -nc --argjson offset_ms "$1" '{offset_ms:$offset_ms}')"
+  request_json POST /__fault/advance "$body" 200 "$2"
 }
 
 stats() {
