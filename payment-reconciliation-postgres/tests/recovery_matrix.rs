@@ -407,6 +407,11 @@ async fn hard_crash_during_chunk_write_rolls_back_and_recovers_in_new_process() 
     kill(&mut child);
 
     assert_eq!(wait_detail_count(&snapshot, 2).await, 2);
+    let plain_restart = run(&snapshot);
+    assert!(
+        !plain_restart.status.success(),
+        "plain restart before explicit recovery must be rejected"
+    );
     let recovery = recover(&snapshot);
     assert_success(&recovery, "recover before-commit crash");
     assert_success(&run(&snapshot), "restart after before-commit crash");
@@ -425,6 +430,11 @@ async fn hard_crash_after_chunk_commit_preserves_checkpoint_and_avoids_duplicate
     kill(&mut child);
 
     assert_eq!(wait_detail_count(&snapshot, 4).await, 4);
+    let plain_restart = run(&snapshot);
+    assert!(
+        !plain_restart.status.success(),
+        "plain restart before explicit recovery must be rejected"
+    );
     let recovery = recover(&snapshot);
     assert_success(&recovery, "recover after-commit crash");
     assert_success(&run(&snapshot), "restart after committed chunk crash");

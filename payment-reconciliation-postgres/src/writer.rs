@@ -10,9 +10,7 @@ const COLUMNS_PER_ROW: usize = 12;
 pub fn writer() -> Result<PostgresBatchWriter<ReconciliationDetailRow>, PostgresComponentConfigError> {
     postgres_batch_writer(
         "INSERT INTO payment_reconciliation.reconciliation_detail          (run_id, provider_payment_id, classification, internal_row_count, provider_row_count,           internal_currency, provider_currency, internal_status, provider_status,           authorized_delta_minor, captured_delta_minor, refunded_delta_minor) VALUES",
-        Some(
-            "ON CONFLICT (run_id, provider_payment_id) DO UPDATE SET              classification = EXCLUDED.classification,              internal_row_count = EXCLUDED.internal_row_count,              provider_row_count = EXCLUDED.provider_row_count,              internal_currency = EXCLUDED.internal_currency,              provider_currency = EXCLUDED.provider_currency,              internal_status = EXCLUDED.internal_status,              provider_status = EXCLUDED.provider_status,              authorized_delta_minor = EXCLUDED.authorized_delta_minor,              captured_delta_minor = EXCLUDED.captured_delta_minor,              refunded_delta_minor = EXCLUDED.refunded_delta_minor"
-        ),
+        None::<&str>,
         COLUMNS_PER_ROW,
         PostgresBatchMode::multi_row_values(),
         |item: &ReconciliationDetailRow| {

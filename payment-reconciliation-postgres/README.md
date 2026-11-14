@@ -192,7 +192,8 @@ The checkpoint-5 integration matrix proves:
 
 - kill after detail INSERT but before chunk commit -> that chunk rolls back;
 - kill immediately after atomic chunk commit -> detail + checkpoint remain
-  durable together and are not duplicated on continuation;
+  durable together; a plain restart is rejected until explicit recovery, and
+  continuation cannot hide duplicate delivery because the writer is insert-only;
 - real process death immediately after the durable `PROCESSED` transition
   still publishes nothing until a new process finalizes;
 - kill before finalization commit -> no verdict/publication is durable;
