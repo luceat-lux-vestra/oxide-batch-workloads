@@ -24,6 +24,7 @@ run_ci_stage() {
   cargo fmt --check
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
+  python3 evidence/test_verify_retained_evidence.py
 
   trap stop_postgres EXIT
   start_postgres

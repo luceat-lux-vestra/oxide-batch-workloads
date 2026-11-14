@@ -145,6 +145,11 @@ async fn load_actual(pool: &PgPool, snapshot_id: &str) -> Result<ActualResult> {
     .fetch_one(pool)
     .await?;
 
+    let details = details
+        .into_iter()
+        .map(normalize_actual_detail)
+        .collect::<Vec<_>>();
+
     Ok(ActualResult {
         run_id: Some(run_id),
         processing_state: Some(run.try_get("processing_state")?),
@@ -155,6 +160,27 @@ async fn load_actual(pool: &PgPool, snapshot_id: &str) -> Result<ActualResult> {
         details,
         published_count,
     })
+}
+
+fn normalize_actual_detail(mut detail: ActualDetail) -> ActualDetail {
+    let internal_single = detail.internal_row_count == 1;
+    let provider_single = detail.provider_row_count == 1;
+    let paired = internal_single && provider_single;
+
+    if !internal_single {
+        detail.internal_currency = None;
+        detail.internal_status = None;
+    }
+    if !provider_single {
+        detail.provider_currency = None;
+        detail.provider_status = None;
+    }
+    if !paired {
+        detail.authorized_delta_minor = None;
+        detail.captured_delta_minor = None;
+        detail.refunded_delta_minor = None;
+    }
+    detail
 }
 
 fn compare_actual(oracle: &OracleSummary, actual: &ActualResult, violations: &mut Vec<String>) {

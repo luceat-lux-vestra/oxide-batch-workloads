@@ -3,7 +3,8 @@ use std::process::{Child, Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 
@@ -33,6 +34,71 @@ struct ProviderRow {
     captured_amount_minor: i64,
     refunded_amount_minor: i64,
     provider_version: i64,
+}
+
+
+#[derive(Debug, Deserialize)]
+struct VerifyEnvelope {
+    schema_version: u32,
+    campaign_issue: u32,
+    classification: String,
+    snapshot: serde_json::Value,
+    oracle: serde_json::Value,
+    actual: serde_json::Value,
+    violations: Vec<String>,
+}
+
+fn verify_report(snapshot_id: &str) -> VerifyEnvelope {
+    let result = output({
+        let mut command = bin();
+        command.arg("verify").arg("--snapshot-id").arg(snapshot_id);
+        command
+    });
+    assert_success(&result, "verify evidence precondition");
+    serde_json::from_slice(&result.stdout).expect("parse producer evidence")
+}
+
+fn retain_evidence(
+    scenario: &str,
+    source_kind: &str,
+    snapshot_id: &str,
+    failure_point: Option<serde_json::Value>,
+    observations: serde_json::Value,
+) {
+    let Some(directory) = std::env::var_os("PAYMENT_RECONCILIATION_EVIDENCE_DIR") else {
+        return;
+    };
+    let report = verify_report(snapshot_id);
+    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.campaign_issue, 148);
+    assert!(report.violations.is_empty(), "producer verifier must be clean");
+
+    let value = json!({
+        "schema_version": 1,
+        "campaign_issue": 148,
+        "classification": report.classification,
+        "scenario": scenario,
+        "source_kind": source_kind,
+        "failure_point": failure_point,
+        "observations": observations,
+        "producer_report": {
+            "schema_version": report.schema_version,
+            "campaign_issue": report.campaign_issue,
+            "snapshot": report.snapshot,
+            "oracle": report.oracle,
+            "actual": report.actual,
+            "violations": report.violations
+        }
+    });
+
+    let directory = PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).expect("create evidence directory");
+    let path = directory.join(format!("{scenario}.json"));
+    std::fs::write(
+        path,
+        serde_json::to_vec_pretty(&value).expect("serialize retained evidence"),
+    )
+    .expect("write retained evidence");
 }
 
 fn database_url() -> String {
@@ -418,6 +484,19 @@ async fn hard_crash_during_chunk_write_rolls_back_and_recovers_in_new_process() 
     assert_eq!(detail_count(&snapshot).await, 5);
     assert_success(&finalize(&snapshot), "finalize recovered run");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    retain_evidence(
+        "hard-crash-during-write",
+        "deterministic-frozen-recovery-fixture",
+        &snapshot,
+        Some(json!({"boundary":"chunk-during-write","target_chunk":2,"signal":9})),
+        json!({
+            "detail_count_after_kill": 2,
+            "plain_restart_rejected": true,
+            "explicit_public_recovery": true,
+            "new_process_continuation": true,
+            "final_publication_count": 1
+        }),
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -441,6 +520,19 @@ async fn hard_crash_after_chunk_commit_preserves_checkpoint_and_avoids_duplicate
     assert_eq!(detail_count(&snapshot).await, 5);
     assert_success(&finalize(&snapshot), "finalize after recovery");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    retain_evidence(
+        "hard-crash-after-chunk-commit",
+        "deterministic-frozen-recovery-fixture",
+        &snapshot,
+        Some(json!({"boundary":"chunk-after-business-commit","target_chunk":2,"signal":9})),
+        json!({
+            "detail_count_after_kill": 4,
+            "plain_restart_rejected": true,
+            "explicit_public_recovery": true,
+            "new_process_continuation": true,
+            "final_publication_count": 1
+        }),
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -457,6 +549,18 @@ async fn process_death_after_processing_commit_still_publishes_nothing_until_new
     let result = finalize(&snapshot);
     assert_success(&result, "separate-process finalization after processing-process death");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    retain_evidence(
+        "hard-crash-after-processing-commit",
+        "deterministic-frozen-recovery-fixture",
+        &snapshot,
+        Some(json!({"boundary":"after-processing-commit-before-finalization","signal":9})),
+        json!({
+            "publication_count_after_kill": 0,
+            "business_state_after_kill": null,
+            "separate_process_finalization": true,
+            "final_publication_count": 1
+        }),
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -473,6 +577,18 @@ async fn hard_crash_before_finalize_commit_leaves_no_publication_and_replay_conv
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), None, 0));
     assert_success(&finalize(&snapshot), "replay finalize after rollback");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    retain_evidence(
+        "hard-crash-before-finalize-commit",
+        "deterministic-frozen-recovery-fixture",
+        &snapshot,
+        Some(json!({"boundary":"finalize-before-commit","signal":9})),
+        json!({
+            "publication_count_after_kill": 0,
+            "business_state_after_kill": null,
+            "finalize_replay": true,
+            "final_publication_count": 1
+        }),
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -489,6 +605,18 @@ async fn hard_crash_after_publication_commit_replays_without_duplicate_publicati
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
     assert_success(&finalize(&snapshot), "replay finalize after committed response loss");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    retain_evidence(
+        "hard-crash-after-publication-commit",
+        "deterministic-frozen-recovery-fixture",
+        &snapshot,
+        Some(json!({"boundary":"finalize-after-commit-before-ack","signal":9})),
+        json!({
+            "publication_count_after_kill": 1,
+            "business_state_after_kill": "CLEAR",
+            "finalize_replay": true,
+            "final_publication_count": 1
+        }),
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -506,4 +634,18 @@ async fn clear_and_held_finalization_replay_preserve_publication_cardinality() {
     assert_success(&finalize(&held), "held finalize one");
     assert_success(&finalize(&held), "held finalize replay");
     assert_eq!(run_state(&held).await, ("PROCESSED".into(), Some("HELD".into()), 0));
+    retain_evidence(
+        "clear-finalize-replay",
+        "deterministic-frozen-recovery-fixture",
+        &clear,
+        None,
+        json!({"finalize_replays":2,"final_publication_count":1}),
+    );
+    retain_evidence(
+        "held-finalize-replay",
+        "deterministic-frozen-recovery-fixture",
+        &held,
+        None,
+        json!({"finalize_replays":2,"final_publication_count":0}),
+    );
 }
