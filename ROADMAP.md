@@ -71,6 +71,21 @@ Close a native evidence-horizon milestone only when:
 - Do not migrate completed historical campaigns merely to populate a newer horizon.
 - A campaign that deliberately validates an upgrade across release families must state which evidence horizon owns its completion evidence and cross-link the other release context where needed.
 
+### Supplemental evidence against a closed release family
+
+A closed release-family horizon is immutable, but its closure does not prohibit later business-shaped validation against the same exact published OxideBatch artifact.
+
+A later campaign may run **milestone-null as supplemental evidence** when all of the following hold:
+
+1. the campaign is explicitly classified as supplemental and is not counted as part of the already-closed release horizon;
+2. its primary native Track ownership and material cross-links are established before implementation;
+3. it still consumes an exact published OxideBatch version under the repository's published-artifact rules;
+4. the campaign records the closed historical horizon it must not mutate or reopen;
+5. retained evidence and claims state that the result is supplemental validation of the exact artifact, not retroactive completion evidence for the closed horizon; and
+6. any later promotion to release-facing horizon evidence requires an explicit reclassification and assignment to an open applicable native milestone before that stronger claim is made.
+
+This disposition exists for concrete post-horizon campaigns whose value comes from a new business/reference-system surface rather than from reopening an already-audited release checklist. It must not be used to bypass a required open horizon for a new published release family.
+
 ## Track A — Item I/O and resources
 
 ### P0
