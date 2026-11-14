@@ -101,10 +101,6 @@ enum Command {
         database_url: String,
         #[arg(long)]
         snapshot_id: String,
-        #[arg(long, value_enum)]
-        finalize_crash_point: Option<finalize_failpoint::FinalizeCrashPoint>,
-        #[arg(long)]
-        pause_for_kill: Option<std::path::PathBuf>,
     },
     /// Derive CLEAR/HELD and cross the authoritative publication boundary.
     Finalize {
@@ -112,6 +108,10 @@ enum Command {
         database_url: String,
         #[arg(long)]
         snapshot_id: String,
+        #[arg(long, value_enum)]
+        finalize_crash_point: Option<finalize_failpoint::FinalizeCrashPoint>,
+        #[arg(long)]
+        pause_for_kill: Option<std::path::PathBuf>,
     },
     /// Independently verify the frozen source snapshot and expected business verdict.
     Verify {
