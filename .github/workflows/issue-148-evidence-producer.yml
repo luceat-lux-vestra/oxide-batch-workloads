@@ -42,17 +42,7 @@ jobs:
         working-directory: payment-reconciliation-postgres
         run: ./evidence/produce.sh
 
-      - name: Upload rustfmt patch when producer source is not formatted
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: payment-reconciliation-rustfmt-patch
-          path: ${{ runner.temp }}/payment-reconciliation-rustfmt.patch
-          if-no-files-found: ignore
-          retention-days: 1
-
       - name: Upload generated retained-evidence candidate
-        if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: payment-reconciliation-retained-evidence
