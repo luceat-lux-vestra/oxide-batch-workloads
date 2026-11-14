@@ -11,6 +11,7 @@ pub struct ProducerEvidence {
     pub campaign_issue: u32,
     pub classification: &'static str,
     pub snapshot: RetainedSnapshot,
+    pub base_snapshot: Option<RetainedSnapshot>,
     pub oracle: OracleSummary,
     pub actual: ActualResult,
     pub violations: Vec<String>,
@@ -21,6 +22,7 @@ pub struct RetainedSnapshot {
     pub metadata: SnapshotMetadata,
     pub internal: Vec<InternalSnapshotRow>,
     pub provider: Vec<ProviderSnapshotRow>,
+    pub mutation_recipe: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +60,30 @@ pub async fn verify(database_url: &str, snapshot_id: &str) -> Result<ProducerEvi
         .connect(database_url)
         .await?;
     let actual = load_actual(&pool, snapshot_id).await?;
+    let mutation_recipe: serde_json::Value = sqlx::query_scalar(
+        "SELECT mutation_recipe FROM payment_reconciliation.source_snapshot WHERE snapshot_id = $1",
+    )
+    .bind(snapshot_id)
+    .fetch_one(&pool)
+    .await?;
+
+    let base_snapshot = if let Some(base_id) = bundle.metadata.base_snapshot_id.as_deref() {
+        let base = crate::snapshot::load_integrity_checked_snapshot(database_url, base_id).await?;
+        let base_recipe: serde_json::Value = sqlx::query_scalar(
+            "SELECT mutation_recipe FROM payment_reconciliation.source_snapshot WHERE snapshot_id = $1",
+        )
+        .bind(base_id)
+        .fetch_one(&pool)
+        .await?;
+        Some(RetainedSnapshot {
+            metadata: base.metadata,
+            internal: base.internal,
+            provider: base.provider,
+            mutation_recipe: base_recipe,
+        })
+    } else {
+        None
+    };
     pool.close().await;
 
     let mut violations = Vec::new();
@@ -71,7 +97,9 @@ pub async fn verify(database_url: &str, snapshot_id: &str) -> Result<ProducerEvi
             metadata: bundle.metadata,
             internal: bundle.internal,
             provider: bundle.provider,
+            mutation_recipe,
         },
+        base_snapshot,
         oracle,
         actual,
         violations,
