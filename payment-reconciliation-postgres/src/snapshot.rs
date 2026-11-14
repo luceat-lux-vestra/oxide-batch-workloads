@@ -225,27 +225,6 @@ pub async fn derive_scenario(request: DeriveRequest<'_>) -> Result<SnapshotBundl
     Ok(bundle)
 }
 
-pub async fn verify_source_snapshot(
-    database_url: &str,
-    snapshot_id: &str,
-) -> Result<serde_json::Value> {
-    let pool = workload_pool(database_url).await?;
-    let bundle = load_snapshot(&pool, snapshot_id).await?;
-    validate_bundle_integrity(&bundle)?;
-    let oracle = reconcile(&bundle.internal, &bundle.provider)?;
-    validate_scenario_expectation(&bundle.metadata.scenario_case, &oracle)?;
-
-    Ok(json!({
-        "schema_version": 1,
-        "scope": "source-snapshot-only-v1",
-        "snapshot_id": bundle.metadata.snapshot_id,
-        "scenario_case": bundle.metadata.scenario_case,
-        "internal_snapshot_digest": bundle.metadata.internal_snapshot_digest,
-        "provider_snapshot_digest": bundle.metadata.provider_snapshot_digest,
-        "oracle": oracle
-    }))
-}
-
 async fn workload_pool(database_url: &str) -> Result<PgPool> {
     PgPoolOptions::new()
         .max_connections(5)
@@ -667,24 +646,6 @@ fn validate_bundle_integrity(bundle: &SnapshotBundle) -> Result<()> {
             bundle.metadata.provider_snapshot_digest,
             provider
         );
-    }
-    Ok(())
-}
-
-fn validate_scenario_expectation(
-    scenario_case: &str,
-    oracle: &crate::oracle::OracleSummary,
-) -> Result<()> {
-    if scenario_case == "CLEAR" {
-        if oracle.business_state != "CLEAR" {
-            bail!("CLEAR scenario does not produce a CLEAR independent oracle result");
-        }
-        return Ok(());
-    }
-
-    let expected = expected_classification(scenario_case)?;
-    if oracle.business_state != "HELD" || !contains_classification(oracle, expected) {
-        bail!("scenario {scenario_case} does not produce its expected HELD classification");
     }
     Ok(())
 }

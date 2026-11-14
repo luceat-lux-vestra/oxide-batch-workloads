@@ -216,16 +216,16 @@ async fn main() -> Result<()> {
             pause_for_kill,
             pause_after_processing_commit,
         } => {
-            let run_id = job::run(
-                &database_url,
-                &snapshot_id,
+            let run_id = job::run(job::RunRequest {
+                database_url: &database_url,
+                snapshot_id: &snapshot_id,
                 chunk_size,
                 page_size,
                 fail_at_chunk,
                 failure_mode,
                 pause_for_kill,
                 pause_after_processing_commit,
-            )
+            })
             .await?;
             println!(
                 "{}",

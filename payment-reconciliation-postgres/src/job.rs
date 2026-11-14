@@ -194,16 +194,28 @@ fn map_source(row: &PostgresRow<'_>) -> Result<ReconciliationSourceRow, ReaderEr
     })
 }
 
-pub async fn run(
-    database_url: &str,
-    snapshot_id: &str,
-    chunk_size: u32,
-    page_size: usize,
-    fail_at_chunk: u32,
-    failure_mode: FailureMode,
-    pause_for_kill: Option<PathBuf>,
-    pause_after_processing_commit: Option<PathBuf>,
-) -> anyhow::Result<String> {
+pub struct RunRequest<'a> {
+    pub database_url: &'a str,
+    pub snapshot_id: &'a str,
+    pub chunk_size: u32,
+    pub page_size: usize,
+    pub fail_at_chunk: u32,
+    pub failure_mode: FailureMode,
+    pub pause_for_kill: Option<PathBuf>,
+    pub pause_after_processing_commit: Option<PathBuf>,
+}
+
+pub async fn run(request: RunRequest<'_>) -> anyhow::Result<String> {
+    let RunRequest {
+        database_url,
+        snapshot_id,
+        chunk_size,
+        page_size,
+        fail_at_chunk,
+        failure_mode,
+        pause_for_kill,
+        pause_after_processing_commit,
+    } = request;
     let bundle =
         crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
