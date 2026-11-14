@@ -202,6 +202,7 @@ pub async fn run(
     fail_at_chunk: u32,
     failure_mode: FailureMode,
     pause_for_kill: Option<PathBuf>,
+    pause_after_processing_commit: Option<PathBuf>,
 ) -> anyhow::Result<String> {
     let bundle = crate::snapshot::load_integrity_checked_snapshot(database_url, snapshot_id).await?;
     let run_id = run_id(&bundle);
@@ -288,6 +289,14 @@ pub async fn run(
     .execute(&pool)
     .await?;
     pool.close().await;
+
+    if let Some(marker) = pause_after_processing_commit {
+        crate::failpoint::pause_for_external_kill(
+            &marker,
+            "after-processing-commit-before-finalization",
+        )
+        .await;
+    }
 
     Ok(run_id)
 }

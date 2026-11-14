@@ -94,6 +94,8 @@ enum Command {
         failure_mode: failpoint::FailureMode,
         #[arg(long)]
         pause_for_kill: Option<std::path::PathBuf>,
+        #[arg(long)]
+        pause_after_processing_commit: Option<std::path::PathBuf>,
     },
     /// Continue a hard-crashed execution through public OxideBatch recovery APIs.
     Recover {
@@ -204,6 +206,7 @@ async fn main() -> Result<()> {
             fail_at_chunk,
             failure_mode,
             pause_for_kill,
+            pause_after_processing_commit,
         } => {
             let run_id = job::run(
                 &database_url,
@@ -213,6 +216,7 @@ async fn main() -> Result<()> {
                 fail_at_chunk,
                 failure_mode,
                 pause_for_kill,
+                pause_after_processing_commit,
             )
             .await?;
             println!(

@@ -49,19 +49,9 @@ impl Failpoint {
     }
 
     async fn pause(&self, where_: &str) {
-        let Some(marker) = &self.marker else {
-            return;
-        };
-        let pid = std::process::id();
-        if let Err(error) = std::fs::write(marker, format!("{pid}\n{where_}\n")) {
-            eprintln!(
-                "failpoint could not write marker {}: {error}",
-                marker.display()
-            );
-            std::process::abort();
+        if let Some(marker) = &self.marker {
+            pause_for_external_kill(marker, where_).await;
         }
-        std::future::pending::<()>().await;
-        unreachable!("armed failpoint must be externally killed");
     }
 }
 
@@ -218,4 +208,17 @@ impl<M: ChunkTransactionManager> ChunkTransactionManager for FailingTransactionM
     ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
         self.inner.inherited_component_state(context)
     }
+}
+
+pub async fn pause_for_external_kill(marker: &PathBuf, where_: &str) {
+    let pid = std::process::id();
+    if let Err(error) = std::fs::write(marker, format!("{pid}\n{where_}\n")) {
+        eprintln!(
+            "failpoint could not write marker {}: {error}",
+            marker.display()
+        );
+        std::process::abort();
+    }
+    std::future::pending::<()>().await;
+    unreachable!("armed failpoint must be externally killed");
 }

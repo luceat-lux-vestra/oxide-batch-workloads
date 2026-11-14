@@ -170,6 +170,8 @@ run ... --fail-at-chunk N \
   --failure-mode during-write|after-business-commit \
   --pause-for-kill <marker>
 
+run ... --pause-after-processing-commit <marker>
+
 finalize ... \
   --finalize-crash-point before-commit|after-commit \
   --pause-for-kill <marker>
@@ -191,7 +193,8 @@ The checkpoint-5 integration matrix proves:
 - kill after detail INSERT but before chunk commit -> that chunk rolls back;
 - kill immediately after atomic chunk commit -> detail + checkpoint remain
   durable together and are not duplicated on continuation;
-- completed processing alone publishes nothing;
+- real process death immediately after the durable `PROCESSED` transition
+  still publishes nothing until a new process finalizes;
 - kill before finalization commit -> no verdict/publication is durable;
 - kill after finalization/publication commit but before caller acknowledgement
   -> replay returns the already-committed result with one publication row;

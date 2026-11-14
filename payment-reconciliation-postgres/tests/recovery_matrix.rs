@@ -247,6 +247,21 @@ fn spawn_crashing_run(
         .expect("spawn crashing run")
 }
 
+fn spawn_after_processing_commit(snapshot_id: &str, marker: &Path) -> Child {
+    bin()
+        .arg("run")
+        .arg("--snapshot-id")
+        .arg(snapshot_id)
+        .arg("--chunk-size")
+        .arg("2")
+        .arg("--page-size")
+        .arg("2")
+        .arg("--pause-after-processing-commit")
+        .arg(marker)
+        .spawn()
+        .expect("spawn post-processing crash run")
+}
+
 fn recover(snapshot_id: &str) -> Output {
     output({
         let mut command = bin();
@@ -420,14 +435,19 @@ async fn hard_crash_after_chunk_commit_preserves_checkpoint_and_avoids_duplicate
 }
 
 #[tokio::test]
-async fn processing_completion_is_not_authoritative_publication() {
+async fn process_death_after_processing_commit_still_publishes_nothing_until_new_process_finalizes() {
     let snapshot = insert_clear_snapshot(3).await;
-    assert_success(&run(&snapshot), "clean processing run");
+    let path = marker("after-processing");
+    let mut child = spawn_after_processing_commit(&snapshot, &path);
+    assert_eq!(wait_marker(&path), child.id());
+    kill(&mut child);
+
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), None, 0));
 
     let result = finalize(&snapshot);
-    assert_success(&result, "separate-process finalization");
+    assert_success(&result, "separate-process finalization after processing-process death");
     assert_eq!(run_state(&snapshot).await, ("PROCESSED".into(), Some("CLEAR".into()), 1));
+    let _ = std::fs::remove_file(path);
 }
 
 #[tokio::test]
