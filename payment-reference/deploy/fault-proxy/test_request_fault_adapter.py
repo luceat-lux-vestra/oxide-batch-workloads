@@ -131,6 +131,51 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
         self.assertEqual("/payments/", event["request_match"]["path_prefix"])
         self.assertNotIn("path_suffix", event["request_match"])
 
+    def test_prefix_selector_rejects_ambiguous_or_invalid_paths(self):
+        adapter = RequestFaultPlanAdapter()
+        invalid_matches = (
+            {"method": "GET"},
+            {"method": "GET", "path_prefix": ""},
+            {"method": "GET", "path_prefix": "payments/"},
+            {"method": "GET", "path_prefix": "/payments/", "path_suffix": "/payments"},
+            {"method": "GET", "path_prefix": "/payments/", "extra": "not-allowed"},
+        )
+        for match in invalid_matches:
+            with self.subTest(match=match):
+                with self.assertRaises(FaultPlanValidationError):
+                    adapter.load(
+                        plan(
+                            {
+                                "step_id": "invalid-selector",
+                                "sequence": 1,
+                                "offset_ms": 0,
+                                "point": "STATUS_INQUIRY",
+                                "request_match": match,
+                                "action": {"kind": "STATUS_VISIBILITY", "visibility": "NOT_FOUND"},
+                            }
+                        )
+                    )
+
+    def test_mutation_rejects_prefix_even_when_suffix_is_present(self):
+        adapter = RequestFaultPlanAdapter()
+        with self.assertRaises(FaultPlanValidationError):
+            adapter.load(
+                plan(
+                    {
+                        "step_id": "mutation-with-prefix",
+                        "sequence": 1,
+                        "offset_ms": 0,
+                        "point": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                        "request_match": {
+                            "method": "POST",
+                            "path_suffix": "/authorize",
+                            "path_prefix": "/payments/",
+                        },
+                        "action": {"kind": "HTTP_FAILURE", "status": 503},
+                    }
+                )
+            )
+
     def test_mutation_fault_rejects_prefix_selector(self):
         adapter = RequestFaultPlanAdapter()
         with self.assertRaises(FaultPlanValidationError):

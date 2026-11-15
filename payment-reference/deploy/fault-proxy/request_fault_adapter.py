@@ -323,8 +323,17 @@ def _normalize_step(raw):
 def _normalize_request_match(raw, allow_prefix=False):
     if not isinstance(raw, dict):
         raise FaultPlanValidationError("request fault step requires request_match")
-    allowed_keys = {"method", "path_suffix"} | ({"path_prefix"} if allow_prefix else set())
-    _exact_keys(raw, allowed_keys, "request_match")
+    # Mutation matching stays suffix-only; STATUS_INQUIRY may use a prefix.
+    selectors = {"path_suffix", "path_prefix"} & set(raw)
+    if len(selectors) != 1:
+        raise FaultPlanValidationError(
+            "request_match requires exactly one path_suffix or path_prefix"
+        )
+    if not allow_prefix and "path_prefix" in selectors:
+        raise FaultPlanValidationError(
+            "request_match.path_prefix is only allowed for STATUS_INQUIRY"
+        )
+    _exact_keys(raw, {"method"} | selectors, "request_match")
     method = _non_blank(raw["method"], "request_match.method")
     if not method.isascii() or not method.isalpha() or method != method.upper():
         raise FaultPlanValidationError(
