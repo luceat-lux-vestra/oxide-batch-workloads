@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -179,6 +180,7 @@ def validate_artifacts(artifacts: list[Any]) -> None:
         fail("artifacts must retain at least one raw evidence artifact")
 
     seen: set[str] = set()
+    has_raw = False
     for index, artifact in enumerate(artifacts):
         item = require_dict(artifact, f"artifacts[{index}]")
         path = require_string(item.get("path"), f"artifacts[{index}].path")
@@ -189,7 +191,11 @@ def validate_artifacts(artifacts: list[Any]) -> None:
             fail(f"duplicate artifact path: {path}")
         seen.add(path)
         require_sha(item.get("sha256"), f"artifacts[{index}].sha256", SHA64)
-        require_string(item.get("kind"), f"artifacts[{index}].kind")
+        kind = require_string(item.get("kind"), f"artifacts[{index}].kind")
+        has_raw = has_raw or kind == "raw"
+
+    if not has_raw:
+        fail("artifacts must retain at least one artifact with kind 'raw'")
 
 
 def validate_correctness(correctness: dict[str, Any]) -> None:
@@ -250,15 +256,17 @@ def validate_manifest(document: Any) -> None:
         if (
             not isinstance(elapsed, (int, float))
             or isinstance(elapsed, bool)
+            or not math.isfinite(elapsed)
             or elapsed <= 0
         ):
-            fail("benchmark_timing.elapsed_seconds must be positive")
+            fail("benchmark_timing.elapsed_seconds must be finite and positive")
         if (
             not isinstance(throughput, (int, float))
             or isinstance(throughput, bool)
+            or not math.isfinite(throughput)
             or throughput <= 0
         ):
-            fail("benchmark_timing.rows_per_second must be positive")
+            fail("benchmark_timing.rows_per_second must be finite and positive")
     elif has_benchmark_timing:
         fail("profiler/telemetry lanes must not carry benchmark_timing")
 

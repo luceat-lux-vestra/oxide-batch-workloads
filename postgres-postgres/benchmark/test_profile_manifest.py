@@ -141,6 +141,19 @@ class ProfileManifestTests(unittest.TestCase):
         ):
             profile_manifest.validate_manifest(document)
 
+    def test_benchmark_rejects_non_finite_timing(self) -> None:
+        for field, value in (
+            ("elapsed_seconds", float("nan")),
+            ("rows_per_second", float("inf")),
+        ):
+            with self.subTest(field=field):
+                document = valid_manifest()
+                document["benchmark_timing"][field] = value
+                with self.assertRaisesRegex(
+                    profile_manifest.ManifestError, "finite and positive"
+                ):
+                    profile_manifest.validate_manifest(document)
+
     def test_rejects_non_published_oxide_batch_subject(self) -> None:
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
@@ -184,6 +197,14 @@ class ProfileManifestTests(unittest.TestCase):
         document["artifacts"] = []
         with self.assertRaisesRegex(
             profile_manifest.ManifestError, "at least one raw evidence artifact"
+        ):
+            profile_manifest.validate_manifest(document)
+
+    def test_rejects_artifact_set_without_raw_evidence(self) -> None:
+        document = valid_manifest()
+        document["artifacts"][0]["kind"] = "summary"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "at least one artifact with kind 'raw'"
         ):
             profile_manifest.validate_manifest(document)
 
