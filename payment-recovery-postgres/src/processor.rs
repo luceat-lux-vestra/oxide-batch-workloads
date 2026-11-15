@@ -131,9 +131,8 @@ impl RecoveryProcessor {
             .merchant
             .execute(&candidate, &self.crash)
             .await
-            .map_err(|error| {
+            .inspect_err(|_| {
                 eprintln!("payment-recovery processor failure stage=merchant-replay");
-                error
             })?;
 
         let (attempt_state, merchant_http_status, outcome_kind, canonical, provider, decision) =
@@ -307,11 +306,10 @@ impl RecoveryProcessor {
                     Some(_) => ProviderVisibility::Unavailable,
                 };
                 let response: ProviderPaymentResponse = serde_json::from_slice(&response.body)
-                    .map_err(|error| {
+                    .inspect_err(|_| {
                         eprintln!(
                             "payment-recovery processor failure stage=provider-response-decode"
                         );
-                        error
                     })
                     .context("decode provider payment response")?;
                 Ok(ProviderObservation {
