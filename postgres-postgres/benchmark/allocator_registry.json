@@ -81,20 +81,25 @@
     },
     {
       "identity": "snmalloc",
-      "status": "planned",
+      "status": "active",
       "screening_tier": "phase1",
       "cargo_feature": "allocator-snmalloc",
       "wrapper": {
         "name": "snmalloc-rs",
         "version": "0.7.6"
       },
-      "lock_packages": [],
+      "lock_packages": [
+        {
+          "name": "snmalloc-sys",
+          "version": "0.7.6"
+        }
+      ],
       "upstream": {
         "status": "observed",
         "version": "0.7.6"
       },
       "target_support": {
-        "aarch64-unknown-linux-gnu": "supported-unverified",
+        "aarch64-unknown-linux-gnu": "qualified",
         "x86_64-unknown-linux-gnu": "supported-unverified"
       },
       "build_prerequisites": [
