@@ -698,6 +698,9 @@ run_ci_stage() {
   echo "profile smoke producer tests"
   python3 benchmark/test_profile_smoke.py
 
+  echo "allocator benchmark producer tests"
+  python3 benchmark/test_allocator_benchmark.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 

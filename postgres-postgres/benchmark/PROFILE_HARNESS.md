@@ -349,6 +349,46 @@ This distinction matters for Rust/Cargo 1.100 and later because build-directory
 selection can vary with build configuration and feature state; allocator
 variants must therefore retain the exact Cargo version alongside `rustc`.
 
+## Repeated allocator benchmark producer
+
+`benchmark/allocator_benchmark.py` is the benchmark-lane producer for the
+registry-qualified allocator matrix. It is intentionally separate from the
+diagnostic smoke producer and from CPU/heap profiler orchestration.
+
+The canonical geometry remains the previously fixed benchmark contract:
+
+- both cursor and paging readers;
+- 1,000,000 source rows with seed 20260904;
+- chunk size 1000;
+- cursor fetch size 500;
+- paging page size 750;
+- 2 warmup rounds per reader;
+- 7 measured rounds per reader.
+
+Each allocator sample receives a fresh clone of one deterministic template
+database. Setup, cloning, teardown, and independent verification remain outside
+the timed interval. Warmups execute the same correctness path but are excluded
+from measured distributions.
+
+Allocator order rotates deterministically across rounds. Warmup and measured
+order sequences are independent, so warmups cannot shift the measured
+position-balance schedule. One complete measured cycle places every allocator
+in every order position once; alternating cycles reverse the rotation
+direction. The exact warmup and measured order is retained in the summary
+artifact.
+
+Each measured sample emits its own validated benchmark-lane manifest plus raw
+measurement and verifier artifacts. The top-level summary retains
+min/median/max/p95 distributions for elapsed time, throughput, user/system CPU,
+and peak RSS for every allocator/reader pair.
+
+Only the exact canonical geometry is labelled
+`same-host-relative-observational`. Any bounded override is labelled
+`diagnostic-noncanonical` and every sample manifest records that it is not
+campaign acceptance evidence. Hosted-runner numbers remain unsuitable for
+stable-host absolute-performance claims, and this 0.6.0 rehearsal cannot select
+the post-M7 default allocator.
+
 ## Next implementation boundary
 
 CPU/heap profiler integration, profile-mode orchestration, soak execution,
