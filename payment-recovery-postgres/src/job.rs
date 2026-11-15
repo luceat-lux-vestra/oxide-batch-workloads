@@ -285,19 +285,16 @@ pub async fn recover(request: RecoverRequest<'_>) -> anyhow::Result<RunReport> {
     validate_run_id(request.run_id)?;
     let metadata = begin_recovery_cycle(request.database_url, request.run_id).await?;
 
-    let repository = PostgresJobRepository::connect(
-        pg_config(request.database_url)?,
-        Arc::new(SystemClock),
-    )
-    .await?;
+    let repository =
+        PostgresJobRepository::connect(pg_config(request.database_url)?, Arc::new(SystemClock))
+            .await?;
     let job_parameters = parameters(&metadata)?;
     let key = JobInstanceKey::new(JobName::new(JOB_NAME)?, &job_parameters);
 
     let mut unit = repository.begin().await?;
-    let instance = unit
-        .find_job_instance(&key)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("no OxideBatch JobInstance matches the active recovery generation"))?;
+    let instance = unit.find_job_instance(&key).await?.ok_or_else(|| {
+        anyhow::anyhow!("no OxideBatch JobInstance matches the active recovery generation")
+    })?;
     let execution = unit
         .job_executions(instance.id())
         .await?
@@ -310,8 +307,7 @@ pub async fn recover(request: RecoverRequest<'_>) -> anyhow::Result<RunReport> {
         | BatchStatus::Started
         | BatchStatus::Stopping
         | BatchStatus::Unknown => {
-            let request_digest =
-                recovery_digest(&metadata.run_id, metadata.processing_generation);
+            let request_digest = recovery_digest(&metadata.run_id, metadata.processing_generation);
             let recovery = RecoveryRequest::mark_failed(
                 execution.version(),
                 "PAYMENT_RECOVERY_PROCESS_EXIT_INSPECTED",
@@ -320,7 +316,8 @@ pub async fn recover(request: RecoverRequest<'_>) -> anyhow::Result<RunReport> {
                 FailureCategory::PermanentInfrastructure,
                 FailureId::new(271)?,
             )?;
-            unit.recover_job_execution(execution.id(), &recovery).await?;
+            unit.recover_job_execution(execution.id(), &recovery)
+                .await?;
             unit.commit().await?;
         }
         BatchStatus::Failed => {
@@ -346,11 +343,8 @@ pub async fn recover(request: RecoverRequest<'_>) -> anyhow::Result<RunReport> {
                 run_id: metadata.run_id.clone(),
                 processing_generation: metadata.processing_generation,
                 launched: false,
-                retry_later_count: retry_later_count(
-                    request.database_url,
-                    &metadata.run_id,
-                )
-                .await?,
+                retry_later_count: retry_later_count(request.database_url, &metadata.run_id)
+                    .await?,
             });
         }
         other => {
@@ -550,10 +544,7 @@ async fn prepare_processing_cycle(
     ))
 }
 
-async fn begin_recovery_cycle(
-    database_url: &str,
-    run_id: &str,
-) -> anyhow::Result<RunMetadata> {
+async fn begin_recovery_cycle(database_url: &str, run_id: &str) -> anyhow::Result<RunMetadata> {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect(database_url)

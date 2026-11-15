@@ -80,7 +80,8 @@ impl MerchantReplayClient {
             payment_id,
             candidate.operation_kind.merchant_path_suffix()
         );
-        let body = serde_json::to_vec(&request).context("serialize exact Merchant replay request")?;
+        let body =
+            serde_json::to_vec(&request).context("serialize exact Merchant replay request")?;
         Ok(PreparedReplayCall { url, body })
     }
 

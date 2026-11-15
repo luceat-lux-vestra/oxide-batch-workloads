@@ -125,7 +125,9 @@ pub struct SnapshotCandidatesRequest<'a> {
     pub policy_version: &'a str,
 }
 
-pub async fn snapshot_candidates(request: SnapshotCandidatesRequest<'_>) -> Result<SnapshotSummary> {
+pub async fn snapshot_candidates(
+    request: SnapshotCandidatesRequest<'_>,
+) -> Result<SnapshotSummary> {
     validate_identity("run id", request.run_id)?;
     validate_business_date(request.business_date)?;
     validate_non_blank("eligibility cutoff", request.eligibility_cutoff)?;
@@ -166,13 +168,7 @@ pub async fn snapshot_candidates(request: SnapshotCandidatesRequest<'_>) -> Resu
         .await
         .context("connect payment recovery PostgreSQL")?;
 
-    persist_snapshot(
-        &workload_pool,
-        request,
-        &candidates,
-        &candidate_set_digest,
-    )
-    .await?;
+    persist_snapshot(&workload_pool, request, &candidates, &candidate_set_digest).await?;
     workload_pool.close().await;
 
     Ok(SnapshotSummary {

@@ -129,100 +129,96 @@ impl RecoveryProcessor {
             .await;
         let replay = self.merchant.execute(&candidate, &self.crash).await?;
 
-        let (
-            attempt_state,
-            merchant_http_status,
-            outcome_kind,
-            canonical,
-            provider,
-            decision,
-        ) = match replay {
-            ReplayTransportOutcome::TransportUnknown => {
-                let canonical = canonical_from_candidate(&candidate);
-                let provider = self
-                    .fetch_provider(candidate.provider_payment_id.as_deref())
-                    .await?;
-                let decision = OracleDecision {
-                    classification: RecoveryClassification::RetryLater,
-                    violations: vec!["Merchant replay transport outcome is unknown".into()],
-                };
-                (
-                    "CALL_UNKNOWN",
-                    None,
-                    "MERCHANT_TRANSPORT_UNKNOWN",
-                    canonical,
-                    provider,
-                    decision,
-                )
-            }
-            ReplayTransportOutcome::Rejected { http_status } => {
-                let canonical = canonical_from_candidate(&candidate);
-                let provider = self
-                    .fetch_provider(candidate.provider_payment_id.as_deref())
-                    .await?;
-                let retryable = is_retryable_http_status(http_status);
-                let decision = OracleDecision {
-                    classification: if retryable {
-                        RecoveryClassification::RetryLater
-                    } else {
-                        RecoveryClassification::HoldManual
-                    },
-                    violations: if retryable {
-                        Vec::new()
-                    } else {
-                        vec![format!("Merchant replay rejected HTTP {http_status}")]
-                    },
-                };
-                (
-                    "OBSERVED",
-                    Some(i64::from(http_status)),
-                    if retryable {
-                        "MERCHANT_RETRYABLE_REJECTION"
-                    } else {
-                        "MERCHANT_NON_RETRYABLE_REJECTION"
-                    },
-                    canonical,
-                    provider,
-                    decision,
-                )
-            }
-            ReplayTransportOutcome::IncoherentResponse { http_status } => {
-                let canonical = canonical_from_candidate(&candidate);
-                let provider = self
-                    .fetch_provider(candidate.provider_payment_id.as_deref())
-                    .await?;
-                let decision = OracleDecision {
-                    classification: RecoveryClassification::HoldManual,
-                    violations: vec!["Merchant replay returned an incoherent canonical response".into()],
-                };
-                (
-                    "OBSERVED",
-                    Some(i64::from(http_status)),
-                    "MERCHANT_INCOHERENT_RESPONSE",
-                    canonical,
-                    provider,
-                    decision,
-                )
-            }
-            ReplayTransportOutcome::Canonical { http_status, view } => {
-                let canonical = canonical_from_view(&view);
-                let provider_id = view
-                    .mapping
-                    .provider_payment_id
-                    .as_deref()
-                    .or(candidate.provider_payment_id.as_deref());
-                let provider = self.fetch_provider(provider_id).await?;
-                let decision = oracle::classify(&candidate, &canonical, &provider, false);
-                (
-                    "OBSERVED",
-                    Some(i64::from(http_status)),
-                    "MERCHANT_CANONICAL_RESPONSE",
-                    canonical,
-                    provider,
-                    decision,
-                )
-            }
-        };
+        let (attempt_state, merchant_http_status, outcome_kind, canonical, provider, decision) =
+            match replay {
+                ReplayTransportOutcome::TransportUnknown => {
+                    let canonical = canonical_from_candidate(&candidate);
+                    let provider = self
+                        .fetch_provider(candidate.provider_payment_id.as_deref())
+                        .await?;
+                    let decision = OracleDecision {
+                        classification: RecoveryClassification::RetryLater,
+                        violations: vec!["Merchant replay transport outcome is unknown".into()],
+                    };
+                    (
+                        "CALL_UNKNOWN",
+                        None,
+                        "MERCHANT_TRANSPORT_UNKNOWN",
+                        canonical,
+                        provider,
+                        decision,
+                    )
+                }
+                ReplayTransportOutcome::Rejected { http_status } => {
+                    let canonical = canonical_from_candidate(&candidate);
+                    let provider = self
+                        .fetch_provider(candidate.provider_payment_id.as_deref())
+                        .await?;
+                    let retryable = is_retryable_http_status(http_status);
+                    let decision = OracleDecision {
+                        classification: if retryable {
+                            RecoveryClassification::RetryLater
+                        } else {
+                            RecoveryClassification::HoldManual
+                        },
+                        violations: if retryable {
+                            Vec::new()
+                        } else {
+                            vec![format!("Merchant replay rejected HTTP {http_status}")]
+                        },
+                    };
+                    (
+                        "OBSERVED",
+                        Some(i64::from(http_status)),
+                        if retryable {
+                            "MERCHANT_RETRYABLE_REJECTION"
+                        } else {
+                            "MERCHANT_NON_RETRYABLE_REJECTION"
+                        },
+                        canonical,
+                        provider,
+                        decision,
+                    )
+                }
+                ReplayTransportOutcome::IncoherentResponse { http_status } => {
+                    let canonical = canonical_from_candidate(&candidate);
+                    let provider = self
+                        .fetch_provider(candidate.provider_payment_id.as_deref())
+                        .await?;
+                    let decision = OracleDecision {
+                        classification: RecoveryClassification::HoldManual,
+                        violations: vec![
+                            "Merchant replay returned an incoherent canonical response".into(),
+                        ],
+                    };
+                    (
+                        "OBSERVED",
+                        Some(i64::from(http_status)),
+                        "MERCHANT_INCOHERENT_RESPONSE",
+                        canonical,
+                        provider,
+                        decision,
+                    )
+                }
+                ReplayTransportOutcome::Canonical { http_status, view } => {
+                    let canonical = canonical_from_view(&view);
+                    let provider_id = view
+                        .mapping
+                        .provider_payment_id
+                        .as_deref()
+                        .or(candidate.provider_payment_id.as_deref());
+                    let provider = self.fetch_provider(provider_id).await?;
+                    let decision = oracle::classify(&candidate, &canonical, &provider, false);
+                    (
+                        "OBSERVED",
+                        Some(i64::from(http_status)),
+                        "MERCHANT_CANONICAL_RESPONSE",
+                        canonical,
+                        provider,
+                        decision,
+                    )
+                }
+            };
 
         if matches!(
             decision.classification,
@@ -275,7 +271,10 @@ impl RecoveryProcessor {
         })
     }
 
-    async fn fetch_provider(&self, provider_payment_id: Option<&str>) -> Result<ProviderObservation> {
+    async fn fetch_provider(
+        &self,
+        provider_payment_id: Option<&str>,
+    ) -> Result<ProviderObservation> {
         let Some(provider_payment_id) = provider_payment_id else {
             return Ok(unavailable_provider(None));
         };

@@ -104,7 +104,9 @@ impl ParsedUrl {
         }
 
         let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) if !host.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) => {
+            Some((host, port))
+                if !host.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
                 let port = port.parse::<u16>().context("HTTP URL port is invalid")?;
                 (host.to_owned(), port)
             }
@@ -127,11 +129,16 @@ fn parse_response(raw: &[u8]) -> Result<HttpResponse> {
     let split = find_bytes(raw, b"\r\n\r\n").context("HTTP response headers are incomplete")?;
     let header_bytes = &raw[..split];
     let body_bytes = &raw[split + 4..];
-    let header_text = std::str::from_utf8(header_bytes).context("HTTP response headers are not UTF-8")?;
+    let header_text =
+        std::str::from_utf8(header_bytes).context("HTTP response headers are not UTF-8")?;
     let mut lines = header_text.split("\r\n");
-    let status_line = lines.next().context("HTTP response status line is missing")?;
+    let status_line = lines
+        .next()
+        .context("HTTP response status line is missing")?;
     let mut status_parts = status_line.split_whitespace();
-    let protocol = status_parts.next().context("HTTP response protocol is missing")?;
+    let protocol = status_parts
+        .next()
+        .context("HTTP response protocol is missing")?;
     if !protocol.starts_with("HTTP/1.") {
         bail!("unsupported HTTP response protocol");
     }
@@ -202,9 +209,7 @@ fn decode_chunked(input: &[u8]) -> Result<Vec<u8>> {
         if size == 0 {
             return Ok(output);
         }
-        let end = cursor
-            .checked_add(size)
-            .context("chunk size overflow")?;
+        let end = cursor.checked_add(size).context("chunk size overflow")?;
         if end + 2 > input.len() || &input[end..end + 2] != b"\r\n" {
             bail!("chunked response payload is incomplete");
         }
@@ -217,7 +222,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(test)]
@@ -226,12 +233,14 @@ mod tests {
 
     #[test]
     fn parses_content_length_response() {
-        let response = parse_response(
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-        )
-        .unwrap();
+        let response =
+            parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .unwrap();
         assert_eq!(response.status, 200);
-        assert_eq!(response.headers.get("content-length"), Some(&"2".to_owned()));
+        assert_eq!(
+            response.headers.get("content-length"),
+            Some(&"2".to_owned())
+        );
         assert_eq!(response.body, b"{}");
     }
 

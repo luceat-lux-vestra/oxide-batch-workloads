@@ -98,17 +98,13 @@ pub fn classify(
 
     if matches!(
         provider.visibility,
-        ProviderVisibility::NotFound
-            | ProviderVisibility::Stale
-            | ProviderVisibility::Unavailable
+        ProviderVisibility::NotFound | ProviderVisibility::Stale | ProviderVisibility::Unavailable
     ) {
         return decision(RecoveryClassification::RetryLater);
     }
 
     match canonical.operation_state.as_str() {
-        "PENDING" | "UNKNOWN" | "RETRY_PENDING" => {
-            decision(RecoveryClassification::RetryLater)
-        }
+        "PENDING" | "UNKNOWN" | "RETRY_PENDING" => decision(RecoveryClassification::RetryLater),
         "SUCCEEDED" => classify_success(candidate, canonical, provider),
         "FAILED" => classify_failure(canonical, provider),
         _ => OracleDecision {
@@ -147,7 +143,9 @@ fn classify_success(
     if canonical.provider_payment_id.is_none() {
         return OracleDecision {
             classification: RecoveryClassification::HoldManual,
-            violations: vec!["successful canonical result is missing provider payment identity".into()],
+            violations: vec![
+                "successful canonical result is missing provider payment identity".into(),
+            ],
         };
     }
 
@@ -183,7 +181,9 @@ fn classify_success(
     if !status_match {
         return OracleDecision {
             classification: RecoveryClassification::HoldManual,
-            violations: vec!["provider status does not match the resolved initial operation".into()],
+            violations: vec![
+                "provider status does not match the resolved initial operation".into(),
+            ],
         };
     }
 
@@ -345,10 +345,7 @@ mod tests {
             },
             false,
         );
-        assert_eq!(
-            decision.classification,
-            RecoveryClassification::RetryLater
-        );
+        assert_eq!(decision.classification, RecoveryClassification::RetryLater);
     }
 
     #[test]
