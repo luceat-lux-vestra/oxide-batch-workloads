@@ -138,7 +138,7 @@ The build-selection unit pins the wrappers used by this rehearsal:
 | Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
 |---|---|---|---|
 | `system` | no allocator feature | Rust/platform default allocator | host/toolchain-owned; no replacement wrapper |
-| `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.0+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
+| `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
 | `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
 
 The two replacement features are mutually exclusive. No feature means
