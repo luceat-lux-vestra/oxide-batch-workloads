@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -14,20 +15,18 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import allocator_registry
 import paired
 import profile_manifest
 
-ALLOCATORS = ("system", "jemalloc", "mimalloc")
-ALLOCATOR_FEATURES = {
-    "system": None,
-    "jemalloc": "allocator-jemalloc",
-    "mimalloc": "allocator-mimalloc",
-}
+ALLOCATOR_REGISTRY = allocator_registry.load_registry()
+ALLOCATORS = tuple(
+    candidate["identity"]
+    for candidate in allocator_registry.active_candidates(ALLOCATOR_REGISTRY)
+)
 MAX_ROWS = 100_000
 MAX_SIZE = 100_000
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
-JEMALLOC_SYS_VERSION = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
-MIMALLOC_SYS_VERSION = "0.1.49"
 
 
 def fail(message: str) -> None:
@@ -95,8 +94,9 @@ def parse_cpu_model(text: str) -> str:
 
 
 def cargo_build_args(allocator: str) -> list[str]:
-    if allocator not in ALLOCATOR_FEATURES:
-        raise ValueError(f"unknown allocator: {allocator}")
+    candidate = allocator_registry.candidate_by_id(ALLOCATOR_REGISTRY, allocator)
+    if candidate["status"] != "active":
+        raise ValueError(f"allocator is not active: {allocator}")
     command = [
         "cargo",
         "build",
@@ -106,48 +106,32 @@ def cargo_build_args(allocator: str) -> list[str]:
         "postgres-postgres",
         "--no-default-features",
     ]
-    feature = ALLOCATOR_FEATURES[allocator]
+    feature = candidate["cargo_feature"]
     if feature:
         command.extend(["--features", feature])
     return command
 
 
 def allocator_record(allocator: str) -> dict[str, Any]:
-    if allocator == "system":
-        return {
-            "identity": "system",
-            "wrapper": None,
-            "upstream": {
-                "status": "unavailable",
-                "version": None,
-                "reason": "system allocator version is host/toolchain-owned",
-            },
-        }
-    if allocator == "jemalloc":
-        return {
-            "identity": "jemalloc",
-            "wrapper": {"name": "tikv-jemallocator", "version": "0.7.0"},
-            "upstream": {"status": "observed", "version": "5.3.1"},
-        }
-    if allocator == "mimalloc":
-        return {
-            "identity": "mimalloc",
-            "wrapper": {"name": "mimalloc", "version": "0.1.52"},
-            "upstream": {
-                "status": "unavailable",
-                "version": None,
-                "reason": (
-                    "libmimalloc-sys 0.1.49 does not encode the exact bundled "
-                    "upstream mimalloc revision"
-                ),
-            },
-        }
-    raise ValueError(f"unknown allocator: {allocator}")
+    candidate = allocator_registry.candidate_by_id(ALLOCATOR_REGISTRY, allocator)
+    if candidate["status"] != "active":
+        raise ValueError(f"allocator is not active: {allocator}")
+    return {
+        "identity": candidate["identity"],
+        "wrapper": copy.deepcopy(candidate["wrapper"]),
+        "upstream": copy.deepcopy(candidate["upstream"]),
+    }
 
 
-def validate_allocator_lock(lock_path: Path) -> None:
-    paired.lock_package(lock_path, "tikv-jemalloc-sys", JEMALLOC_SYS_VERSION)
-    paired.lock_package(lock_path, "libmimalloc-sys", MIMALLOC_SYS_VERSION)
+def validate_allocator_lock(lock_path: Path, target: str) -> None:
+    candidates = allocator_registry.qualified_active_candidates(
+        ALLOCATOR_REGISTRY, target
+    )
+    if not candidates:
+        fail(f"no active allocators are qualified for target {target}")
+    for candidate in candidates:
+        for package in candidate["lock_packages"]:
+            paired.lock_package(lock_path, package["name"], package["version"])
 
 
 def prepare_output_root(path: Path) -> None:
@@ -239,11 +223,17 @@ def import_name(allocator: str, reader: str) -> str:
     return value
 
 
-def build_variants() -> dict[str, Path]:
+def build_variants(target: str) -> dict[str, Path]:
     destination_root = Path("target/profile-smoke-binaries")
     destination_root.mkdir(parents=True, exist_ok=True)
     result: dict[str, Path] = {}
-    for allocator in ALLOCATORS:
+    candidates = allocator_registry.qualified_active_candidates(
+        ALLOCATOR_REGISTRY, target
+    )
+    if not candidates:
+        fail(f"no active allocators are qualified for target {target}")
+    for candidate in candidates:
+        allocator = candidate["identity"]
         run_checked(cargo_build_args(allocator))
         built = Path("target/release/postgres-postgres")
         if not built.is_file():
@@ -504,13 +494,13 @@ def main() -> int:
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
 
-    binaries = build_variants()
     environment, rustc_version, cargo_version, target = host_environment()
+    binaries = build_variants(target)
     subject_sha = workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = sha256_file(lock_path)
     oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
-    validate_allocator_lock(lock_path)
+    validate_allocator_lock(lock_path, target)
 
     token = run_token()
     template_database = database_name(token, "template")

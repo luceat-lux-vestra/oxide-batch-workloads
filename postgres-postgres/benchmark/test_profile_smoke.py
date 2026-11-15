@@ -75,14 +75,18 @@ checksum = "b"
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "Cargo.lock"
             path.write_text(lock, encoding="utf-8")
-            profile_smoke.validate_allocator_lock(path)
+            profile_smoke.validate_allocator_lock(
+                path, "aarch64-unknown-linux-gnu"
+            )
 
             path.write_text(
                 lock.replace('version = "0.1.49"', 'version = "0.1.50"'),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(RuntimeError, "expected exactly one Cargo.lock package"):
-                profile_smoke.validate_allocator_lock(path)
+                profile_smoke.validate_allocator_lock(
+                    path, "aarch64-unknown-linux-gnu"
+                )
 
     def test_prepare_output_root_rejects_mixed_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
