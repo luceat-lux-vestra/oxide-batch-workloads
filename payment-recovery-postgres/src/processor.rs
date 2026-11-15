@@ -308,7 +308,9 @@ impl RecoveryProcessor {
                 };
                 let response: ProviderPaymentResponse = serde_json::from_slice(&response.body)
                     .map_err(|error| {
-                        eprintln!("payment-recovery processor failure stage=provider-response-decode");
+                        eprintln!(
+                            "payment-recovery processor failure stage=provider-response-decode"
+                        );
                         error
                     })
                     .context("decode provider payment response")?;
