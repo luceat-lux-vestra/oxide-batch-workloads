@@ -66,6 +66,11 @@ snapshot_candidate() {
     --eligibility-cutoff "2099-01-01T00:00:00Z" \
     --scenario-set-id "$run_id" >/tmp/"$run_id"-snapshot.json
 
+  # Retained evidence assumes one frozen initial operation per scenario.
+  # Detect cross-scenario contamination instead of silently merging candidates.
+  jq -e '.candidate_count == 1' /tmp/"$run_id"-snapshot.json >/dev/null ||
+    fail "$run_id candidate acquisition was not isolated to one payment"
+
   candidate="$(workload_sql "
     SELECT candidate_id
     FROM payment_recovery_workload.payment_recovery_candidate

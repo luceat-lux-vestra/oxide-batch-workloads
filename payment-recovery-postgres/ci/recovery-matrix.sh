@@ -103,11 +103,14 @@ run_crash_case "after-candidate-read-before-replay" 1 "crash-before-replay"
 run_crash_case "while-replay-outcome-unknown" 2 "crash-request-outcome-unknown"
 run_crash_case "after-external-convergence-before-local-commit" 3 "crash-after-external-convergence"
 run_crash_case "after-local-write-before-checkpoint-commit" 4 "crash-after-local-write"
-run_retry_later_generation_case
+# The transient case intentionally leaves its Reference Merchant operation
+# retry-pending after proving generation advancement. Run it last so later
+# single-candidate evidence fixtures never acquire that unresolved source.
 run_visibility_case stale "stale-visibility-convergence" 1
 run_visibility_case not-found "not-found-visibility-convergence" 2
 run_async_failure_case
 run_identity_conflict_case
+run_retry_later_generation_case
 
 if [[ -n "$evidence_dir" ]]; then
   count="$(find "$evidence_dir" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')"
