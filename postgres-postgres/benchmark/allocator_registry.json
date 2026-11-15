@@ -1,0 +1,83 @@
+{
+  "schema": "oxide-batch-allocator-registry/v1",
+  "candidates": [
+    {
+      "identity": "system",
+      "status": "active",
+      "screening_tier": "baseline",
+      "cargo_feature": null,
+      "wrapper": null,
+      "lock_packages": [],
+      "upstream": {
+        "status": "unavailable",
+        "version": null,
+        "reason": "system allocator version is host/toolchain-owned"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "qualified"
+      },
+      "build_prerequisites": [],
+      "telemetry": {
+        "status": "not-wired",
+        "capabilities": []
+      }
+    },
+    {
+      "identity": "jemalloc",
+      "status": "active",
+      "screening_tier": "phase0",
+      "cargo_feature": "allocator-jemalloc",
+      "wrapper": {
+        "name": "tikv-jemallocator",
+        "version": "0.7.0"
+      },
+      "lock_packages": [
+        {
+          "name": "tikv-jemalloc-sys",
+          "version": "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+        }
+      ],
+      "upstream": {
+        "status": "observed",
+        "version": "5.3.1"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "qualified"
+      },
+      "build_prerequisites": [],
+      "telemetry": {
+        "status": "not-wired",
+        "capabilities": []
+      }
+    },
+    {
+      "identity": "mimalloc",
+      "status": "active",
+      "screening_tier": "phase0",
+      "cargo_feature": "allocator-mimalloc",
+      "wrapper": {
+        "name": "mimalloc",
+        "version": "0.1.52"
+      },
+      "lock_packages": [
+        {
+          "name": "libmimalloc-sys",
+          "version": "0.1.49"
+        }
+      ],
+      "upstream": {
+        "status": "unavailable",
+        "version": null,
+        "reason": "libmimalloc-sys 0.1.49 does not encode the exact bundled upstream mimalloc revision"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "qualified"
+      },
+      "build_prerequisites": [],
+      "telemetry": {
+        "status": "not-wired",
+        "capabilities": []
+      }
+    }
+  ]
+}

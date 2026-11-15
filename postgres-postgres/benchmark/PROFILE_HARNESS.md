@@ -120,6 +120,35 @@ Where supported, retain RSS/PSS/smaps-class observations, faults/context
 switches, thread/task count, FD count, connection/pool occupancy, and a bounded
 resource timeline.
 
+## Allocator candidate registry
+
+`benchmark/allocator_registry.json` is the canonical selection metadata for
+the profiling harness. Producer code, manifest validation, CI smoke selection,
+MSRV feature checks, and mutual-exclusion checks consume the same registry
+instead of maintaining independent allocator lists.
+
+The registry records, per candidate:
+
+- allocator identity and lifecycle status;
+- screening tier;
+- Cargo feature;
+- wrapper crate/version;
+- exact lockfile package/version requirements;
+- upstream-version observation state;
+- target qualification state;
+- build prerequisites;
+- telemetry wiring state.
+
+The registry is configuration, not benchmark evidence. A target marked
+`qualified` means this harness has a supported execution path on that target;
+it does not mean the allocator is faster or preferred.
+
+New candidates must first enter the registry with an explicit target state.
+They must not be enabled merely because the upstream allocator supports a
+platform: the Rust wrapper/build path must also be qualified. Producer and CI
+selection are filtered by the exact Rust host target, and manifests fail closed
+if an allocator is not qualified for the recorded target.
+
 ## Build-variant invariant
 
 Allocator variants must differ only in the allocator-selection mechanism and
@@ -133,7 +162,7 @@ They must preserve:
 - the same release profile and workload parameters for comparable runs;
 - the same final-state verifier and correctness bar.
 
-The build-selection unit pins the wrappers used by this rehearsal:
+The registry currently activates the three wrappers used by the qualified Phase 0 rehearsal:
 
 | Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
 |---|---|---|---|

@@ -10,6 +10,8 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import allocator_registry
+
 SCHEMA_V1 = "oxide-batch-profile-manifest/v1"
 SCHEMA_V2 = "oxide-batch-profile-manifest/v2"
 SCHEMA = SCHEMA_V2
@@ -21,10 +23,10 @@ CRATES_IO_SOURCES = {
     "sparse+https://index.crates.io/",
 }
 LANES = {"benchmark", "cpu", "heap", "timeline", "allocator", "os-process"}
-ALLOCATORS = {"system", "jemalloc", "mimalloc"}
-WRAPPERS = {
-    "jemalloc": ("tikv-jemallocator", "0.7.0"),
-    "mimalloc": ("mimalloc", "0.1.52"),
+ALLOCATOR_REGISTRY = allocator_registry.load_registry()
+ALLOCATORS = {
+    candidate["identity"]
+    for candidate in allocator_registry.active_candidates(ALLOCATOR_REGISTRY)
 }
 READERS = {"cursor", "paging"}
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -91,39 +93,59 @@ def validate_subject(subject: dict[str, Any], schema: str) -> None:
     require_sha(oxide.get("checksum"), "subject.oxide_batch.checksum", SHA64)
 
 
-def validate_allocator(allocator: dict[str, Any]) -> None:
+def validate_allocator(allocator: dict[str, Any], target: str | None = None) -> None:
     identity = allocator.get("identity")
     if identity not in ALLOCATORS:
         fail(f"allocator.identity must be one of {sorted(ALLOCATORS)}")
 
+    candidate = allocator_registry.candidate_by_id(ALLOCATOR_REGISTRY, identity)
+    if target is not None:
+        state = allocator_registry.target_state(candidate, target)
+        if state != "qualified":
+            fail(
+                f"allocator {identity} is not qualified for target {target}: {state}"
+            )
+
     wrapper = allocator.get("wrapper")
-    upstream = require_dict(allocator.get("upstream"), "allocator.upstream")
-    status = upstream.get("status")
-    if status not in {"observed", "unavailable"}:
-        fail("allocator.upstream.status must be 'observed' or 'unavailable'")
-
-    if status == "observed":
-        require_string(upstream.get("version"), "allocator.upstream.version")
-        if upstream.get("reason") is not None:
-            fail("allocator.upstream.reason must be absent when status is observed")
-    else:
-        if upstream.get("version") is not None:
-            fail("allocator.upstream.version must be null when status is unavailable")
-        require_string(upstream.get("reason"), "allocator.upstream.reason")
-
-    if identity == "system":
+    expected_wrapper = candidate["wrapper"]
+    if expected_wrapper is None:
         if wrapper is not None:
             fail("allocator.wrapper must be null for the system allocator")
     else:
         wrapper_obj = require_dict(wrapper, "allocator.wrapper")
         name = require_string(wrapper_obj.get("name"), "allocator.wrapper.name")
         version = require_string(wrapper_obj.get("version"), "allocator.wrapper.version")
-        if (name, version) != WRAPPERS[identity]:
-            expected_name, expected_version = WRAPPERS[identity]
+        if (name, version) != (
+            expected_wrapper["name"],
+            expected_wrapper["version"],
+        ):
             fail(
                 f"allocator {identity} must use pinned wrapper "
-                f"{expected_name} {expected_version}"
+                f"{expected_wrapper['name']} {expected_wrapper['version']}"
             )
+
+    upstream = require_dict(allocator.get("upstream"), "allocator.upstream")
+    expected_upstream = candidate["upstream"]
+    status = upstream.get("status")
+    if status != expected_upstream["status"]:
+        fail(
+            f"allocator {identity} upstream status must be "
+            f"{expected_upstream['status']}"
+        )
+
+    if status == "observed":
+        version = require_string(upstream.get("version"), "allocator.upstream.version")
+        if version != expected_upstream["version"]:
+            fail(
+                f"allocator {identity} upstream version must be "
+                f"{expected_upstream['version']}"
+            )
+        if upstream.get("reason") is not None:
+            fail("allocator.upstream.reason must be absent when status is observed")
+    else:
+        if upstream.get("version") is not None:
+            fail("allocator.upstream.version must be null when status is unavailable")
+        require_string(upstream.get("reason"), "allocator.upstream.reason")
 
 
 def validate_environment(environment: dict[str, Any]) -> None:
@@ -241,8 +263,12 @@ def validate_manifest(document: Any) -> None:
     require_string(run.get("id"), "run.id")
     require_positive_int(run.get("repetition"), "run.repetition")
 
-    validate_subject(require_dict(manifest.get("subject"), "subject"), schema)
-    validate_allocator(require_dict(manifest.get("allocator"), "allocator"))
+    subject = require_dict(manifest.get("subject"), "subject")
+    validate_subject(subject, schema)
+    validate_allocator(
+        require_dict(manifest.get("allocator"), "allocator"),
+        require_string(subject.get("target"), "subject.target"),
+    )
     validate_environment(require_dict(manifest.get("environment"), "environment"))
     validate_workload(require_dict(manifest.get("workload"), "workload"))
     validate_instrumentation(

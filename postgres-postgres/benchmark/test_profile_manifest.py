@@ -192,6 +192,14 @@ class ProfileManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.6.0'"):
             profile_manifest.validate_manifest(document)
 
+    def test_rejects_allocator_on_unqualified_target(self) -> None:
+        document = valid_manifest(allocator="jemalloc")
+        document["subject"]["target"] = "x86_64-unknown-linux-gnu"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "is not qualified for target"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_replacement_allocator_requires_wrapper_identity(self) -> None:
         document = valid_manifest(allocator="jemalloc")
         document["allocator"]["wrapper"] = None
