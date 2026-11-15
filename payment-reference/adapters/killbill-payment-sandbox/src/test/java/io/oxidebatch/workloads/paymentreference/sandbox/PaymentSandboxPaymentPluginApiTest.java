@@ -111,6 +111,31 @@ class PaymentSandboxPaymentPluginApiTest {
     }
 
     @Test
+    void paymentInfoConvergesAmbiguousAuthorizeFromProviderTruthWithoutAnotherMutation() throws Exception {
+        client.ambiguousAuthorize = true;
+        UUID accountId = UUID.randomUUID();
+        UUID paymentId = UUID.randomUUID();
+        UUID transactionId = UUID.randomUUID();
+
+        PaymentTransactionInfoPlugin first = api.authorizePayment(
+                accountId, paymentId, transactionId, UUID.randomUUID(),
+                new BigDecimal("10.00"), Currency.USD, Collections.emptyList(), context);
+        assertEquals(PaymentPluginStatus.UNDEFINED, first.getStatus());
+        assertEquals(1, client.authorizeCalls);
+
+        PaymentTransactionInfoPlugin observed = api.getPaymentInfo(
+                accountId, paymentId, Collections.emptyList(), context).get(0);
+
+        assertEquals(PaymentPluginStatus.PROCESSED, observed.getStatus());
+        assertEquals(1, client.authorizeCalls);
+        PaymentSandboxTransactionRecord record = dao.findByTransaction(transactionId, tenantId);
+        assertEquals(PaymentPluginStatus.PROCESSED, record.getPluginStatus());
+        assertEquals("authorized", record.getProviderStatus());
+        assertFalse(record.isAmbiguous());
+        assertFalse(record.isRetryable());
+    }
+
+    @Test
     void purchaseRetainsBothProviderMutationIdentities() throws Exception {
         UUID accountId = UUID.randomUUID();
         UUID paymentId = UUID.randomUUID();
@@ -192,6 +217,8 @@ class PaymentSandboxPaymentPluginApiTest {
         public PaymentSandboxPayment authorize(String id, String idempotencyKey, String correlationId) {
             authorizeCalls++;
             if (ambiguousAuthorize) {
+                current = payment(id, current.getAmount(), current.getCurrency(), "authorized",
+                        current.getAmount(), 0, 0, 2);
                 throw PaymentSandboxException.transport(
                         "response lost", true, id, idempotencyKey, new java.io.IOException("lost"));
             }
