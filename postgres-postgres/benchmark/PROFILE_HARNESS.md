@@ -430,9 +430,32 @@ CPU-profile elapsed time is attribution-only. On-CPU sampling can understate
 database/network/lock/sleep waits, and hosted-runner profiles prove
 orchestration/readability rather than stable-host absolute performance.
 
+The first authoritative hosted ARM64 dispatch proved that Linux `perf` is
+installed but unavailable to the unprivileged runner because
+`perf_event_paranoid=4`. That failed capability probe remains retained
+evidence; it is not a CPU profile.
+
+For hosted runners, `benchmark/cpu_profile_gperftools.py` provides a separate
+external sampling path using gperftools `libprofiler` with
+`ITIMER_PROF/SIGPROF`. The workflow installs Ubuntu's packaged
+`google-perftools` and `libgoogle-perftools-dev`, records their exact package
+versions, and retains both the raw gperftools profile and the exact profiled
+binary so the raw evidence can be re-symbolized later.
+
+The fallback is allocator-safe by contract: before profiling, it resolves
+`libprofiler.so`, records its SHA-256 and dynamic dependencies, and fails
+closed if any dynamic dependency names tcmalloc. The workload's selected
+system/jemalloc/mimalloc/snmalloc/tcmalloc allocator therefore cannot be
+silently replaced merely to obtain CPU attribution.
+
+The hosted workflow preserves both capability records:
+- the original Linux `perf` probe, which may remain unsupported;
+- the gperftools capability record used by the fallback producer.
+
 ## Next implementation boundary
 
-The manual CPU-profile workflow and authoritative runtime evidence are a
-separate next unit. Heap/allocation profiling, timeline/concurrency
-instrumentation, soak/quiescence execution, allocator-native telemetry, and
-retained claim-bearing benchmark measurements remain separate later units.
+One authoritative system+paging fallback dispatch and independent artifact
+review remain before the CPU attribution lane is considered rehearsed.
+Heap/allocation profiling, timeline/concurrency instrumentation,
+soak/quiescence execution, allocator-native telemetry, and retained
+claim-bearing benchmark measurements remain separate later units.

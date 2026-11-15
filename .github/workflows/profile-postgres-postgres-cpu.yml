@@ -61,18 +61,19 @@ jobs:
         with:
           workspaces: postgres-postgres
 
-      - name: Validate CPU profile producer
+      - name: Validate CPU profile producers
         run: |
           set -euo pipefail
           python3 benchmark/test_profile_manifest.py
           python3 benchmark/test_cpu_profile.py
+          python3 benchmark/test_cpu_profile_gperftools.py
 
       - name: Probe Linux perf capability
         id: perf
         continue-on-error: true
         run: |
           set -euo pipefail
-          python3 - "$RUNNER_TEMP/cpu-profile-capability.json" "$RUNNER_TEMP/perf-capability.data" <<'PY'
+          python3 - "$RUNNER_TEMP/cpu-profile-perf-capability.json" "$RUNNER_TEMP/perf-capability.data" <<'PY'
           import json
           import pathlib
           import shutil
@@ -151,17 +152,36 @@ jobs:
               raise SystemExit("Linux perf record capability probe failed")
           PY
 
+      - name: Install gperftools CPU profiler fallback
+        id: install-gperftools
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            google-perftools \
+            libgoogle-perftools-dev
+
+      - name: Probe gperftools allocator-safe capability
+        id: gperftools
+        if: steps.install-gperftools.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/cpu_profile_gperftools.py \
+            --probe-output "$RUNNER_TEMP/cpu-profile-gperftools-capability.json"
+
       - name: Start PostgreSQL 18
-        if: steps.perf.outcome == 'success'
+        if: steps.gperftools.outcome == 'success'
         run: docker compose up -d --wait --wait-timeout 60
 
       - name: Run CPU attribution producer
         id: producer
-        if: steps.perf.outcome == 'success'
+        if: steps.gperftools.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
-          python3 benchmark/cpu_profile.py \
+          python3 benchmark/cpu_profile_gperftools.py \
             --base-database-url "$DATABASE_URL" \
             --output "$RUNNER_TEMP/cpu-profile-artifacts" \
             --allocator "$PROFILE_ALLOCATOR" \
@@ -198,7 +218,9 @@ jobs:
           assert manifest["workload"]["rows"] == 100000
           assert manifest["workload"]["seed"] == 266
           assert manifest["instrumentation"]["profiler_attached"] is True
-          assert manifest["instrumentation"]["tools"][0]["name"] == "perf"
+          tool = manifest["instrumentation"]["tools"][0]
+          assert tool["name"] == "gperftools-libprofiler"
+          assert "ITIMER_PROF/SIGPROF" in tool["role"]
           assert "benchmark_timing" not in manifest
           assert manifest["correctness"]["verdict"] == "PASS"
           assert (
@@ -213,17 +235,29 @@ jobs:
               assert digest == artifact["sha256"], path
 
           for required in (
-              "cpu/perf.data",
-              "cpu/perf-report.txt",
-              "cpu/perf-script.txt",
+              "cpu/gperftools.prof",
+              "cpu/pprof-text.txt",
+              "cpu/pprof-callgrind.txt",
               "cpu/run.json",
+              "cpu/capability.json",
               "correctness/verifier.json",
+              f"binary/postgres-postgres-{allocator}",
           ):
               path = root / required
               assert path.is_file() and path.stat().st_size > 0, path
 
+          capability = json.loads(
+              (root / "cpu/capability.json").read_text(encoding="utf-8")
+          )
+          assert capability["supported"] is True
+          assert capability["allocator_semantics_preserved"] is True
+          assert not any(
+              "tcmalloc" in line.lower()
+              for line in capability["dynamic_dependencies"]
+          )
+
           print(
-              f"validated CPU attribution evidence: allocator={allocator} "
+              f"validated gperftools CPU attribution evidence: allocator={allocator} "
               f"reader={reader} sha={expected_sha}"
           )
           PY
@@ -235,7 +269,8 @@ jobs:
           name: postgres-postgres-cpu-profile-${{ inputs.allocator }}-${{ inputs.reader }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/cpu-profile-artifacts
-            ${{ runner.temp }}/cpu-profile-capability.json
+            ${{ runner.temp }}/cpu-profile-perf-capability.json
+            ${{ runner.temp }}/cpu-profile-gperftools-capability.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -243,8 +278,8 @@ jobs:
         if: always()
         run: docker compose down --volumes
 
-      - name: Fail if profiler capability or producer failed
-        if: steps.perf.outcome != 'success' || steps.producer.outcome != 'success'
+      - name: Fail if fallback profiler or producer failed
+        if: steps.install-gperftools.outcome != 'success' || steps.gperftools.outcome != 'success' || steps.producer.outcome != 'success'
         run: |
-          echo "::error::CPU profile run failed or perf is unavailable; inspect retained capability/evidence artifact"
+          echo "::error::gperftools CPU fallback or producer failed; inspect retained capability/evidence artifact"
           exit 1
