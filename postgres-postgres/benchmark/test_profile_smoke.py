@@ -37,6 +37,22 @@ class ProfileSmokeTests(unittest.TestCase):
             "aarch64-unknown-linux-gnu",
         )
 
+    def test_parse_cpu_model_accepts_arm64_identity_fields(self) -> None:
+        cpuinfo = """processor : 0
+CPU implementer : 0x41
+CPU architecture: 8
+CPU variant : 0x0
+CPU part : 0xd0c
+CPU revision : 1
+"""
+        self.assertEqual(
+            profile_smoke.parse_cpu_model(cpuinfo),
+            (
+                "CPU implementer=0x41; CPU architecture=8; CPU variant=0x0; "
+                "CPU part=0xd0c; CPU revision=1"
+            ),
+        )
+
     def test_parse_memory_total_bytes(self) -> None:
         self.assertEqual(
             profile_smoke.parse_memory_total_bytes("MemTotal:        8192 kB\n"),
