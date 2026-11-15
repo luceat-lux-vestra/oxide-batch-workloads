@@ -168,7 +168,7 @@ pub async fn snapshot_candidates(
         .await
         .context("connect payment recovery PostgreSQL")?;
 
-    persist_snapshot(&workload_pool, request, &candidates, &candidate_set_digest).await?;
+    persist_snapshot(&workload_pool, &request, &candidates, &candidate_set_digest).await?;
     workload_pool.close().await;
 
     Ok(SnapshotSummary {
@@ -305,7 +305,7 @@ async fn load_candidates(
 
 async fn persist_snapshot(
     pool: &PgPool,
-    request: SnapshotCandidatesRequest<'_>,
+    request: &SnapshotCandidatesRequest<'_>,
     candidates: &[CandidateSnapshot],
     candidate_set_digest: &str,
 ) -> Result<()> {

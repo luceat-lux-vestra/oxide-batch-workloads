@@ -44,12 +44,14 @@ impl CrashControl {
     ) -> Result<Self> {
         match (&point, &candidate_id, &marker) {
             (None, None, None) => Ok(Self::default()),
-            (Some(_), Some(candidate_id), Some(_)) if !candidate_id.trim().is_empty() => Ok(Self {
+            (Some(_), Some(candidate_id), Some(_)) if candidate_id.trim().is_empty() => {
+                bail!("crash candidate id must not be blank")
+            }
+            (Some(_), Some(_), Some(_)) => Ok(Self {
                 point,
                 candidate_id,
                 marker,
             }),
-            (Some(_), Some(_), Some(_)) => bail!("crash candidate id must not be blank"),
             _ => bail!(
                 "--crash-point, --crash-candidate-id, and --pause-for-kill must be supplied together"
             ),
