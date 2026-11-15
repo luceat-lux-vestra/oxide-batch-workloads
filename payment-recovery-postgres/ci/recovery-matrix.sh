@@ -13,6 +13,7 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://oxide_batch_workload:oxide_bat
 merchant_db="${MERCHANT_DATABASE_URL:-postgresql://merchant:merchant-local-only@127.0.0.1:15435/merchant}"
 merchant_base="${MERCHANT_BASE_URL:-http://127.0.0.1:18083}"
 gateway_base="${GATEWAY_BASE_URL:-http://127.0.0.1:18082}"
+killbill_base="http://127.0.0.1:${KILLBILL_PORT:-8080}"
 provider_base="${PROVIDER_BASE_URL:-http://127.0.0.1:18084}"
 fault_proxy_base="${FAULT_PROXY_BASE_URL:-http://127.0.0.1:18081}"
 observation_proxy_base="http://127.0.0.1:18085"
@@ -53,8 +54,43 @@ source "$workload_dir/ci/recovery-matrix/scenarios-convergence.sh"
 
 "${workload_compose[@]}" up -d --wait --wait-timeout 60
 "${reference_compose[@]}" up -d --wait --wait-timeout 120
-wait_for_url "$merchant_base/health"
+
+# Reference Gateway health is tenant-authenticated. Reproduce the canonical
+# payment-reference bootstrap contract before asking Gateway/Merchant to become
+# ready; otherwise Gateway correctly reports upstream authentication failure.
+wait_for_url "$killbill_base/1.0/healthcheck"
+nodes="$(
+  curl --fail --silent --show-error \
+    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+    "$killbill_base/1.0/kb/nodesInfo"
+)"
+printf '%s' "$nodes" | grep -q 'killbill-payment-sandbox'
+wait_for_url "$fault_proxy_base/health/ready"
+
+tenant_body="$(
+  jq -nc \
+    --arg api_key "$KILLBILL_API_KEY" \
+    --arg api_secret "$KILLBILL_API_SECRET" \
+    '{apiKey:$api_key,apiSecret:$api_secret}'
+)"
+tenant_status="$(
+  curl --silent --show-error \
+    --output /tmp/payment-recovery-tenant.json \
+    --write-out '%{http_code}' \
+    --request POST \
+    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+    --header 'Content-Type: application/json' \
+    --header 'X-Killbill-CreatedBy: payment-recovery-matrix' \
+    --data "$tenant_body" \
+    "$killbill_base/1.0/kb/tenants"
+)"
+if [[ "$tenant_status" != "201" ]]; then
+  cat /tmp/payment-recovery-tenant.json >&2 || true
+  fail "tenant bootstrap expected HTTP 201, observed $tenant_status"
+fi
+
 wait_for_url "$gateway_base/health"
+wait_for_url "$merchant_base/health"
 wait_for_url "$fault_proxy_base/__fault/stats"
 "$binary" migrate --database-url "$DATABASE_URL"
 
