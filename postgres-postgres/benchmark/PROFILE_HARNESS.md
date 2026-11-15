@@ -219,11 +219,18 @@ It may not:
 - present hosted-runner timing as stable-machine absolute performance;
 - open optimization work from noisy or unattributed measurements.
 
+## Build-selection smoke
+
+Protected workload CI exercises the three build identities against one small
+deterministic PostgreSQL source. Each variant runs the unchanged paging
+workload and the unchanged independent verifier under a distinct import name.
+The smoke is correctness/build evidence only: its timings are discarded and
+must never enter benchmark comparisons.
+
+CI also rejects enabling both replacement allocators together and checks both
+optional variants under the workload's declared MSRV.
+
 ## Next implementation boundary
 
-The next bounded unit should add only the allocator build-selection mechanism
-for `system`, `jemalloc`, and `mimalloc`, plus a cheap correctness smoke
-that proves all three variants execute the unchanged workload and verifier.
-
-Profiler tools, opt-in GitHub Actions orchestration, soak execution, and
-retained claim-bearing measurements remain separate later units.
+Profiler tools, opt-in profiling orchestration, soak execution, allocator-native
+telemetry, and retained claim-bearing measurements remain separate later units.
