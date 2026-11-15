@@ -115,21 +115,26 @@
     },
     {
       "identity": "tcmalloc",
-      "status": "planned",
+      "status": "active",
       "screening_tier": "phase1",
       "cargo_feature": "allocator-tcmalloc",
       "wrapper": {
         "name": "tcmalloc-better",
         "version": "0.1.19"
       },
-      "lock_packages": [],
+      "lock_packages": [
+        {
+          "name": "libtcmalloc-sys",
+          "version": "0.1.14"
+        }
+      ],
       "upstream": {
         "status": "unavailable",
         "version": null,
         "reason": "wrapper/sys versions do not establish the exact Google TCMalloc source revision before dependency qualification"
       },
       "target_support": {
-        "aarch64-unknown-linux-gnu": "supported-unverified",
+        "aarch64-unknown-linux-gnu": "qualified",
         "x86_64-unknown-linux-gnu": "supported-unverified"
       },
       "build_prerequisites": [

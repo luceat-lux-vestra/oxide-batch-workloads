@@ -66,11 +66,15 @@ their timing semantics must not be silently mixed.
 
 Purpose: minimally instrumented allocator comparison.
 
-Initial allocator identities:
+Phase 0 initial allocator identities were:
 
 - `system`;
 - `jemalloc`;
 - `mimalloc`.
+
+The Phase 1 registry now additionally qualifies `snmalloc` and `tcmalloc`
+on ARM64 Linux. Candidate-screen expansion does not turn this lane into a
+default-allocator recommendation.
 
 This lane may report wall time, throughput, CPU observations, peak/steady RSS
 where available, and correctness. Profiler attachment is forbidden for
@@ -162,13 +166,15 @@ They must preserve:
 - the same release profile and workload parameters for comparable runs;
 - the same final-state verifier and correctness bar.
 
-The registry currently activates the three wrappers used by the qualified Phase 0 rehearsal:
+The registry currently activates the qualified ARM64 Linux candidate set:
 
 | Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
 |---|---|---|---|
 | `system` | no allocator feature | Rust/platform default allocator | host/toolchain-owned; no replacement wrapper |
 | `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
 | `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
+| `snmalloc` | `allocator-snmalloc` | `snmalloc-rs =0.7.6` | locked `snmalloc-sys 0.7.6`; wrapper tracks upstream snmalloc 0.7.6 |
+| `tcmalloc` | `allocator-tcmalloc` | `tcmalloc-better =0.1.19` | locked `libtcmalloc-sys 0.1.14`; exact vendored Google TCMalloc revision is not inferred from wrapper/sys versions |
 
 ### Phase 1 candidate queue
 
@@ -181,7 +187,7 @@ least one `qualified` target.
 | Identity | Lifecycle | Wrapper | Target state | Qualification note |
 |---|---|---|---|---|
 | `snmalloc` | `active` / Phase 1 | `snmalloc-rs 0.7.6` | ARM64 Linux: `qualified`; x86_64 Linux: `supported-unverified` | exact published wrapper/sys 0.7.6 is locked; default CMake build is qualified by repository CI and the allocator smoke on ARM64 before any performance claim |
-| `tcmalloc` | `planned` / Phase 1 | `tcmalloc-better 0.1.19` | ARM64 Linux + x86_64 Linux: `supported-unverified` | wrapper explicitly supports Linux aarch64/x86_64 and requires a C++ toolchain; background-action lifecycle must be qualified with the allocator |
+| `tcmalloc` | `active` / Phase 1 | `tcmalloc-better 0.1.19` | ARM64 Linux: `qualified`; x86_64 Linux: `supported-unverified` | default 8k-page/extension wrapper build is locked; workload entry points explicitly invoke the wrapper background-action lifecycle before qualification evidence is accepted |
 | `rpmalloc` | `conditional` | `rpmalloc 0.2.2` | ARM64 Linux: `unsupported`; x86_64 Linux: `supported-unverified` | Rust wrapper documents tested support only on x86_64 Windows/macOS/Linux, so it is not an ARM64 campaign candidate without separate wrapper qualification |
 
 Empty `lock_packages` is valid only while a replacement allocator is not
@@ -189,7 +195,7 @@ Empty `lock_packages` is valid only while a replacement allocator is not
 exact locked package provenance, build/correctness qualification on the target,
 and an explicit registry state change.
 
-The two replacement features are mutually exclusive. No feature means
+All active replacement allocator features are pairwise mutually exclusive. No feature means
 `system`, preserving the pre-campaign workload build. The exact mimalloc
 upstream revision is not encoded in the sys-crate version string, so later
 manifest generation must record any more precise version only from an
@@ -269,8 +275,8 @@ It may not:
 
 ## Build-selection smoke
 
-Protected workload CI exercises the three build identities against one small
-deterministic PostgreSQL source. Each variant runs the unchanged paging
+Protected workload CI exercises every registry-qualified active build identity
+for the exact host target against one small deterministic PostgreSQL source. Each variant runs the unchanged paging
 workload and the unchanged independent verifier under a distinct import name.
 The smoke is correctness/build evidence only: its timings are discarded and
 must never enter benchmark comparisons.
@@ -286,7 +292,7 @@ allocator benchmark.
 
 For one selected reader mode it:
 
-1. builds the system, jemalloc, and mimalloc variants in release mode;
+1. builds every registry-qualified active allocator variant for the host target in release mode;
 2. creates one deterministic template database and clones an isolated database
    per allocator;
 3. runs the unchanged workload path for each variant;
@@ -308,6 +314,10 @@ profile-artifacts/
   jemalloc/
     ...
   mimalloc/
+    ...
+  snmalloc/
+    ...
+  tcmalloc/
     ...
 ```
 
