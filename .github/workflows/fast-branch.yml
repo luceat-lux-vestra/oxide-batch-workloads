@@ -150,16 +150,6 @@ jobs:
         if: ${{ steps.enable-sccache.outcome == 'success' }}
         run: sccache --zero-stats
 
-      - name: Diagnose postgres allocator lock resolution
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp postgres-postgres/Cargo.lock "$RUNNER_TEMP/postgres-postgres.Cargo.lock.before"
-          cargo metadata --manifest-path postgres-postgres/Cargo.toml --all-features --format-version 1 >/dev/null
-          echo "=== canonical lock delta requested by Cargo ==="
-          diff -u "$RUNNER_TEMP/postgres-postgres.Cargo.lock.before" postgres-postgres/Cargo.lock || true
-          cp "$RUNNER_TEMP/postgres-postgres.Cargo.lock.before" postgres-postgres/Cargo.lock
-
       - name: Compile representative real workload
         working-directory: csv-postgres
         run: cargo check --locked --all-targets
