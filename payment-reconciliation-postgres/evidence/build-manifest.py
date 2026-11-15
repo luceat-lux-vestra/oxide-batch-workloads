@@ -5,9 +5,10 @@ from pathlib import Path
 WORKLOAD="payment-reconciliation-postgres"
 INCLUDES=["Cargo.toml","Cargo.lock","src","migrations","tests/recovery_matrix.rs","docker-compose.yml","ci/validate","evidence"]
 CRATE_CHECKSUM="eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
+REPO_ROOT=Path(__file__).resolve().parents[2]
 
 def git(*args):
-    return subprocess.check_output(["git",*args],text=True).strip()
+    return subprocess.check_output(["git","-C",str(REPO_ROOT),*args],text=True).strip()
 
 def closure_entries(sha):
     out=git("ls-tree","-r",sha,"--",WORKLOAD)
