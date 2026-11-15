@@ -389,8 +389,50 @@ campaign acceptance evidence. Hosted-runner numbers remain unsuitable for
 stable-host absolute-performance claims, and this 0.6.0 rehearsal cannot select
 the post-M7 default allocator.
 
+## CPU attribution producer
+
+`benchmark/cpu_profile.py` is the first CPU-lane producer. It keeps profiling
+mechanically separate from the benchmark lane and profiles exactly one
+registry-qualified allocator/reader selection at a time.
+
+The producer:
+
+- builds the normal release workload binary for the selected allocator; it
+  does not add an in-process profiler dependency or change default builds;
+- attaches Linux `perf record` externally with frequency sampling and DWARF
+  call chains;
+- passes the credential-bearing PostgreSQL URL through `DATABASE_URL`, never
+  the recorded child argv;
+- retains raw `cpu/perf.data`, textual `perf script` stacks, a reviewable
+  `perf report --stdio` projection, profiler metadata, and the independent
+  workload verifier;
+- emits a validated `lane=cpu` manifest with `profiler_attached=true` and
+  no `benchmark_timing` field;
+- rejects an unavailable profiler, an unqualified allocator/target, empty
+  profile/projection output, profiler failure, or failed correctness
+  verification.
+
+Default profile geometry is bounded to 100,000 rows at 99 Hz. The producer
+allows explicit bounded overrides up to 1,000,000 rows and 1,000 Hz, but those
+numbers never become benchmark evidence.
+
+Example command after PostgreSQL is running:
+
+```bash
+python3 benchmark/cpu_profile.py \
+  --base-database-url "$DATABASE_URL" \
+  --output "$RUNNER_TEMP/cpu-profile-artifacts" \
+  --allocator jemalloc \
+  --reader paging
+```
+
+CPU-profile elapsed time is attribution-only. On-CPU sampling can understate
+database/network/lock/sleep waits, and hosted-runner profiles prove
+orchestration/readability rather than stable-host absolute performance.
+
 ## Next implementation boundary
 
-CPU/heap profiler integration, profile-mode orchestration, soak execution,
-allocator-native telemetry, and retained claim-bearing measurements remain
-separate later units.
+The manual CPU-profile workflow and authoritative runtime evidence are a
+separate next unit. Heap/allocation profiling, timeline/concurrency
+instrumentation, soak/quiescence execution, allocator-native telemetry, and
+retained claim-bearing benchmark measurements remain separate later units.
