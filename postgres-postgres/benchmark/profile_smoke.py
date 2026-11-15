@@ -75,9 +75,22 @@ def parse_cpu_model(text: str) -> str:
         key, value = (part.strip() for part in line.split(":", 1))
         if value and key not in values:
             values[key] = value
+
     for key in preferred:
         if values.get(key):
             return values[key]
+
+    arm_keys = (
+        "CPU implementer",
+        "CPU architecture",
+        "CPU variant",
+        "CPU part",
+        "CPU revision",
+    )
+    observed = [f"{key}={values[key]}" for key in arm_keys if values.get(key)]
+    if "CPU implementer" in values and "CPU part" in values and observed:
+        return "; ".join(observed)
+
     fail("could not determine CPU model from /proc/cpuinfo")
 
 
