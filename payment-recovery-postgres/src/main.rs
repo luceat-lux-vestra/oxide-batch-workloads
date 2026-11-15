@@ -184,7 +184,8 @@ mod tests {
 
     #[test]
     fn cli_exposes_frozen_checkpoint_commands() {
-        let names: Vec<_> = Cli::command()
+        let command = Cli::command();
+        let names: Vec<_> = command
             .get_subcommands()
             .map(|command| command.get_name())
             .collect();
