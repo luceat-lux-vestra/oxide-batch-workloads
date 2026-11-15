@@ -1,0 +1,135 @@
+name: Benchmark PostgreSQL allocator matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      geometry:
+        description: "Explicit campaign geometry (diagnostic is not acceptance evidence)"
+        required: true
+        type: choice
+        default: diagnostic
+        options:
+          - diagnostic
+          - canonical
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-postgres-postgres-allocator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: postgres-postgres-allocator-benchmark
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      BENCHMARK_GEOMETRY: ${{ inputs.geometry }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate benchmark producer
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_allocator_benchmark.py
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_profile_smoke.py
+
+      - name: Start PostgreSQL 18
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run allocator benchmark producer
+        id: producer
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          case "$BENCHMARK_GEOMETRY" in
+            diagnostic)
+              args=(--rows 127 --seed 266 --chunk-size 32 --fetch-size 17 --page-size 17 --warmups 0 --measured-runs 1 --reader both)
+              ;;
+            canonical)
+              args=(--rows 1000000 --seed 20260904 --chunk-size 1000 --fetch-size 500 --page-size 750 --warmups 2 --measured-runs 7 --reader both)
+              ;;
+            *)
+              echo "::error::Unsupported benchmark geometry"
+              exit 1
+              ;;
+          esac
+          python3 benchmark/allocator_benchmark.py \
+            --base-database-url "$DATABASE_URL" \
+            --output "$RUNNER_TEMP/allocator-benchmark-artifacts" \
+            "${args[@]}"
+
+      - name: Validate retained benchmark evidence
+        if: steps.producer.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/allocator-benchmark-artifacts" "$BENCHMARK_GEOMETRY" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          canonical = sys.argv[2] == "canonical"
+          summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+          target = subprocess.check_output(["rustc", "-vV"], text=True).split("host: ", 1)[1].splitlines()[0]
+          sys.path.insert(0, "benchmark")
+          import allocator_registry
+          import profile_manifest
+          expected = {candidate["identity"] for candidate in allocator_registry.qualified_active_candidates(allocator_registry.load_registry(), target)}
+          assert summary["schema"] == "oxide-batch-allocator-benchmark-summary/v1"
+          assert summary["canonical_geometry"] is canonical
+          assert summary["claim_scope"] == ("same-host-relative-observational" if canonical else "diagnostic-noncanonical")
+          assert set(summary["allocators"]) == expected
+          assert set(summary["readers"]) == {"cursor", "paging"}
+          count = 7 if canonical else 1
+          manifests = sorted(root.glob("*/**/manifest.json"))
+          assert len(manifests) == len(expected) * 2 * count
+          for path in manifests:
+              profile_manifest.validate_manifest(json.loads(path.read_text(encoding="utf-8")))
+          for reader in ("cursor", "paging"):
+              assert set(summary["readers"][reader]) == expected
+              for allocator in expected:
+                  assert summary["readers"][reader][allocator]["sample_count"] == count
+          print(f"Validated {len(manifests)} manifests and summary against {target}")
+          PY
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-allocator-benchmark-${{ inputs.geometry }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/allocator-benchmark-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if benchmark producer failed
+        if: steps.producer.outcome != 'success'
+        run: |
+          echo "::error::Allocator benchmark failed; inspect retained evidence"
+          exit 1
