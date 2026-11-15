@@ -25,6 +25,40 @@ class AllocatorRegistryTests(unittest.TestCase):
             ("allocator-jemalloc", "allocator-mimalloc"),
         )
 
+    def test_phase1_candidates_do_not_activate_before_qualification(self) -> None:
+        self.assertEqual(
+            [candidate["identity"] for candidate in self.registry["candidates"][3:]],
+            ["snmalloc", "tcmalloc", "rpmalloc"],
+        )
+        self.assertEqual(
+            [candidate["identity"] for candidate in allocator_registry.active_candidates(self.registry)],
+            ["system", "jemalloc", "mimalloc"],
+        )
+
+    def test_rpmalloc_remains_x86_64_conditional(self) -> None:
+        rpmalloc = allocator_registry.candidate_by_id(self.registry, "rpmalloc")
+        self.assertEqual(rpmalloc["status"], "conditional")
+        self.assertEqual(
+            allocator_registry.target_state(rpmalloc, "aarch64-unknown-linux-gnu"),
+            "unsupported",
+        )
+        self.assertEqual(
+            allocator_registry.target_state(rpmalloc, "x86_64-unknown-linux-gnu"),
+            "supported-unverified",
+        )
+
+    def test_phase1_arm_candidates_are_not_yet_qualified(self) -> None:
+        for identity in ("snmalloc", "tcmalloc"):
+            with self.subTest(identity=identity):
+                candidate = allocator_registry.candidate_by_id(self.registry, identity)
+                self.assertEqual(candidate["status"], "planned")
+                self.assertEqual(
+                    allocator_registry.target_state(
+                        candidate, "aarch64-unknown-linux-gnu"
+                    ),
+                    "supported-unverified",
+                )
+
     def test_target_qualification_filters_active_candidates(self) -> None:
         self.assertEqual(
             [
@@ -57,13 +91,20 @@ class AllocatorRegistryTests(unittest.TestCase):
         ):
             allocator_registry.validate_registry(document)
 
-    def test_replacement_allocator_requires_lock_provenance(self) -> None:
+    def test_active_replacement_allocator_requires_lock_provenance(self) -> None:
         document = copy.deepcopy(self.registry)
         document["candidates"][1]["lock_packages"] = []
         with self.assertRaisesRegex(
-            allocator_registry.RegistryError, "lock_packages must not be empty"
+            allocator_registry.RegistryError,
+            "lock_packages must not be empty for active replacement allocator",
         ):
             allocator_registry.validate_registry(document)
+
+    def test_planned_replacement_may_defer_lock_provenance(self) -> None:
+        candidate = allocator_registry.candidate_by_id(self.registry, "snmalloc")
+        self.assertEqual(candidate["status"], "planned")
+        self.assertEqual(candidate["lock_packages"], [])
+        allocator_registry.validate_registry(self.registry)
 
     def test_active_allocator_requires_qualified_target(self) -> None:
         document = copy.deepcopy(self.registry)

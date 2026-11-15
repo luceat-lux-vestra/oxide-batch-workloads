@@ -93,8 +93,10 @@ def validate_registry(document: Any) -> dict[str, Any]:
             wrapper_obj = require_dict(wrapper, f"{field}.wrapper")
             require_string(wrapper_obj.get("name"), f"{field}.wrapper.name")
             require_string(wrapper_obj.get("version"), f"{field}.wrapper.version")
-            if not lock_packages:
-                fail(f"{field}.lock_packages must not be empty for replacement allocator")
+            if status == "active" and not lock_packages:
+                fail(
+                    f"{field}.lock_packages must not be empty for active replacement allocator"
+                )
 
         seen_packages: set[str] = set()
         for package_index, raw_package in enumerate(lock_packages):
