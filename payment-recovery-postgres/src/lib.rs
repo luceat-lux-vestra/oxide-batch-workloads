@@ -1,4 +1,6 @@
 pub mod candidate;
+pub mod crash;
+pub mod http;
 pub mod job;
 pub mod oracle;
 pub mod processor;

@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use payment_recovery_postgres::candidate::{self, SnapshotCandidatesRequest};
+use payment_recovery_postgres::crash::CrashPoint;
 use payment_recovery_postgres::job;
 
 #[derive(Debug, Parser)]
@@ -51,13 +52,27 @@ enum Command {
         chunk_size: u32,
         #[arg(long, default_value_t = job::DEFAULT_PAGE_SIZE)]
         page_size: usize,
+        #[arg(long, value_enum)]
+        crash_point: Option<CrashPoint>,
+        #[arg(long)]
+        crash_candidate_id: Option<String>,
+        #[arg(long)]
+        pause_for_kill: Option<std::path::PathBuf>,
     },
     /// Continue an interrupted OxideBatch execution using public recovery APIs.
     Recover {
         #[arg(long, env = "DATABASE_URL")]
         database_url: String,
+        #[arg(long, env = "MERCHANT_BASE_URL")]
+        merchant_base_url: String,
+        #[arg(long, env = "PROVIDER_BASE_URL")]
+        provider_base_url: String,
         #[arg(long)]
         run_id: String,
+        #[arg(long, default_value_t = job::DEFAULT_CHUNK_SIZE)]
+        chunk_size: u32,
+        #[arg(long, default_value_t = job::DEFAULT_PAGE_SIZE)]
+        page_size: usize,
     },
     /// Independently verify recovery classification and side-effect cardinality.
     Verify {
@@ -110,8 +125,34 @@ async fn main() -> Result<()> {
             run_id,
             chunk_size,
             page_size,
+            crash_point,
+            crash_candidate_id,
+            pause_for_kill,
         } => {
             let report = job::run(job::RunRequest {
+                database_url: &database_url,
+                merchant_base_url: &merchant_base_url,
+                provider_base_url: &provider_base_url,
+                run_id: &run_id,
+                chunk_size,
+                page_size,
+                crash_point,
+                crash_candidate_id,
+                pause_for_kill,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Command::Recover {
+            database_url,
+            merchant_base_url,
+            provider_base_url,
+            run_id,
+            chunk_size,
+            page_size,
+        } => {
+            let report = job::recover(job::RecoverRequest {
                 database_url: &database_url,
                 merchant_base_url: &merchant_base_url,
                 provider_base_url: &provider_base_url,
@@ -123,14 +164,9 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        Command::Recover { .. } => checkpoint_six("recover"),
         Command::Verify { .. } => checkpoint_seven("verify"),
         Command::Reset { .. } => checkpoint_seven("reset"),
     }
-}
-
-fn checkpoint_six(command: &str) -> Result<()> {
-    bail!("{command} is intentionally deferred until issue #271 checkpoint 6")
 }
 
 fn checkpoint_seven(command: &str) -> Result<()> {

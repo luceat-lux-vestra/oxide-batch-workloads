@@ -1,11 +1,9 @@
-use std::process::Stdio;
-
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 use crate::candidate::{validate_candidate, CandidateSnapshot};
+use crate::crash::{CrashControl, CrashPoint};
+use crate::http::{self, AfterSendCrash};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,16 +65,8 @@ pub enum ReplayTransportOutcome {
 
 impl MerchantReplayClient {
     pub fn new(base_url: &str) -> Result<Self> {
-        let trimmed = base_url.trim_end_matches('/');
-        let authority = trimmed
-            .strip_prefix("http://")
-            .or_else(|| trimmed.strip_prefix("https://"))
-            .context("Merchant base URL must use http or https")?;
-        if authority.is_empty() || authority.starts_with('/') {
-            bail!("Merchant base URL must include a host");
-        }
         Ok(Self {
-            base_url: trimmed.to_owned(),
+            base_url: http::normalize_http_base_url("Merchant", base_url)?,
         })
     }
 
@@ -94,61 +84,38 @@ impl MerchantReplayClient {
         Ok(PreparedReplayCall { url, body })
     }
 
-    pub async fn execute(&self, candidate: &CandidateSnapshot) -> Result<ReplayTransportOutcome> {
+    pub async fn execute(
+        &self,
+        candidate: &CandidateSnapshot,
+        crash: &CrashControl,
+    ) -> Result<ReplayTransportOutcome> {
         let call = self.prepare(candidate)?;
-        let mut child = Command::new("curl")
-            .args([
-                "--silent",
-                "--show-error",
-                "--connect-timeout",
-                "5",
-                "--max-time",
-                "15",
-                "--request",
-                "POST",
-                "--header",
-                "Accept: application/json",
-                "--header",
-                "Content-Type: application/json",
-                "--data-binary",
-                "@-",
-                "--write-out",
-                "%{http_code}",
-                &call.url,
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("launch curl for Merchant exact replay")?;
-
-        let Some(mut stdin) = child.stdin.take() else {
-            bail!("Merchant replay curl stdin was not piped");
+        let response = match http::request_json(
+            "POST",
+            &call.url,
+            Some(&call.body),
+            Some(AfterSendCrash {
+                control: crash,
+                point: CrashPoint::WhileReplayOutcomeUnknown,
+                candidate_id: &candidate.candidate_id,
+            }),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(_) => return Ok(ReplayTransportOutcome::TransportUnknown),
         };
-        if stdin.write_all(&call.body).await.is_err() {
-            drop(stdin);
-            let _ = child.wait().await;
-            return Ok(ReplayTransportOutcome::TransportUnknown);
-        }
-        drop(stdin);
 
-        let output = child
-            .wait_with_output()
-            .await
-            .context("wait for Merchant replay curl")?;
-        if !output.status.success() {
-            return Ok(ReplayTransportOutcome::TransportUnknown);
-        }
-
-        let (body, http_status) = split_curl_body_and_status(&output.stdout)?;
-        match self.decode_response(candidate, http_status, body) {
+        match self.decode_response(candidate, response.status, &response.body) {
             Ok(ReplayResponse::Canonical { http_status, view }) => {
                 Ok(ReplayTransportOutcome::Canonical { http_status, view })
             }
             Ok(ReplayResponse::Rejected { http_status }) => {
                 Ok(ReplayTransportOutcome::Rejected { http_status })
             }
-            Err(_) => Ok(ReplayTransportOutcome::IncoherentResponse { http_status }),
+            Err(_) => Ok(ReplayTransportOutcome::IncoherentResponse {
+                http_status: response.status,
+            }),
         }
     }
 
@@ -206,19 +173,6 @@ pub enum ReplayResponse {
     Rejected {
         http_status: u16,
     },
-}
-
-fn split_curl_body_and_status(output: &[u8]) -> Result<(&[u8], u16)> {
-    if output.len() < 3 {
-        bail!("curl response did not contain an HTTP status suffix");
-    }
-    let split = output.len() - 3;
-    let (body, status_bytes) = output.split_at(split);
-    let status_text = std::str::from_utf8(status_bytes).context("curl HTTP status is not UTF-8")?;
-    let status = status_text
-        .parse::<u16>()
-        .context("curl HTTP status suffix is not numeric")?;
-    Ok((body, status))
 }
 
 fn validate_view_identity(candidate: &CandidateSnapshot, view: &MerchantReplayView) -> Result<()> {

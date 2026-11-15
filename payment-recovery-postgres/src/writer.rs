@@ -3,6 +3,7 @@ use oxide_batch::{
     WriteContext, WriteOutcome, WriterError,
 };
 
+use crate::crash::{CrashControl, CrashPoint};
 use crate::processor::RecoveryWrite;
 
 const ATTEMPT_INSERT: &str = "
@@ -57,7 +58,15 @@ SET classification = EXCLUDED.classification,
     updated_at = NOW()
 ";
 
-pub struct RecoveryWriter;
+pub struct RecoveryWriter {
+    crash: CrashControl,
+}
+
+impl RecoveryWriter {
+    pub const fn new(crash: CrashControl) -> Self {
+        Self { crash }
+    }
+}
 
 impl ItemWriter<RecoveryWrite> for RecoveryWriter {
     async fn write<'a>(
@@ -119,6 +128,13 @@ impl ItemWriter<RecoveryWrite> for RecoveryWriter {
             if result.rows_affected() != 1 {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
+
+            self.crash
+                .pause_if(
+                    CrashPoint::AfterLocalWriteBeforeCheckpointCommit,
+                    &item.candidate_id,
+                )
+                .await;
         }
 
         Ok(WriteOutcome::Written)

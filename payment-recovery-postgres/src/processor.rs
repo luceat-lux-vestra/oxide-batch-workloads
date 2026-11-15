@@ -2,12 +2,13 @@ use anyhow::{bail, Context, Result};
 use oxide_batch::{FailureCategory, ItemProcessor, ProcessContext, ProcessOutcome, ProcessorError};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tokio::process::Command;
 
 use crate::candidate::{
     validate_candidate, CandidateOperationState, CandidatePaymentState, CandidateSnapshot,
     InitialOperationKind,
 };
+use crate::crash::{CrashControl, CrashPoint};
+use crate::http;
 use crate::oracle::{
     self, CanonicalObservation, OracleDecision, ProviderObservation, ProviderVisibility,
     RecoveryClassification,
@@ -67,6 +68,7 @@ pub struct RecoveryProcessor {
     processing_generation: i64,
     merchant: MerchantReplayClient,
     provider_base_url: String,
+    crash: CrashControl,
 }
 
 impl RecoveryProcessor {
@@ -75,16 +77,18 @@ impl RecoveryProcessor {
         processing_generation: i64,
         merchant_base_url: &str,
         provider_base_url: &str,
+        crash: CrashControl,
     ) -> Result<Self> {
         if processing_generation <= 0 {
             bail!("processing generation must be positive");
         }
-        let provider_base_url = validate_base_url("provider", provider_base_url)?;
+        let provider_base_url = http::normalize_http_base_url("provider", provider_base_url)?;
         Ok(Self {
             run_id,
             processing_generation,
             merchant: MerchantReplayClient::new(merchant_base_url)?,
             provider_base_url,
+            crash,
         })
     }
 
@@ -117,7 +121,13 @@ impl RecoveryProcessor {
             bail!("attempt number must be positive");
         }
         let candidate = self.candidate(item)?;
-        let replay = self.merchant.execute(&candidate).await?;
+        self.crash
+            .pause_if(
+                CrashPoint::AfterCandidateReadBeforeReplay,
+                &candidate.candidate_id,
+            )
+            .await;
+        let replay = self.merchant.execute(&candidate, &self.crash).await?;
 
         let (
             attempt_state,
@@ -214,6 +224,18 @@ impl RecoveryProcessor {
             }
         };
 
+        if matches!(
+            decision.classification,
+            RecoveryClassification::ResolvedSucceeded | RecoveryClassification::ResolvedFailed
+        ) {
+            self.crash
+                .pause_if(
+                    CrashPoint::AfterExternalConvergenceBeforeLocalCommit,
+                    &candidate.candidate_id,
+                )
+                .await;
+        }
+
         let oracle_violations_json =
             serde_json::to_string(&decision.violations).context("encode oracle violations")?;
         let classification = decision.classification.as_str().to_owned();
@@ -262,33 +284,15 @@ impl RecoveryProcessor {
             self.provider_base_url,
             percent_encode_path_segment(provider_payment_id)
         );
-        let output = Command::new("curl")
-            .args([
-                "--silent",
-                "--show-error",
-                "--connect-timeout",
-                "5",
-                "--max-time",
-                "10",
-                "--header",
-                "Accept: application/json",
-                "--write-out",
-                "%{http_code}",
-                &url,
-            ])
-            .output()
-            .await
-            .context("launch provider GET curl")?;
+        let response = match http::request_json("GET", &url, None, None).await {
+            Ok(response) => response,
+            Err(_) => return Ok(unavailable_provider(Some(provider_payment_id))),
+        };
 
-        if !output.status.success() {
-            return Ok(unavailable_provider(Some(provider_payment_id)));
-        }
-
-        let (body, http_status) = split_curl_body_and_status(&output.stdout)?;
-        match http_status {
+        match response.status {
             200 => {
-                let response: ProviderPaymentResponse =
-                    serde_json::from_slice(body).context("decode provider payment response")?;
+                let response: ProviderPaymentResponse = serde_json::from_slice(&response.body)
+                    .context("decode provider payment response")?;
                 Ok(ProviderObservation {
                     visibility: ProviderVisibility::Immediate,
                     exists: true,
@@ -385,31 +389,6 @@ fn unavailable_provider(provider_payment_id: Option<&str>) -> ProviderObservatio
 
 fn is_retryable_http_status(status: u16) -> bool {
     matches!(status, 408 | 425 | 429 | 500..=599)
-}
-
-fn validate_base_url(name: &str, value: &str) -> Result<String> {
-    let trimmed = value.trim_end_matches('/');
-    let authority = trimmed
-        .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))
-        .with_context(|| format!("{name} base URL must use http or https"))?;
-    if authority.is_empty() || authority.starts_with('/') {
-        bail!("{name} base URL must include a host");
-    }
-    Ok(trimmed.to_owned())
-}
-
-fn split_curl_body_and_status(output: &[u8]) -> Result<(&[u8], u16)> {
-    if output.len() < 3 {
-        bail!("curl response did not contain an HTTP status suffix");
-    }
-    let split = output.len() - 3;
-    let (body, status_bytes) = output.split_at(split);
-    let status_text = std::str::from_utf8(status_bytes).context("curl HTTP status is not UTF-8")?;
-    let status = status_text
-        .parse::<u16>()
-        .context("curl HTTP status suffix is not numeric")?;
-    Ok((body, status))
 }
 
 fn percent_encode_path_segment(value: &str) -> String {

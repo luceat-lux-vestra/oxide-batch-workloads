@@ -109,8 +109,9 @@ Checkpoint 5 implements the actual processing path:
 - result rows remain `verified = false` until the independent retained-evidence
   checkpoint proves side-effect cardinality.
 
-Hard-crash/new-process recovery, retained evidence, and the full `verify`
-command intentionally remain later durable work units.
+Checkpoint 6 adds deterministic hard-crash/new-process recovery mechanics.
+Retained evidence and the full `verify` command intentionally remain the next
+durable work unit.
 
 ## Correctness boundary
 
@@ -166,3 +167,64 @@ A completed cycle with `RETRY_LATER` results may start a later
 `processing_generation`; terminal results are excluded from the next reader
 query. A run left in `PROCESSING` or `RECOVERING` is not allowed to advance
 generation and must use checkpoint-6 recovery instead.
+
+## Checkpoint 6 crash/restart boundary
+
+Hard-crash validation uses in-process HTTP rather than a spawned `curl`
+process. This is deliberate: a child process could outlive a SIGKILLed workload
+and continue a financial request after the workload PID disappeared, making the
+crash point ambiguous for the wrong reason. The checkpoint-6 transport uses a
+bounded Tokio TCP/HTTP client so the external request lifecycle belongs to the
+same OS process that the harness kills.
+
+The crash harness exposes four deterministic points for one frozen candidate:
+
+```text
+after-candidate-read-before-replay
+while-replay-outcome-unknown
+after-external-convergence-before-local-commit
+after-local-write-before-checkpoint-commit
+```
+
+The `while-replay-outcome-unknown` point pauses after the HTTP request bytes
+have been flushed but before the workload reads the Merchant response. The
+process is then SIGKILLed by the harness. Recovery must therefore treat the
+request outcome as unknown and must not infer whether a financial effect
+occurred.
+
+`recover` does not increment `processing_generation`. It:
+
+1. requires workload state `PROCESSING | RECOVERING`;
+2. reconstructs the exact current JobInstance key for the existing generation;
+3. inspects the latest OxideBatch execution;
+4. for an active/unknown execution, records an explicit
+   `RecoveryRequest::mark_failed` through the public repository API;
+5. accepts an already-`FAILED` execution only when an audited recovery
+   decision already exists;
+6. treats an already-`COMPLETED` execution as a local post-commit bookkeeping
+   gap and only repairs workload run state;
+7. relaunches the exact same generation with the same frozen candidate/replay
+   identity.
+
+The executable `ci/recovery-matrix.sh` matrix uses fresh Reference Merchant
+payments and real SIGKILL/new-process recovery. For each crash point it checks
+the intended runtime assertions:
+
+- the killed run remains `PROCESSING`;
+- no workload attempt row escaped an uncommitted chunk;
+- recovery remains on `processing_generation = 1`;
+- exactly one workload attempt/result is committed after recovery;
+- the candidate converges to `RESOLVED_SUCCEEDED`;
+- provider `/authorize` forward count stays exactly one across the repeated
+  exact replay;
+- a later invocation does not replay an already terminal
+  `RESOLVED_SUCCEEDED` candidate.
+
+The matrix also checks the separate completed-`RETRY_LATER` path: a later
+normal processing cycle advances to a new `processing_generation`, rather
+than misclassifying that cycle as hard-crash recovery.
+
+This checkpoint defines and wires the executable matrix into
+`ci/validate ci`; a PASS from that matrix is not claimed until the executable
+validation checkpoint runs it. Retained evidence construction and negative
+corruption controls remain checkpoint 7.

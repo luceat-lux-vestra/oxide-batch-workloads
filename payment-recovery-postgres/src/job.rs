@@ -1,4 +1,5 @@
 use std::num::NonZeroU64;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use oxide_batch::item_components::{
@@ -7,16 +8,19 @@ use oxide_batch::item_components::{
 use oxide_batch::{
     BatchStatus, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
     ChunkDeliveryMode, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
-    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts, InFlightPolicy,
-    JobLauncher, JobName, JobParameter, JobParameters, NoopChunkCompletion, ParameterName,
-    ParameterRole, ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
+    ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
+    FailureCategory, FailureId, InFlightPolicy, JobInstanceKey, JobLauncher, JobName, JobParameter,
+    JobParameters, JobRepository, NoopChunkCompletion, ParameterName, ParameterRole,
+    ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresJobRepository, PostgresMigrator,
-    ReaderError, SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
-    StopSource, SystemClock, TlsMode,
+    ReaderError, RecoveryRequest, SequentialIdGenerator, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepName, StopSource, SystemClock, TlsMode,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 
+use crate::crash::{CrashControl, CrashPoint};
 use crate::processor::{RecoveryProcessor, RecoverySourceRow};
 use crate::writer::RecoveryWriter;
 use crate::{CONTRACT_VERSION, OXIDE_BATCH_VERSION};
@@ -46,6 +50,18 @@ struct RunMetadata {
 }
 
 pub struct RunRequest<'a> {
+    pub database_url: &'a str,
+    pub merchant_base_url: &'a str,
+    pub provider_base_url: &'a str,
+    pub run_id: &'a str,
+    pub chunk_size: u32,
+    pub page_size: usize,
+    pub crash_point: Option<CrashPoint>,
+    pub crash_candidate_id: Option<String>,
+    pub pause_for_kill: Option<PathBuf>,
+}
+
+pub struct RecoverRequest<'a> {
     pub database_url: &'a str,
     pub merchant_base_url: &'a str,
     pub provider_base_url: &'a str,
@@ -219,26 +235,172 @@ fn nonempty(value: String) -> Option<String> {
 }
 
 pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
-    let RunRequest {
-        database_url,
-        merchant_base_url,
-        provider_base_url,
-        run_id,
-        chunk_size,
-        page_size,
-    } = request;
-
-    validate_run_id(run_id)?;
-    let (metadata, should_launch) = prepare_processing_cycle(database_url, run_id).await?;
+    validate_run_id(request.run_id)?;
+    let crash = CrashControl::new(
+        request.crash_point,
+        request.crash_candidate_id.clone(),
+        request.pause_for_kill.clone(),
+    )?;
+    let (metadata, should_launch) =
+        prepare_processing_cycle(request.database_url, request.run_id).await?;
     if !should_launch {
         return Ok(RunReport {
             run_id: metadata.run_id,
             processing_generation: metadata.processing_generation,
             launched: false,
-            retry_later_count: retry_later_count(database_url, run_id).await?,
+            retry_later_count: retry_later_count(request.database_url, request.run_id).await?,
         });
     }
 
+    let status = launch_generation(
+        request.database_url,
+        request.merchant_base_url,
+        request.provider_base_url,
+        request.chunk_size,
+        request.page_size,
+        &metadata,
+        crash,
+    )
+    .await?;
+    if status != BatchStatus::Completed {
+        anyhow::bail!("payment recovery execution ended with status {status}, not Completed");
+    }
+
+    mark_cycle_processed(
+        request.database_url,
+        &metadata.run_id,
+        metadata.processing_generation,
+    )
+    .await?;
+
+    Ok(RunReport {
+        run_id: metadata.run_id.clone(),
+        processing_generation: metadata.processing_generation,
+        launched: true,
+        retry_later_count: retry_later_count(request.database_url, &metadata.run_id).await?,
+    })
+}
+
+pub async fn recover(request: RecoverRequest<'_>) -> anyhow::Result<RunReport> {
+    validate_run_id(request.run_id)?;
+    let metadata = begin_recovery_cycle(request.database_url, request.run_id).await?;
+
+    let repository = PostgresJobRepository::connect(
+        pg_config(request.database_url)?,
+        Arc::new(SystemClock),
+    )
+    .await?;
+    let job_parameters = parameters(&metadata)?;
+    let key = JobInstanceKey::new(JobName::new(JOB_NAME)?, &job_parameters);
+
+    let mut unit = repository.begin().await?;
+    let instance = unit
+        .find_job_instance(&key)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("no OxideBatch JobInstance matches the active recovery generation"))?;
+    let execution = unit
+        .job_executions(instance.id())
+        .await?
+        .into_iter()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("matching OxideBatch JobInstance has no executions"))?;
+
+    match execution.metadata().status() {
+        BatchStatus::Starting
+        | BatchStatus::Started
+        | BatchStatus::Stopping
+        | BatchStatus::Unknown => {
+            let request_digest =
+                recovery_digest(&metadata.run_id, metadata.processing_generation);
+            let recovery = RecoveryRequest::mark_failed(
+                execution.version(),
+                "PAYMENT_RECOVERY_PROCESS_EXIT_INSPECTED",
+                "payment-recovery-postgres-cli",
+                request_digest,
+                FailureCategory::PermanentInfrastructure,
+                FailureId::new(271)?,
+            )?;
+            unit.recover_job_execution(execution.id(), &recovery).await?;
+            unit.commit().await?;
+        }
+        BatchStatus::Failed => {
+            let decision = unit.recovery_decision(execution.id()).await?;
+            unit.rollback().await?;
+            if decision.is_none() {
+                repository.close().await?;
+                anyhow::bail!(
+                    "latest execution failed without an audited recovery decision; refusing to treat it as a hard crash"
+                );
+            }
+        }
+        BatchStatus::Completed => {
+            unit.rollback().await?;
+            repository.close().await?;
+            mark_cycle_processed(
+                request.database_url,
+                &metadata.run_id,
+                metadata.processing_generation,
+            )
+            .await?;
+            return Ok(RunReport {
+                run_id: metadata.run_id.clone(),
+                processing_generation: metadata.processing_generation,
+                launched: false,
+                retry_later_count: retry_later_count(
+                    request.database_url,
+                    &metadata.run_id,
+                )
+                .await?,
+            });
+        }
+        other => {
+            unit.rollback().await?;
+            repository.close().await?;
+            anyhow::bail!(
+                "latest execution status {other} is not eligible for hard-crash recovery"
+            );
+        }
+    }
+    repository.close().await?;
+
+    let status = launch_generation(
+        request.database_url,
+        request.merchant_base_url,
+        request.provider_base_url,
+        request.chunk_size,
+        request.page_size,
+        &metadata,
+        CrashControl::disabled(),
+    )
+    .await?;
+    if status != BatchStatus::Completed {
+        anyhow::bail!("recovered payment execution ended with status {status}, not Completed");
+    }
+
+    mark_cycle_processed(
+        request.database_url,
+        &metadata.run_id,
+        metadata.processing_generation,
+    )
+    .await?;
+
+    Ok(RunReport {
+        run_id: metadata.run_id.clone(),
+        processing_generation: metadata.processing_generation,
+        launched: true,
+        retry_later_count: retry_later_count(request.database_url, &metadata.run_id).await?,
+    })
+}
+
+async fn launch_generation(
+    database_url: &str,
+    merchant_base_url: &str,
+    provider_base_url: &str,
+    chunk_size: u32,
+    page_size: usize,
+    metadata: &RunMetadata,
+    crash: CrashControl,
+) -> anyhow::Result<BatchStatus> {
     let clock = Arc::new(SystemClock);
     let repository = PostgresJobRepository::connect(pg_config(database_url)?, clock).await?;
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
@@ -247,7 +409,7 @@ pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
     let namespace = ComponentStreamIdentity::new(READER_NAMESPACE)?;
     let (reader, stream, contract) = postgres_paging_reader(
         pg_config(database_url)?,
-        source_query(run_id)?,
+        source_query(&metadata.run_id)?,
         vec![KeysetColumn::text("candidate_id")],
         PostgresPagingFormat::new().with_page_size(page_size),
         map_source,
@@ -259,15 +421,15 @@ pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
         metadata.processing_generation,
         merchant_base_url,
         provider_base_url,
+        crash.clone(),
     )?;
-    let transactions =
-        PostgresChunkTransactionManager::new(repository.clone(), state_provider());
+    let transactions = PostgresChunkTransactionManager::new(repository.clone(), state_provider());
     let step = ChunkStep::new(
         StepName::new("recover_frozen_payment_candidates")?,
         ChunkSize::new(chunk_size)?,
         reader,
         processor,
-        RecoveryWriter,
+        RecoveryWriter::new(crash),
         Arc::new(transactions),
         Arc::new(NoopChunkCompletion),
     )
@@ -280,7 +442,7 @@ pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
         DefinitionRevision::new(DEFINITION_REVISION)?,
         &component_revisions,
     )?;
-    let job_parameters = parameters(&metadata)?;
+    let job_parameters = parameters(metadata)?;
     let (_stop_source, stop_token) = StopSource::new();
     let report = launcher
         .launch_chunk(&mut chunk_job, &job_parameters, &stop_token)
@@ -288,23 +450,16 @@ pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
 
     let status = report.launch().job_execution().metadata().status();
     repository.close().await?;
-    if status != BatchStatus::Completed {
-        anyhow::bail!("payment recovery execution ended with status {status}, not Completed");
-    }
+    Ok(status)
+}
 
-    mark_cycle_processed(
-        database_url,
-        &metadata.run_id,
-        metadata.processing_generation,
-    )
-    .await?;
-
-    Ok(RunReport {
-        run_id: metadata.run_id.clone(),
-        processing_generation: metadata.processing_generation,
-        launched: true,
-        retry_later_count: retry_later_count(database_url, &metadata.run_id).await?,
-    })
+fn recovery_digest(run_id: &str, generation: i64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"payment-recovery-hard-crash-v1\0");
+    hasher.update(run_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(generation.to_be_bytes());
+    hasher.finalize().into()
 }
 
 async fn prepare_processing_cycle(
@@ -395,6 +550,71 @@ async fn prepare_processing_cycle(
     ))
 }
 
+async fn begin_recovery_cycle(
+    database_url: &str,
+    run_id: &str,
+) -> anyhow::Result<RunMetadata> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await?;
+    let mut tx = pool.begin().await?;
+
+    let row = sqlx::query(
+        "SELECT run_state, processing_generation, candidate_set_digest, policy_version
+         FROM payment_recovery_workload.payment_recovery_run
+         WHERE run_id = $1
+         FOR UPDATE",
+    )
+    .bind(run_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("payment recovery run not found: {run_id}"))?;
+
+    let run_state: String = row.try_get("run_state")?;
+    let processing_generation: i64 = row.try_get("processing_generation")?;
+    let candidate_set_digest: String = row.try_get("candidate_set_digest")?;
+    let policy_version: String = row.try_get("policy_version")?;
+    if processing_generation <= 0 {
+        anyhow::bail!("recovery requires an active positive processing generation");
+    }
+
+    match run_state.as_str() {
+        "PROCESSING" => {
+            let updated = sqlx::query(
+                "UPDATE payment_recovery_workload.payment_recovery_run
+                 SET run_state = 'RECOVERING', updated_at = NOW()
+                 WHERE run_id = $1
+                   AND run_state = 'PROCESSING'
+                   AND processing_generation = $2",
+            )
+            .bind(run_id)
+            .bind(processing_generation)
+            .execute(&mut *tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                anyhow::bail!("recovery activation did not update exactly one run");
+            }
+        }
+        "RECOVERING" => {}
+        other => {
+            anyhow::bail!(
+                "hard-crash recovery requires PROCESSING or RECOVERING workload state, observed {other}"
+            )
+        }
+    }
+
+    tx.commit().await?;
+    pool.close().await;
+
+    Ok(RunMetadata {
+        run_id: run_id.to_owned(),
+        candidate_set_digest,
+        policy_version,
+        processing_generation,
+    })
+}
+
 async fn mark_cycle_processed(
     database_url: &str,
     run_id: &str,
@@ -408,7 +628,7 @@ async fn mark_cycle_processed(
         "UPDATE payment_recovery_workload.payment_recovery_run
          SET run_state = 'PROCESSED', updated_at = NOW()
          WHERE run_id = $1
-           AND run_state = 'PROCESSING'
+           AND run_state IN ('PROCESSING', 'RECOVERING')
            AND processing_generation = $2",
     )
     .bind(run_id)
@@ -448,6 +668,9 @@ mod tests {
         let sql = source_query("run-1").unwrap();
         assert!(sql.contains("c.run_id = 'run-1'"));
         assert!(sql.contains("r.classification = 'RETRY_LATER'"));
+        assert!(!sql.contains("RESOLVED_SUCCEEDED"));
+        assert!(!sql.contains("RESOLVED_FAILED"));
+        assert!(!sql.contains("HOLD_MANUAL"));
         assert!(sql.contains("MAX(a.attempt_no)"));
         assert!(source_query("run' OR TRUE --").is_err());
     }
