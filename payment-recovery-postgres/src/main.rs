@@ -2,7 +2,6 @@ use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use payment_recovery_postgres::candidate::{self, SnapshotCandidatesRequest};
 use payment_recovery_postgres::job;
-use payment_recovery_postgres::{CONTRACT_VERSION, OXIDE_BATCH_VERSION};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -169,7 +168,10 @@ mod tests {
 
     #[test]
     fn release_and_contract_identity_are_frozen() {
-        assert_eq!(CONTRACT_VERSION, "payment-recovery-v1");
-        assert_eq!(OXIDE_BATCH_VERSION, "0.7.0");
+        assert_eq!(
+            payment_recovery_postgres::CONTRACT_VERSION,
+            "payment-recovery-v1"
+        );
+        assert_eq!(payment_recovery_postgres::OXIDE_BATCH_VERSION, "0.7.0");
     }
 }
