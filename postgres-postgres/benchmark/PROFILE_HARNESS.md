@@ -170,6 +170,25 @@ The registry currently activates the three wrappers used by the qualified Phase 
 | `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
 | `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
 
+### Phase 1 candidate queue
+
+Candidate registration is deliberately separate from dependency activation.
+`planned` and `conditional` entries describe what should be qualified next;
+they are excluded from producer/CI execution and cannot appear in retained
+manifests until promoted to `active` with exact lockfile provenance and at
+least one `qualified` target.
+
+| Identity | Lifecycle | Wrapper | Target state | Qualification note |
+|---|---|---|---|---|
+| `snmalloc` | `planned` / Phase 1 | `snmalloc-rs 0.7.6` | ARM64 Linux + x86_64 Linux: `supported-unverified` | wrapper tracks upstream snmalloc 0.7.6; default build uses CMake; cross-thread free behavior makes it a priority concurrency candidate |
+| `tcmalloc` | `planned` / Phase 1 | `tcmalloc-better 0.1.19` | ARM64 Linux + x86_64 Linux: `supported-unverified` | wrapper explicitly supports Linux aarch64/x86_64 and requires a C++ toolchain; background-action lifecycle must be qualified with the allocator |
+| `rpmalloc` | `conditional` | `rpmalloc 0.2.2` | ARM64 Linux: `unsupported`; x86_64 Linux: `supported-unverified` | Rust wrapper documents tested support only on x86_64 Windows/macOS/Linux, so it is not an ARM64 campaign candidate without separate wrapper qualification |
+
+Empty `lock_packages` is valid only while a replacement allocator is not
+`active`. Activation requires Cargo dependency resolution in this repository,
+exact locked package provenance, build/correctness qualification on the target,
+and an explicit registry state change.
+
 The two replacement features are mutually exclusive. No feature means
 `system`, preserving the pre-campaign workload build. The exact mimalloc
 upstream revision is not encoded in the sys-crate version string, so later

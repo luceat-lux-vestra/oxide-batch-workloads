@@ -78,6 +78,93 @@
         "status": "not-wired",
         "capabilities": []
       }
+    },
+    {
+      "identity": "snmalloc",
+      "status": "planned",
+      "screening_tier": "phase1",
+      "cargo_feature": "allocator-snmalloc",
+      "wrapper": {
+        "name": "snmalloc-rs",
+        "version": "0.7.6"
+      },
+      "lock_packages": [],
+      "upstream": {
+        "status": "observed",
+        "version": "0.7.6"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "supported-unverified",
+        "x86_64-unknown-linux-gnu": "supported-unverified"
+      },
+      "build_prerequisites": [
+        "CMake",
+        "C++ compiler"
+      ],
+      "telemetry": {
+        "status": "available-not-wired",
+        "capabilities": [
+          "stats"
+        ]
+      }
+    },
+    {
+      "identity": "tcmalloc",
+      "status": "planned",
+      "screening_tier": "phase1",
+      "cargo_feature": "allocator-tcmalloc",
+      "wrapper": {
+        "name": "tcmalloc-better",
+        "version": "0.1.19"
+      },
+      "lock_packages": [],
+      "upstream": {
+        "status": "unavailable",
+        "version": null,
+        "reason": "wrapper/sys versions do not establish the exact Google TCMalloc source revision before dependency qualification"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "supported-unverified",
+        "x86_64-unknown-linux-gnu": "supported-unverified"
+      },
+      "build_prerequisites": [
+        "C++ compiler"
+      ],
+      "telemetry": {
+        "status": "available-not-wired",
+        "capabilities": [
+          "extension API"
+        ]
+      }
+    },
+    {
+      "identity": "rpmalloc",
+      "status": "conditional",
+      "screening_tier": "conditional",
+      "cargo_feature": "allocator-rpmalloc",
+      "wrapper": {
+        "name": "rpmalloc",
+        "version": "0.2.2"
+      },
+      "lock_packages": [],
+      "upstream": {
+        "status": "unavailable",
+        "version": null,
+        "reason": "Rust wrapper dependency provenance is not qualified in this repository yet"
+      },
+      "target_support": {
+        "aarch64-unknown-linux-gnu": "unsupported",
+        "x86_64-unknown-linux-gnu": "supported-unverified"
+      },
+      "build_prerequisites": [
+        "C compiler"
+      ],
+      "telemetry": {
+        "status": "available-not-wired",
+        "capabilities": [
+          "statistics feature"
+        ]
+      }
     }
   ]
 }
