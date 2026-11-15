@@ -242,7 +242,7 @@ impl RecoveryProcessor {
             &canonical,
             &provider,
             &classification,
-            &outcome_kind,
+            outcome_kind,
         );
 
         Ok(RecoveryWrite {
