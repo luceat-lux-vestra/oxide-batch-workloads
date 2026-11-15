@@ -1,8 +1,8 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use payment_recovery_postgres::candidate::{self, SnapshotCandidatesRequest};
+use payment_recovery_postgres::job;
 use payment_recovery_postgres::{CONTRACT_VERSION, OXIDE_BATCH_VERSION};
-use sqlx::postgres::PgPoolOptions;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -48,6 +48,10 @@ enum Command {
         provider_base_url: String,
         #[arg(long)]
         run_id: String,
+        #[arg(long, default_value_t = job::DEFAULT_CHUNK_SIZE)]
+        chunk_size: u32,
+        #[arg(long, default_value_t = job::DEFAULT_PAGE_SIZE)]
+        page_size: usize,
     },
     /// Continue an interrupted OxideBatch execution using public recovery APIs.
     Recover {
@@ -77,7 +81,7 @@ async fn main() -> Result<()> {
     Cli::command().debug_assert();
 
     match Cli::parse().command {
-        Command::Migrate { database_url } => migrate(&database_url).await,
+        Command::Migrate { database_url } => job::migrate(&database_url).await,
         Command::SnapshotCandidates {
             database_url,
             merchant_database_url,
@@ -100,31 +104,30 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
         }
-        Command::Run { .. } => checkpoint_five("run"),
+        Command::Run {
+            database_url,
+            merchant_base_url,
+            provider_base_url,
+            run_id,
+            chunk_size,
+            page_size,
+        } => {
+            let report = job::run(job::RunRequest {
+                database_url: &database_url,
+                merchant_base_url: &merchant_base_url,
+                provider_base_url: &provider_base_url,
+                run_id: &run_id,
+                chunk_size,
+                page_size,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Command::Recover { .. } => checkpoint_six("recover"),
         Command::Verify { .. } => checkpoint_seven("verify"),
         Command::Reset { .. } => checkpoint_seven("reset"),
     }
-}
-
-async fn migrate(database_url: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(database_url)
-        .await
-        .context("connect payment recovery PostgreSQL")?;
-
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .context("apply payment recovery migrations")?;
-
-    pool.close().await;
-    Ok(())
-}
-
-fn checkpoint_five(command: &str) -> Result<()> {
-    bail!("{command} is intentionally deferred until issue #271 checkpoint 5")
 }
 
 fn checkpoint_six(command: &str) -> Result<()> {

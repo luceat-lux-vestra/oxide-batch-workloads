@@ -12,12 +12,36 @@ pub enum RecoveryClassification {
     NotEligible,
 }
 
+impl RecoveryClassification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ResolvedSucceeded => "RESOLVED_SUCCEEDED",
+            Self::ResolvedFailed => "RESOLVED_FAILED",
+            Self::RetryLater => "RETRY_LATER",
+            Self::HoldManual => "HOLD_MANUAL",
+            Self::NotEligible => "NOT_ELIGIBLE",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProviderVisibility {
     Immediate,
     NotFound,
     Stale,
+    Unavailable,
+}
+
+impl ProviderVisibility {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Immediate => "IMMEDIATE",
+            Self::NotFound => "NOT_FOUND",
+            Self::Stale => "STALE",
+            Self::Unavailable => "UNAVAILABLE",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +59,8 @@ pub struct CanonicalObservation {
 pub struct ProviderObservation {
     pub visibility: ProviderVisibility,
     pub exists: bool,
+    pub provider_payment_id: Option<String>,
+    pub currency: Option<String>,
     pub status: Option<String>,
     pub authorized_amount_minor: Option<i64>,
     pub captured_amount_minor: Option<i64>,
@@ -53,7 +79,7 @@ pub fn classify(
     provider: &ProviderObservation,
     duplicate_provider_mutation_observed: bool,
 ) -> OracleDecision {
-    let mut violations = identity_violations(candidate, canonical);
+    let mut violations = identity_violations(candidate, canonical, provider);
 
     if duplicate_provider_mutation_observed {
         violations.push("duplicate provider mutation observed".into());
@@ -72,7 +98,9 @@ pub fn classify(
 
     if matches!(
         provider.visibility,
-        ProviderVisibility::NotFound | ProviderVisibility::Stale
+        ProviderVisibility::NotFound
+            | ProviderVisibility::Stale
+            | ProviderVisibility::Unavailable
     ) {
         return decision(RecoveryClassification::RetryLater);
     }
@@ -204,6 +232,7 @@ fn classify_failure(
 fn identity_violations(
     candidate: &CandidateSnapshot,
     canonical: &CanonicalObservation,
+    provider: &ProviderObservation,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     if canonical.merchant_payment_id != candidate.merchant_payment_id {
@@ -226,6 +255,24 @@ fn identity_violations(
     ) {
         if expected != observed {
             violations.push("provider payment identity mismatch".into());
+        }
+    }
+    if provider.visibility == ProviderVisibility::Immediate {
+        if let (Some(expected), Some(observed)) = (
+            canonical
+                .provider_payment_id
+                .as_deref()
+                .or(candidate.provider_payment_id.as_deref()),
+            provider.provider_payment_id.as_deref(),
+        ) {
+            if expected != observed {
+                violations.push("provider GET identity mismatch".into());
+            }
+        }
+        if let Some(currency) = provider.currency.as_deref() {
+            if currency != candidate.currency {
+                violations.push("provider currency mismatch".into());
+            }
         }
     }
     violations
@@ -289,6 +336,8 @@ mod tests {
             &ProviderObservation {
                 visibility: ProviderVisibility::Stale,
                 exists: true,
+                provider_payment_id: Some("provider-1".into()),
+                currency: Some("KRW".into()),
                 status: Some("authorized".into()),
                 authorized_amount_minor: Some(10_000),
                 captured_amount_minor: Some(0),
@@ -310,6 +359,8 @@ mod tests {
             &ProviderObservation {
                 visibility: ProviderVisibility::Immediate,
                 exists: true,
+                provider_payment_id: Some("provider-1".into()),
+                currency: Some("KRW".into()),
                 status: Some("authorized".into()),
                 authorized_amount_minor: Some(10_000),
                 captured_amount_minor: Some(0),
@@ -332,6 +383,8 @@ mod tests {
             &ProviderObservation {
                 visibility: ProviderVisibility::Immediate,
                 exists: true,
+                provider_payment_id: Some("provider-1".into()),
+                currency: Some("KRW".into()),
                 status: Some("captured".into()),
                 authorized_amount_minor: Some(10_000),
                 captured_amount_minor: Some(10_000),
@@ -351,6 +404,8 @@ mod tests {
             &ProviderObservation {
                 visibility: ProviderVisibility::Immediate,
                 exists: true,
+                provider_payment_id: Some("provider-1".into()),
+                currency: Some("KRW".into()),
                 status: Some("failed".into()),
                 authorized_amount_minor: Some(0),
                 captured_amount_minor: Some(0),

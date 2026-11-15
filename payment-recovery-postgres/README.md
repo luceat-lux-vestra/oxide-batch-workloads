@@ -90,8 +90,27 @@ Checkpoint 4 also establishes two pure foundations consumed by later work:
   observation + provider truth + duplicate-side-effect evidence into
   `RESOLVED_SUCCEEDED | RESOLVED_FAILED | RETRY_LATER | HOLD_MANUAL`.
 
-The actual outbound replay transport, OxideBatch processing, hard-crash recovery,
-retained evidence, and full `verify` command remain later durable work units.
+Checkpoint 5 implements the actual processing path:
+
+- `postgres_paging_reader` reads frozen candidates in `candidate_id` keyset order;
+- the OxideBatch JobInstance identity includes `processing_generation`, so a
+  completed `RETRY_LATER` cycle can run again after deterministic provider
+  visibility advances without pretending to restart a completed JobInstance;
+- the processor performs exact Merchant replay, then supported provider
+  `GET /payments/{provider_payment_id}` observation;
+- transport-unknown and retryable HTTP outcomes remain `RETRY_LATER`; they are
+  never guessed as success or failure;
+- the custom writer uses only OxideBatch's enlisted `BusinessTransaction`
+  port and writes the recovery attempt plus current result in the same
+  PostgreSQL chunk transaction that commits the framework checkpoint;
+- each attempt stores canonical/provider identities, visibility, status and
+  financial observations. Raw replay secrets are never copied into attempt or
+  result audit rows;
+- result rows remain `verified = false` until the independent retained-evidence
+  checkpoint proves side-effect cardinality.
+
+Hard-crash/new-process recovery, retained evidence, and the full `verify`
+command intentionally remain later durable work units.
 
 ## Correctness boundary
 
@@ -110,3 +129,40 @@ external success + lost local checkpoint
 
 Do not query or mutate undocumented Merchant/Gateway/Kill Bill/provider internal
 state to make recovery pass.
+
+## Checkpoint 5 transaction boundary
+
+The item processor performs the external Merchant/provider calls before the
+chunk writer is enlisted. The external financial system therefore cannot share
+the PostgreSQL transaction.
+
+Inside PostgreSQL, however, the boundary is atomic:
+
+```text
+processor observation
+        |
+        v
+RecoveryWrite
+        |
+        v
+OxideBatch enlisted BusinessTransaction
+        |
+        +-- INSERT payment_recovery_attempt
+        |
+        +-- UPSERT payment_recovery_result
+        |
+        +-- framework checkpoint / component state
+        |
+        v
+single chunk commit or rollback
+```
+
+A crash after the external call but before this commit can legitimately replay
+the same frozen Merchant operation identity. Proving that this never duplicates
+the provider financial effect is checkpoint 6, not something checkpoint 5
+claims.
+
+A completed cycle with `RETRY_LATER` results may start a later
+`processing_generation`; terminal results are excluded from the next reader
+query. A run left in `PROCESSING` or `RECOVERING` is not allowed to advance
+generation and must use checkpoint-6 recovery instead.

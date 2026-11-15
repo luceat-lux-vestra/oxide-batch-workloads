@@ -47,7 +47,7 @@ pub enum CandidatePaymentState {
 }
 
 impl CandidatePaymentState {
-    fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "PAYMENT_UNKNOWN" => Ok(Self::PaymentUnknown),
             "PAYMENT_PENDING" => Ok(Self::PaymentPending),
@@ -71,7 +71,7 @@ pub enum CandidateOperationState {
 }
 
 impl CandidateOperationState {
-    fn parse(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "UNKNOWN" => Ok(Self::Unknown),
             "RETRY_PENDING" => Ok(Self::RetryPending),
