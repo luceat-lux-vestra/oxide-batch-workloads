@@ -133,10 +133,19 @@ They must preserve:
 - the same release profile and workload parameters for comparable runs;
 - the same final-state verifier and correctness bar.
 
-The concrete wrapper crate/version for jemalloc and mimalloc is intentionally
-not selected in this contract. The implementation unit that introduces each
-variant must pin and record both the Rust wrapper version and, when
-determinable, the actual upstream allocator version.
+The build-selection unit pins the wrappers used by this rehearsal:
+
+| Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
+|---|---|---|---|
+| `system` | no allocator feature | Rust/platform default allocator | host/toolchain-owned; no replacement wrapper |
+| `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
+| `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
+
+The two replacement features are mutually exclusive. No feature means
+`system`, preserving the pre-campaign workload build. The exact mimalloc
+upstream revision is not encoded in the sys-crate version string, so later
+manifest generation must record any more precise version only from an
+authoritative build/runtime observation rather than infer one here.
 
 ## Artifact contract
 
@@ -210,11 +219,18 @@ It may not:
 - present hosted-runner timing as stable-machine absolute performance;
 - open optimization work from noisy or unattributed measurements.
 
+## Build-selection smoke
+
+Protected workload CI exercises the three build identities against one small
+deterministic PostgreSQL source. Each variant runs the unchanged paging
+workload and the unchanged independent verifier under a distinct import name.
+The smoke is correctness/build evidence only: its timings are discarded and
+must never enter benchmark comparisons.
+
+CI also rejects enabling both replacement allocators together and checks both
+optional variants under the workload's declared MSRV.
+
 ## Next implementation boundary
 
-The next bounded unit should add only the allocator build-selection mechanism
-for `system`, `jemalloc`, and `mimalloc`, plus a cheap correctness smoke
-that proves all three variants execute the unchanged workload and verifier.
-
-Profiler tools, opt-in GitHub Actions orchestration, soak execution, and
-retained claim-bearing measurements remain separate later units.
+Profiler tools, opt-in profiling orchestration, soak execution, allocator-native
+telemetry, and retained claim-bearing measurements remain separate later units.
