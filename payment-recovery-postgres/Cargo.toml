@@ -1,0 +1,27 @@
+[package]
+name = "payment-recovery-postgres"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+license = "Apache-2.0"
+description = "OxideBatch 0.7.0 validation: stale and unknown payment recovery side-effect safety"
+default-run = "payment-recovery-postgres"
+
+[[bin]]
+name = "payment-recovery-postgres"
+path = "src/main.rs"
+
+[dependencies]
+oxide-batch = { version = "=0.7.0", features = ["postgres"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["json", "macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+anyhow = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[profile.dev]
+opt-level = 0
