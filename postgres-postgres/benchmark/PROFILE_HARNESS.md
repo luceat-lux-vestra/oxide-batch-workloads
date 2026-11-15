@@ -133,10 +133,19 @@ They must preserve:
 - the same release profile and workload parameters for comparable runs;
 - the same final-state verifier and correctness bar.
 
-The concrete wrapper crate/version for jemalloc and mimalloc is intentionally
-not selected in this contract. The implementation unit that introduces each
-variant must pin and record both the Rust wrapper version and, when
-determinable, the actual upstream allocator version.
+The build-selection unit pins the wrappers used by this rehearsal:
+
+| Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
+|---|---|---|---|
+| `system` | no allocator feature | Rust/platform default allocator | host/toolchain-owned; no replacement wrapper |
+| `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.0+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
+| `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
+
+The two replacement features are mutually exclusive. No feature means
+`system`, preserving the pre-campaign workload build. The exact mimalloc
+upstream revision is not encoded in the sys-crate version string, so later
+manifest generation must record any more precise version only from an
+authoritative build/runtime observation rather than infer one here.
 
 ## Artifact contract
 
