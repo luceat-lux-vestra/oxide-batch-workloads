@@ -1,0 +1,132 @@
+name: Profile PostgreSQL allocator smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Bounded diagnostic source row count
+        required: true
+        default: "127"
+      seed:
+        description: Deterministic source seed
+        required: true
+        default: "266"
+      chunk_size:
+        description: Workload chunk size
+        required: true
+        default: "32"
+      reader:
+        description: Reader mode for the smoke matrix
+        required: true
+        default: paging
+        type: choice
+        options:
+          - paging
+          - cursor
+      fetch_size:
+        description: Cursor fetch size when reader=cursor
+        required: true
+        default: "17"
+      page_size:
+        description: Paging page size when reader=paging
+        required: true
+        default: "17"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: postgres-postgres-profile-smoke
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+    defaults:
+      run:
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate smoke harness logic
+        run: |
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_profile_smoke.py
+
+      - name: Start PostgreSQL 18
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run allocator smoke producer
+        id: smoke
+        continue-on-error: true
+        env:
+          PROFILE_ROWS: ${{ inputs.rows }}
+          PROFILE_SEED: ${{ inputs.seed }}
+          PROFILE_CHUNK_SIZE: ${{ inputs.chunk_size }}
+          PROFILE_READER: ${{ inputs.reader }}
+          PROFILE_FETCH_SIZE: ${{ inputs.fetch_size }}
+          PROFILE_PAGE_SIZE: ${{ inputs.page_size }}
+        run: |
+          args=(
+            --base-database-url "$DATABASE_URL"
+            --output "$RUNNER_TEMP/profile-artifacts"
+            --rows "$PROFILE_ROWS"
+            --seed "$PROFILE_SEED"
+            --chunk-size "$PROFILE_CHUNK_SIZE"
+            --reader "$PROFILE_READER"
+            --fetch-size "$PROFILE_FETCH_SIZE"
+            --page-size "$PROFILE_PAGE_SIZE"
+          )
+          python3 benchmark/profile_smoke.py "${args[@]}"
+
+      - name: Validate emitted manifests
+        if: steps.smoke.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' manifest; do
+            python3 benchmark/profile_manifest.py "$manifest"
+            count=$((count + 1))
+          done < <(find "$RUNNER_TEMP/profile-artifacts" -name manifest.json -print0)
+          [[ "$count" -eq 3 ]] || {
+            echo "::error::expected exactly three allocator manifests, found $count"
+            exit 1
+          }
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-profile-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/profile-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if smoke producer failed
+        if: steps.smoke.outcome != 'success'
+        run: |
+          echo "::error::profile smoke producer failed; inspect retained artifact if present"
+          exit 1

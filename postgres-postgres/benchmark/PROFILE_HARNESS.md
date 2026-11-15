@@ -230,7 +230,52 @@ must never enter benchmark comparisons.
 CI also rejects enabling both replacement allocators together and checks both
 optional variants under the workload's declared MSRV.
 
+## Executable allocator smoke producer
+
+`benchmark/profile_smoke.py` is the first executable consumer of the manifest
+contract. It deliberately remains a **diagnostic smoke**, not a claim-bearing
+allocator benchmark.
+
+For one selected reader mode it:
+
+1. builds the system, jemalloc, and mimalloc variants in release mode;
+2. creates one deterministic template database and clones an isolated database
+   per allocator;
+3. runs the unchanged workload path for each variant;
+4. runs the unchanged independent verifier;
+5. records bounded GNU-time/process observations and the verifier JSON as raw
+   artifacts;
+6. emits one `manifest.json` per allocator and validates it through
+   `profile_manifest.py`.
+
+The result bundle is shaped as:
+
+```text
+profile-artifacts/
+  system/
+    manifest.json
+    benchmark/
+      measurement.json
+      verifier.json
+  jemalloc/
+    ...
+  mimalloc/
+    ...
+```
+
+The producer rejects non-empty output roots so evidence from separate runs
+cannot be silently mixed. Its smoke dataset is bounded to at most 100,000 rows.
+Every manifest explicitly states that the timing is diagnostic, has no profiler
+attached, and is not stable-host allocator-selection evidence.
+
+The manual-only workflow
+`.github/workflows/profile-postgres-postgres-smoke.yml` runs this matrix on the
+repository's ARM64 Ubuntu runner and uploads the bundle for review. Ordinary PR
+CI runs only the dependency-free producer unit tests; it does not perform the
+release smoke matrix.
+
 ## Next implementation boundary
 
-Profiler tools, opt-in profiling orchestration, soak execution, allocator-native
-telemetry, and retained claim-bearing measurements remain separate later units.
+CPU/heap profiler integration, profile-mode orchestration, soak execution,
+allocator-native telemetry, and retained claim-bearing measurements remain
+separate later units.
