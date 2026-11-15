@@ -701,6 +701,9 @@ run_ci_stage() {
   echo "allocator benchmark producer tests"
   python3 benchmark/test_allocator_benchmark.py
 
+  echo "CPU attribution producer tests"
+  python3 benchmark/test_cpu_profile.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
