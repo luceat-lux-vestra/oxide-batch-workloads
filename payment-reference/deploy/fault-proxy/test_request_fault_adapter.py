@@ -107,6 +107,52 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
         self.assertEqual("STATUS_INQUIRY", event["point"])
         self.assertEqual("GET", event["request_match"]["method"])
 
+    def test_status_visibility_allows_prefix_selector(self):
+        adapter = RequestFaultPlanAdapter()
+        adapter.load(
+            plan(
+                {
+                    "step_id": "hidden-prefix",
+                    "sequence": 1,
+                    "offset_ms": 10,
+                    "point": "STATUS_INQUIRY",
+                    "request_match": {
+                        "method": "GET",
+                        "path_prefix": "/payments/",
+                    },
+                    "action": {
+                        "kind": "STATUS_VISIBILITY",
+                        "visibility": "NOT_FOUND",
+                    },
+                }
+            )
+        )
+        event = adapter.advance(10)["due_events"][0]
+        self.assertEqual("/payments/", event["request_match"]["path_prefix"])
+        self.assertNotIn("path_suffix", event["request_match"])
+
+    def test_mutation_fault_rejects_prefix_selector(self):
+        adapter = RequestFaultPlanAdapter()
+        with self.assertRaises(FaultPlanValidationError):
+            adapter.load(
+                plan(
+                    {
+                        "step_id": "too-broad-mutation",
+                        "sequence": 1,
+                        "offset_ms": 0,
+                        "point": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                        "request_match": {
+                            "method": "POST",
+                            "path_prefix": "/payments/",
+                        },
+                        "action": {
+                            "kind": "HTTP_FAILURE",
+                            "status": 503,
+                        },
+                    }
+                )
+            )
+
     def test_transition_without_matching_defer_is_rejected(self):
         adapter = RequestFaultPlanAdapter()
         with self.assertRaises(FaultPlanValidationError):

@@ -296,20 +296,54 @@ jq -e '.status == "cancelled"' /tmp/pr-provider-cancel.json >/dev/null
 curl --fail --silent --show-error \
   --request POST \
   "${fault_proxy_base}/__fault/reset" >/dev/null
+ambiguous_visibility_plan="$(jq -nc '{
+  fault_plan_version:1,
+  scenario_version:1,
+  seed:25601,
+  logical_business_time:"2026-11-15T00:00:00Z",
+  scenario_case:"payment-reference-ambiguous-read-convergence",
+  expected_provider_truth:"AUTHORIZED",
+  expected_canonical_outcome:"PAYMENT_UNKNOWN/UNKNOWN_THEN_AUTHORIZED/SUCCEEDED",
+  steps:[
+    {
+      step_id:"hide-initial-provider-status",
+      sequence:1,
+      offset_ms:0,
+      point:"STATUS_INQUIRY",
+      request_match:{method:"GET",path_prefix:"/payments/"},
+      action:{kind:"STATUS_VISIBILITY",visibility:"NOT_FOUND"}
+    },
+    {
+      step_id:"reveal-provider-status",
+      sequence:2,
+      offset_ms:1,
+      point:"STATUS_INQUIRY",
+      request_match:{method:"GET",path_prefix:"/payments/"},
+      action:{kind:"STATUS_VISIBILITY",visibility:"IMMEDIATE"}
+    }
+  ]
+}')"
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data "$ambiguous_visibility_plan" \
+  "${fault_proxy_base}/__fault/load-plan" >/dev/null
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data '{"offset_ms":0}' \
+  "${fault_proxy_base}/__fault/advance" >/dev/null
 curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/json' \
   --data '{"method":"POST","path_suffix":"/authorize"}' \
   "${fault_proxy_base}/__fault/drop-next" >/dev/null
-curl --fail --silent --show-error \
-  --request POST \
-  --header 'Content-Type: application/json' \
-  --data '{"method":"GET","path_prefix":"/payments/","status":404,"error_code":"payment_not_found","message":"first ambiguous provider inquiry intentionally hidden"}' \
-  "${fault_proxy_base}/__fault/respond-next" >/dev/null
 
 ambiguous_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}'
 post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous.json
 assert_view /tmp/pr-ambiguous.json PAYMENT_UNKNOWN UNKNOWN
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data '{"offset_ms":1}' \
+  "${fault_proxy_base}/__fault/advance" >/dev/null
 
 ambiguous_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-ambiguous.json)"
 ambiguous_transaction_id="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous.json)"

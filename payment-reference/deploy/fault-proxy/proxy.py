@@ -181,7 +181,11 @@ class FaultState:
 
     def apply_status_visibility(self, step):
         request_match = step["request_match"]
-        key = (request_match["method"], request_match["path_suffix"])
+        key = (
+            request_match["method"],
+            request_match.get("path_suffix"),
+            request_match.get("path_prefix"),
+        )
         visibility = step["action"]["visibility"]
         with self.lock:
             if visibility == "IMMEDIATE":
@@ -201,14 +205,27 @@ class FaultState:
                     "snapshots": snapshots if visibility == "STALE" else {},
                 }
 
+    @staticmethod
+    def _request_match_applies(request_match, method, path):
+        if method.upper() != request_match["method"]:
+            return False
+        path_suffix = request_match.get("path_suffix")
+        path_prefix = request_match.get("path_prefix")
+        return (
+            path_suffix is not None
+            and path.endswith(path_suffix)
+        ) or (
+            path_prefix is not None
+            and path.startswith(path_prefix)
+        )
+
     def visibility_for(self, method, path):
         method = method.upper()
         with self.lock:
             matches = [
                 rule
                 for rule in self.status_visibility.values()
-                if method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                if self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return None
@@ -221,8 +238,7 @@ class FaultState:
                 rule
                 for rule in self.status_visibility.values()
                 if rule["visibility"] == "STALE"
-                and method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                and self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return None
@@ -237,8 +253,7 @@ class FaultState:
                 rule
                 for rule in self.status_visibility.values()
                 if rule["visibility"] == "STALE"
-                and method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                and self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return

@@ -79,15 +79,46 @@ snapshot_candidate() {
 create_ambiguous_candidate() {
   local suffix="$1" amount="$2" output="/tmp/recovery-$suffix-authorize.json"
   create_prepared_payment "$suffix" "$amount"
+  local visibility_plan
   reset_faults
+  visibility_plan="$(jq -nc --arg suffix "$suffix" '{
+    fault_plan_version:1,
+    scenario_version:1,
+    seed:27101,
+    logical_business_time:"2026-11-15T00:00:00Z",
+    scenario_case:("issue-271-unknown-seed-" + $suffix),
+    expected_provider_truth:"AUTHORIZED",
+    expected_canonical_outcome:"PAYMENT_UNKNOWN/UNKNOWN",
+    steps:[
+      {
+        step_id:"hide-initial-provider-status",
+        sequence:1,
+        offset_ms:0,
+        point:"STATUS_INQUIRY",
+        request_match:{method:"GET",path_prefix:"/payments/"},
+        action:{kind:"STATUS_VISIBILITY",visibility:"NOT_FOUND"}
+      },
+      {
+        step_id:"reveal-provider-status",
+        sequence:2,
+        offset_ms:1,
+        point:"STATUS_INQUIRY",
+        request_match:{method:"GET",path_prefix:"/payments/"},
+        action:{kind:"STATUS_VISIBILITY",visibility:"IMMEDIATE"}
+      }
+    ]
+  }')"
+  post_json "$fault_proxy_base/__fault/load-plan" "$visibility_plan" \
+    200 "/tmp/recovery-$suffix-visibility-plan.json"
+  post_json "$fault_proxy_base/__fault/advance" '{"offset_ms":0}' \
+    200 "/tmp/recovery-$suffix-hide-provider-status.json"
   post_json "$fault_proxy_base/__fault/drop-next" \
     '{"method":"POST","path_suffix":"/authorize"}' 200 "/tmp/recovery-$suffix-drop.json"
-  post_json "$fault_proxy_base/__fault/respond-next" \
-    '{"method":"GET","path_prefix":"/payments/","status":404,"error_code":"payment_not_found","message":"recovery matrix first provider inquiry intentionally hidden"}' \
-    200 "/tmp/recovery-$suffix-hide-first-read.json"
   post_json "$merchant_base/payments/payment-$suffix/authorize" \
     "{\"operationId\":\"op-$suffix\",\"amountMinor\":$amount,\"idempotencyKey\":\"idem-$suffix\"}" \
     202 "$output"
+  post_json "$fault_proxy_base/__fault/advance" '{"offset_ms":1}' \
+    200 "/tmp/recovery-$suffix-reveal-provider-status.json"
   jq -e '
     .operationState == "UNKNOWN"
     and .paymentState == "PAYMENT_UNKNOWN"
