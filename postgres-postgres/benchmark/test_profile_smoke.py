@@ -22,6 +22,10 @@ class ProfileSmokeTests(unittest.TestCase):
             profile_smoke.cargo_build_args("mimalloc")[-2:],
             ["--features", "allocator-mimalloc"],
         )
+        self.assertEqual(
+            profile_smoke.cargo_build_args("snmalloc")[-2:],
+            ["--features", "allocator-snmalloc"],
+        )
 
     def test_allocator_records_match_manifest_contract(self) -> None:
         for allocator in profile_smoke.ALLOCATORS:
@@ -71,6 +75,12 @@ name = "libmimalloc-sys"
 version = "0.1.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b"
+
+[[package]]
+name = "snmalloc-sys"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c"
 """
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "Cargo.lock"

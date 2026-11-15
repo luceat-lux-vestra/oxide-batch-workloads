@@ -18,21 +18,33 @@ class AllocatorRegistryTests(unittest.TestCase):
     def test_current_active_contract_is_registry_owned(self) -> None:
         self.assertEqual(
             [candidate["identity"] for candidate in allocator_registry.active_candidates(self.registry)],
-            ["system", "jemalloc", "mimalloc"],
+            ["system", "jemalloc", "mimalloc", "snmalloc"],
         )
         self.assertEqual(
             allocator_registry.replacement_features(self.registry),
-            ("allocator-jemalloc", "allocator-mimalloc"),
+            ("allocator-jemalloc", "allocator-mimalloc", "allocator-snmalloc"),
         )
 
-    def test_phase1_candidates_do_not_activate_before_qualification(self) -> None:
+    def test_remaining_candidates_do_not_activate_before_qualification(self) -> None:
         self.assertEqual(
-            [candidate["identity"] for candidate in self.registry["candidates"][3:]],
-            ["snmalloc", "tcmalloc", "rpmalloc"],
+            [candidate["identity"] for candidate in self.registry["candidates"][4:]],
+            ["tcmalloc", "rpmalloc"],
         )
         self.assertEqual(
             [candidate["identity"] for candidate in allocator_registry.active_candidates(self.registry)],
-            ["system", "jemalloc", "mimalloc"],
+            ["system", "jemalloc", "mimalloc", "snmalloc"],
+        )
+
+    def test_snmalloc_is_arm64_qualified_with_exact_lock_provenance(self) -> None:
+        candidate = allocator_registry.candidate_by_id(self.registry, "snmalloc")
+        self.assertEqual(candidate["status"], "active")
+        self.assertEqual(
+            allocator_registry.target_state(candidate, "aarch64-unknown-linux-gnu"),
+            "qualified",
+        )
+        self.assertEqual(
+            candidate["lock_packages"],
+            [{"name": "snmalloc-sys", "version": "0.7.6"}],
         )
 
     def test_rpmalloc_remains_x86_64_conditional(self) -> None:
@@ -47,17 +59,15 @@ class AllocatorRegistryTests(unittest.TestCase):
             "supported-unverified",
         )
 
-    def test_phase1_arm_candidates_are_not_yet_qualified(self) -> None:
-        for identity in ("snmalloc", "tcmalloc"):
-            with self.subTest(identity=identity):
-                candidate = allocator_registry.candidate_by_id(self.registry, identity)
-                self.assertEqual(candidate["status"], "planned")
-                self.assertEqual(
-                    allocator_registry.target_state(
-                        candidate, "aarch64-unknown-linux-gnu"
-                    ),
-                    "supported-unverified",
-                )
+    def test_tcmalloc_arm_candidate_is_not_yet_qualified(self) -> None:
+        candidate = allocator_registry.candidate_by_id(self.registry, "tcmalloc")
+        self.assertEqual(candidate["status"], "planned")
+        self.assertEqual(
+            allocator_registry.target_state(
+                candidate, "aarch64-unknown-linux-gnu"
+            ),
+            "supported-unverified",
+        )
 
     def test_target_qualification_filters_active_candidates(self) -> None:
         self.assertEqual(
@@ -67,7 +77,7 @@ class AllocatorRegistryTests(unittest.TestCase):
                     self.registry, "aarch64-unknown-linux-gnu"
                 )
             ],
-            ["system", "jemalloc", "mimalloc"],
+            ["system", "jemalloc", "mimalloc", "snmalloc"],
         )
         self.assertEqual(
             allocator_registry.qualified_active_candidates(
@@ -101,7 +111,7 @@ class AllocatorRegistryTests(unittest.TestCase):
             allocator_registry.validate_registry(document)
 
     def test_planned_replacement_may_defer_lock_provenance(self) -> None:
-        candidate = allocator_registry.candidate_by_id(self.registry, "snmalloc")
+        candidate = allocator_registry.candidate_by_id(self.registry, "tcmalloc")
         self.assertEqual(candidate["status"], "planned")
         self.assertEqual(candidate["lock_packages"], [])
         allocator_registry.validate_registry(self.registry)

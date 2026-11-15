@@ -16,6 +16,7 @@ description = "OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreS
 default = []
 allocator-jemalloc = ["dep:tikv-jemallocator"]
 allocator-mimalloc = ["dep:mimalloc"]
+allocator-snmalloc = ["dep:snmalloc-rs"]
 
 [lib]
 name = "postgres_postgres"
@@ -44,6 +45,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 mimalloc = { version = "=0.1.52", optional = true }
+snmalloc-rs = { version = "=0.7.6", optional = true }
 tikv-jemallocator = { version = "=0.7.0", optional = true }
 
 

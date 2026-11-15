@@ -180,7 +180,7 @@ least one `qualified` target.
 
 | Identity | Lifecycle | Wrapper | Target state | Qualification note |
 |---|---|---|---|---|
-| `snmalloc` | `planned` / Phase 1 | `snmalloc-rs 0.7.6` | ARM64 Linux + x86_64 Linux: `supported-unverified` | wrapper tracks upstream snmalloc 0.7.6; default build uses CMake; cross-thread free behavior makes it a priority concurrency candidate |
+| `snmalloc` | `active` / Phase 1 | `snmalloc-rs 0.7.6` | ARM64 Linux: `qualified`; x86_64 Linux: `supported-unverified` | exact published wrapper/sys 0.7.6 is locked; default CMake build is qualified by repository CI and the allocator smoke on ARM64 before any performance claim |
 | `tcmalloc` | `planned` / Phase 1 | `tcmalloc-better 0.1.19` | ARM64 Linux + x86_64 Linux: `supported-unverified` | wrapper explicitly supports Linux aarch64/x86_64 and requires a C++ toolchain; background-action lifecycle must be qualified with the allocator |
 | `rpmalloc` | `conditional` | `rpmalloc 0.2.2` | ARM64 Linux: `unsupported`; x86_64 Linux: `supported-unverified` | Rust wrapper documents tested support only on x86_64 Windows/macOS/Linux, so it is not an ARM64 campaign candidate without separate wrapper qualification |
 
