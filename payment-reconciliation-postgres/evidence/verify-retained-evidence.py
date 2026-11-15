@@ -11,10 +11,32 @@ def add(v, ok, msg):
 def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
 
+INTERNAL_ROW_FIELDS = (
+    "source_row_id", "merchant_payment_id", "provider_payment_id", "currency",
+    "normalized_status", "authorized_amount_minor", "captured_amount_minor",
+    "refunded_amount_minor",
+)
+PROVIDER_ROW_FIELDS = (
+    "source_row_id", "provider_payment_id", "currency", "normalized_status",
+    "authorized_amount_minor", "captured_amount_minor", "refunded_amount_minor",
+    "provider_version",
+)
+
+def canonical_row(row):
+    fields = PROVIDER_ROW_FIELDS if "provider_version" in row else INTERNAL_ROW_FIELDS
+    value = {field: row.get(field) for field in fields}
+    missing = sorted(set(fields) - set(row))
+    extra = sorted(set(row) - set(fields))
+    if missing:
+        value["__missing_fields__"] = missing
+    if extra:
+        value["__extra_fields__"] = extra
+    return value
+
 def row_digest(rows):
     h = hashlib.sha256()
     for row in sorted(rows, key=lambda item: item["source_row_id"]):
-        h.update(compact(row))
+        h.update(compact(canonical_row(row)))
         h.update(b"\n")
     return h.hexdigest()
 
