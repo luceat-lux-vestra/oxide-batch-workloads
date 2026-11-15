@@ -72,10 +72,23 @@ Checkpoint 3 freezes these commands:
 - `verify`;
 - `reset`.
 
-Only `migrate` is implemented in this checkpoint. Candidate acquisition,
-exact replay, OxideBatch processing, hard-crash recovery, independent
-verification, and retained evidence intentionally remain later durable work
-units.
+`migrate` and deterministic `snapshot-candidates` are implemented through
+checkpoint 4. The candidate snapshot uses a repeatable-read Merchant transaction,
+selects only the latest eligible initial operation older than the explicit logical
+cutoff, freezes exact replay inputs, and records secret-safe digests plus a
+canonical candidate-set digest.
+
+Checkpoint 4 also establishes two pure foundations consumed by later work:
+
+- `replay::MerchantReplayClient` prepares the exact supported Merchant endpoint
+  and request body without generating a new operation/idempotency identity, and
+  fail-closes canonical response identity mismatches;
+- `oracle::classify` independently maps frozen candidate identity + canonical
+  observation + provider truth + duplicate-side-effect evidence into
+  `RESOLVED_SUCCEEDED | RESOLVED_FAILED | RETRY_LATER | HOLD_MANUAL`.
+
+The actual outbound replay transport, OxideBatch processing, hard-crash recovery,
+retained evidence, and full `verify` command remain later durable work units.
 
 ## Correctness boundary
 

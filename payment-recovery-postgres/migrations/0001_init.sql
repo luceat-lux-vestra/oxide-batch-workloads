@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS payment_recovery_workload.payment_recovery_run (
     eligibility_cutoff TIMESTAMPTZ NOT NULL,
     scenario_set_id TEXT NOT NULL,
     policy_version TEXT NOT NULL,
+    candidate_set_digest TEXT NOT NULL,
     run_state TEXT NOT NULL DEFAULT 'SNAPSHOTTED'
         CHECK (run_state IN ('SNAPSHOTTED', 'PROCESSING', 'PROCESSED', 'RECOVERING', 'VERIFIED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS payment_recovery_workload.payment_recovery_candidate 
         REFERENCES payment_recovery_workload.payment_recovery_run(run_id)
         ON DELETE CASCADE,
     candidate_id TEXT NOT NULL,
+    merchant_id TEXT NOT NULL,
+    merchant_order_id TEXT NOT NULL,
     merchant_payment_id TEXT NOT NULL,
     operation_id TEXT NOT NULL,
     operation_kind TEXT NOT NULL
@@ -34,12 +37,13 @@ CREATE TABLE IF NOT EXISTS payment_recovery_workload.payment_recovery_candidate 
     payment_state TEXT NOT NULL
         CHECK (payment_state IN ('PAYMENT_UNKNOWN', 'PAYMENT_PENDING')),
     operation_state TEXT NOT NULL
-        CHECK (operation_state IN ('UNKNOWN', 'RETRY_PENDING', 'MANUAL_REVIEW')),
+        CHECK (operation_state IN ('UNKNOWN', 'RETRY_PENDING')),
     amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
-    currency TEXT NOT NULL CHECK (char_length(currency) = 3),
+    currency TEXT NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
     idempotency_key TEXT NOT NULL,
     idempotency_key_digest TEXT NOT NULL,
-    payment_method_token TEXT,
+    payment_method_token TEXT NOT NULL,
+    payment_method_token_digest TEXT NOT NULL,
     provider_payment_id TEXT,
     gateway_operation_id TEXT,
     source_updated_at TIMESTAMPTZ NOT NULL,
@@ -49,7 +53,7 @@ CREATE TABLE IF NOT EXISTS payment_recovery_workload.payment_recovery_candidate 
 );
 
 COMMENT ON COLUMN payment_recovery_workload.payment_recovery_candidate.idempotency_key
-    IS 'Sensitive replay input; never emit raw value into retained evidence or logs';
+    IS 'Sensitive exact-replay input; never emit raw value into retained evidence or logs';
 COMMENT ON COLUMN payment_recovery_workload.payment_recovery_candidate.payment_method_token
     IS 'Synthetic reference-system replay input; never emit raw value into retained evidence or logs';
 

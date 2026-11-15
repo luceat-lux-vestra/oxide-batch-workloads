@@ -1,9 +1,10 @@
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
+use payment_recovery_postgres::candidate::{
+    self, SnapshotCandidatesRequest, DEFAULT_POLICY_VERSION,
+};
+use payment_recovery_postgres::{CONTRACT_VERSION, OXIDE_BATCH_VERSION};
 use sqlx::postgres::PgPoolOptions;
-
-const CONTRACT_VERSION: &str = "payment-recovery-v1";
-const OXIDE_BATCH_VERSION: &str = "0.7.0";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -36,7 +37,7 @@ enum Command {
         eligibility_cutoff: String,
         #[arg(long)]
         scenario_set_id: String,
-        #[arg(long, default_value = "payment-recovery-policy-v1")]
+        #[arg(long, default_value = DEFAULT_POLICY_VERSION)]
         policy_version: String,
     },
     /// Execute payment recovery processing for one frozen run.
@@ -79,7 +80,28 @@ async fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Migrate { database_url } => migrate(&database_url).await,
-        Command::SnapshotCandidates { .. } => checkpoint_four("snapshot-candidates"),
+        Command::SnapshotCandidates {
+            database_url,
+            merchant_database_url,
+            run_id,
+            business_date,
+            eligibility_cutoff,
+            scenario_set_id,
+            policy_version,
+        } => {
+            let summary = candidate::snapshot_candidates(SnapshotCandidatesRequest {
+                database_url: &database_url,
+                merchant_database_url: &merchant_database_url,
+                run_id: &run_id,
+                business_date: &business_date,
+                eligibility_cutoff: &eligibility_cutoff,
+                scenario_set_id: &scenario_set_id,
+                policy_version: &policy_version,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
         Command::Run { .. } => checkpoint_five("run"),
         Command::Recover { .. } => checkpoint_six("recover"),
         Command::Verify { .. } => checkpoint_seven("verify"),
@@ -101,10 +123,6 @@ async fn migrate(database_url: &str) -> Result<()> {
 
     pool.close().await;
     Ok(())
-}
-
-fn checkpoint_four(command: &str) -> Result<()> {
-    bail!("{command} is intentionally deferred until issue #271 checkpoint 4")
 }
 
 fn checkpoint_five(command: &str) -> Result<()> {
