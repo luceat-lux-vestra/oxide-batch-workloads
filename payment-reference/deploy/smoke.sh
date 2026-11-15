@@ -301,6 +301,11 @@ curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
   --data '{"method":"POST","path_suffix":"/authorize"}' \
   "${fault_proxy_base}/__fault/drop-next" >/dev/null
+curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{"method":"GET","path_prefix":"/payments/","status":404,"error_code":"payment_not_found","message":"first ambiguous provider inquiry intentionally hidden"}' \
+  "${fault_proxy_base}/__fault/respond-next" >/dev/null
 
 ambiguous_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}'
 post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous.json

@@ -82,6 +82,9 @@ create_ambiguous_candidate() {
   reset_faults
   post_json "$fault_proxy_base/__fault/drop-next" \
     '{"method":"POST","path_suffix":"/authorize"}' 200 "/tmp/recovery-$suffix-drop.json"
+  post_json "$fault_proxy_base/__fault/respond-next" \
+    '{"method":"GET","path_prefix":"/payments/","status":404,"error_code":"payment_not_found","message":"recovery matrix first provider inquiry intentionally hidden"}' \
+    200 "/tmp/recovery-$suffix-hide-first-read.json"
   post_json "$merchant_base/payments/payment-$suffix/authorize" \
     "{\"operationId\":\"op-$suffix\",\"amountMinor\":$amount,\"idempotencyKey\":\"idem-$suffix\"}" \
     202 "$output"

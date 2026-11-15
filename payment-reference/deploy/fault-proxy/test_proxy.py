@@ -343,6 +343,27 @@ class ProxyStatusAsyncIntegrationTest(unittest.TestCase):
             [item["outcome"] for item in final["webhook"]["attempts"]],
         )
 
+    def test_one_shot_response_can_match_dynamic_payment_get_by_prefix(self):
+        status, _ = self.request_json(
+            "POST",
+            "/__fault/respond-next",
+            {
+                "method": "GET",
+                "path_prefix": "/payments/",
+                "status": 404,
+                "error_code": "payment_not_found",
+                "message": "synthetic first-read visibility gap",
+            },
+        )
+        self.assertEqual(200, status)
+
+        first_status, _ = self.request_json("GET", "/payments/provider-test")
+        self.assertEqual(404, first_status)
+
+        second_status, payment = self.request_json("GET", "/payments/provider-test")
+        self.assertEqual(200, second_status)
+        self.assertEqual("pending", payment["status"])
+
     def test_before_side_effect_http_failure_never_reaches_upstream(self):
         configured = plan(
             selected_step(
