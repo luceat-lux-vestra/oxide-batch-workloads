@@ -49,10 +49,11 @@ pub struct MerchantReplayClient {
 impl MerchantReplayClient {
     pub fn new(base_url: &str) -> Result<Self> {
         let trimmed = base_url.trim_end_matches('/');
-        if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-            bail!("Merchant base URL must use http or https");
-        }
-        if trimmed.len() <= "http://".len() {
+        let authority = trimmed
+            .strip_prefix("http://")
+            .or_else(|| trimmed.strip_prefix("https://"))
+            .context("Merchant base URL must use http or https")?;
+        if authority.is_empty() || authority.starts_with('/') {
             bail!("Merchant base URL must include a host");
         }
         Ok(Self {

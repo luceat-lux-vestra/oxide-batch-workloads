@@ -35,10 +35,13 @@ Only ambiguous initial mutations are eligible:
 - `AUTHORIZE`;
 - `AUTH_CAPTURE`.
 
-Candidate local states are:
+Candidate local states are. The Reference Merchant currently maps retryable
+upstream failures to `PAYMENT_UNKNOWN / RETRY_PENDING`, while the canonical
+Gateway state may also expose `PAYMENT_PENDING / RETRY_PENDING`:
 
 ```text
 PAYMENT_UNKNOWN / UNKNOWN
+PAYMENT_UNKNOWN / RETRY_PENDING
 PAYMENT_PENDING / RETRY_PENDING
 ```
 

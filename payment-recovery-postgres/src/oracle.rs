@@ -107,6 +107,22 @@ fn classify_success(
         };
     }
 
+    if canonical.gateway_operation_id.as_deref() != Some(candidate.operation_id.as_str()) {
+        return OracleDecision {
+            classification: RecoveryClassification::HoldManual,
+            violations: vec![
+                "successful canonical result is missing the expected gateway operation identity"
+                    .into(),
+            ],
+        };
+    }
+    if canonical.provider_payment_id.is_none() {
+        return OracleDecision {
+            classification: RecoveryClassification::HoldManual,
+            violations: vec!["successful canonical result is missing provider payment identity".into()],
+        };
+    }
+
     let expected_payment_state = match candidate.operation_kind {
         InitialOperationKind::Authorize => "AUTHORIZED",
         InitialOperationKind::AuthCapture => "PAID",
@@ -122,6 +138,10 @@ fn classify_success(
         };
     }
 
+    let status_match = match candidate.operation_kind {
+        InitialOperationKind::Authorize => provider.status.as_deref() == Some("authorized"),
+        InitialOperationKind::AuthCapture => provider.status.as_deref() == Some("captured"),
+    };
     let financial_match = match candidate.operation_kind {
         InitialOperationKind::Authorize => {
             provider.authorized_amount_minor == Some(candidate.amount_minor)
@@ -131,6 +151,13 @@ fn classify_success(
                 && provider.captured_amount_minor == Some(candidate.amount_minor)
         }
     };
+
+    if !status_match {
+        return OracleDecision {
+            classification: RecoveryClassification::HoldManual,
+            violations: vec!["provider status does not match the resolved initial operation".into()],
+        };
+    }
 
     if !financial_match {
         return OracleDecision {
@@ -188,8 +215,10 @@ fn identity_violations(
     if canonical.operation_id != candidate.operation_id {
         violations.push("operation identity mismatch".into());
     }
-    if canonical.gateway_operation_id.as_deref() != Some(candidate.operation_id.as_str()) {
-        violations.push("gateway operation identity mismatch".into());
+    if let Some(observed) = canonical.gateway_operation_id.as_deref() {
+        if observed != candidate.operation_id {
+            violations.push("gateway operation identity mismatch".into());
+        }
     }
     if let (Some(expected), Some(observed)) = (
         candidate.provider_payment_id.as_deref(),

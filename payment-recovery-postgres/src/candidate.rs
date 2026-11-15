@@ -208,11 +208,14 @@ async fn load_candidates(
             mp.payment_method_token,
             epm.provider_payment_id,
             epm.gateway_operation_id,
-            GREATEST(
-                mp.updated_at,
-                mpo.updated_at,
-                COALESCE(epm.updated_at, mpo.updated_at)
-            )::text AS source_updated_at
+            to_char(
+                GREATEST(
+                    mp.updated_at,
+                    mpo.updated_at,
+                    COALESCE(epm.updated_at, mpo.updated_at)
+                ) AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+            ) AS source_updated_at
         FROM payment_reference_merchant.merchant_payment mp
         JOIN payment_reference_merchant.orders o
           ON o.merchant_order_id = mp.merchant_order_id
@@ -224,7 +227,10 @@ async fn load_candidates(
           AND mpo.amount_minor IS NOT NULL
           AND (
                 (mp.payment_state = 'PAYMENT_UNKNOWN' AND mpo.operation_state = 'UNKNOWN')
-             OR (mp.payment_state = 'PAYMENT_PENDING' AND mpo.operation_state = 'RETRY_PENDING')
+             OR (
+                    mp.payment_state IN ('PAYMENT_UNKNOWN', 'PAYMENT_PENDING')
+                AND mpo.operation_state = 'RETRY_PENDING'
+                )
           )
           AND mpo.operation_id = (
                 SELECT latest.operation_id
@@ -409,6 +415,9 @@ pub fn validate_candidate(candidate: &CandidateSnapshot) -> Result<()> {
             CandidatePaymentState::PaymentUnknown,
             CandidateOperationState::Unknown
         ) | (
+            CandidatePaymentState::PaymentUnknown,
+            CandidateOperationState::RetryPending
+        ) | (
             CandidatePaymentState::PaymentPending,
             CandidateOperationState::RetryPending
         )
@@ -461,7 +470,7 @@ pub fn candidate_set_digest(candidates: &[CandidateSnapshot]) -> Result<String> 
         );
         digest_part(&mut hasher, &candidate.source_updated_at);
     }
-    Ok(hex_digest(hasher.finalize().as_slice()))
+    Ok(finish_hex(hasher))
 }
 
 fn candidate_id(
@@ -479,25 +488,29 @@ fn candidate_id(
     digest_part(&mut hasher, idempotency_key_digest);
     digest_part(&mut hasher, &amount_minor.to_string());
     digest_part(&mut hasher, currency);
-    format!("candidate-{}", hex_digest(hasher.finalize().as_slice()))
+    format!("candidate-{}", finish_hex(hasher))
 }
 
 pub fn secret_digest(value: &str) -> String {
     let mut hasher = Sha256::new();
     digest_part(&mut hasher, value);
-    hex_digest(hasher.finalize().as_slice())
+    finish_hex(hasher)
 }
 
 fn digest_part(hasher: &mut Sha256, value: &str) {
-    hasher.update(value.len().to_be_bytes());
-    hasher.update(value.as_bytes());
+    hasher.update(Sha256::digest(value.as_bytes()));
 }
 
-fn hex_digest(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
+fn finish_hex(hasher: Sha256) -> String {
+    let digest: [u8; 32] = hasher.finalize().into();
+    hex_digest(&digest)
+}
+
+fn hex_digest(bytes: &[u8; 32]) -> String {
+    let mut output = String::with_capacity(64);
     for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
+        output.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
+        output.push(char::from_digit(u32::from(byte & 0x0f), 16).unwrap_or('0'));
     }
     output
 }
