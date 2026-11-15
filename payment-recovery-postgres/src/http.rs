@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -19,6 +20,7 @@ pub struct AfterSendCrash<'a> {
 #[derive(Debug)]
 pub struct HttpResponse {
     pub status: u16,
+    pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
 }
 
@@ -141,12 +143,14 @@ fn parse_response(raw: &[u8]) -> Result<HttpResponse> {
 
     let mut content_length = None;
     let mut chunked = false;
+    let mut headers = BTreeMap::new();
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             bail!("malformed HTTP response header");
         };
         let name = name.trim();
         let value = value.trim();
+        headers.insert(name.to_ascii_lowercase(), value.to_owned());
         if name.eq_ignore_ascii_case("content-length") {
             content_length = Some(
                 value
@@ -174,7 +178,11 @@ fn parse_response(raw: &[u8]) -> Result<HttpResponse> {
         body_bytes.to_vec()
     };
 
-    Ok(HttpResponse { status, body })
+    Ok(HttpResponse {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn decode_chunked(input: &[u8]) -> Result<Vec<u8>> {
@@ -223,6 +231,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response.status, 200);
+        assert_eq!(response.headers.get("content-length"), Some(&"2".to_owned()));
         assert_eq!(response.body, b"{}");
     }
 

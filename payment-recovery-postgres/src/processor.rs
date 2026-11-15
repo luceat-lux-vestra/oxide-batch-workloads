@@ -291,10 +291,19 @@ impl RecoveryProcessor {
 
         match response.status {
             200 => {
+                let visibility = match response
+                    .headers
+                    .get("x-payment-recovery-visibility")
+                    .map(String::as_str)
+                {
+                    Some("STALE") => ProviderVisibility::Stale,
+                    Some("IMMEDIATE") | None => ProviderVisibility::Immediate,
+                    Some(_) => ProviderVisibility::Unavailable,
+                };
                 let response: ProviderPaymentResponse = serde_json::from_slice(&response.body)
                     .context("decode provider payment response")?;
                 Ok(ProviderObservation {
-                    visibility: ProviderVisibility::Immediate,
+                    visibility,
                     exists: true,
                     provider_payment_id: Some(response.id),
                     currency: Some(response.currency),

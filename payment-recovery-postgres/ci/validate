@@ -10,6 +10,7 @@ run_ci_stage() {
   cargo clippy --locked --all-targets -- -D warnings
   cargo build --locked --all-targets
   cargo test --locked
+  python3 evidence/test_verify_retained_evidence.py
   bash ci/recovery-matrix.sh
 }
 
