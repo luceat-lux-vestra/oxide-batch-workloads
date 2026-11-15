@@ -1,0 +1,197 @@
+{
+  "campaign_issue": 148,
+  "classification": "supplemental exact-artifact v0.6.0 business/reference-system evidence",
+  "failure_point": {
+    "boundary": "after-processing-commit-before-finalization",
+    "signal": 9
+  },
+  "observations": {
+    "business_state_after_kill": null,
+    "final_publication_count": 1,
+    "publication_count_after_kill": 0,
+    "separate_process_finalization": true
+  },
+  "producer_report": {
+    "actual": {
+      "aggregate_delta_minor": 0,
+      "business_state": "CLEAR",
+      "details": [
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-000",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        },
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-001",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        },
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-002",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        }
+      ],
+      "mismatch_count": 0,
+      "processing_state": "PROCESSED",
+      "published_count": 1,
+      "result_digest": "5b38ffcb7569c93700bf78456fe87ed67a0c02ce7b431b23c05f2331405c9508",
+      "run_id": "5c2a3687520d1c70772186b35e653c4a4973202012a0669955a531b15804b61d"
+    },
+    "base_snapshot": null,
+    "campaign_issue": 148,
+    "oracle": {
+      "aggregate_delta_minor": 0,
+      "business_state": "CLEAR",
+      "details": [
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-000",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        },
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-001",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        },
+        {
+          "authorized_delta_minor": 0,
+          "captured_delta_minor": 0,
+          "classification": "MATCH",
+          "internal_currency": "USD",
+          "internal_row_count": 1,
+          "internal_status": "CAPTURED",
+          "provider_currency": "USD",
+          "provider_payment_id": "clear-26132-18-provider-002",
+          "provider_row_count": 1,
+          "provider_status": "CAPTURED",
+          "refunded_delta_minor": 0
+        }
+      ],
+      "mismatch_count": 0,
+      "result_digest": "5b38ffcb7569c93700bf78456fe87ed67a0c02ce7b431b23c05f2331405c9508"
+    },
+    "schema_version": 1,
+    "snapshot": {
+      "internal": [
+        {
+          "authorized_amount_minor": 100,
+          "captured_amount_minor": 100,
+          "currency": "USD",
+          "merchant_payment_id": "clear-26132-18-merchant-000",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-000",
+          "refunded_amount_minor": 0,
+          "source_row_id": "internal:000"
+        },
+        {
+          "authorized_amount_minor": 101,
+          "captured_amount_minor": 101,
+          "currency": "USD",
+          "merchant_payment_id": "clear-26132-18-merchant-001",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-001",
+          "refunded_amount_minor": 0,
+          "source_row_id": "internal:001"
+        },
+        {
+          "authorized_amount_minor": 102,
+          "captured_amount_minor": 102,
+          "currency": "USD",
+          "merchant_payment_id": "clear-26132-18-merchant-002",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-002",
+          "refunded_amount_minor": 0,
+          "source_row_id": "internal:002"
+        }
+      ],
+      "metadata": {
+        "base_snapshot_id": null,
+        "business_date": "2026-11-14",
+        "internal_snapshot_digest": "a6280551f6e43fbf152f47acc1849570046b1f6fb38754f1fdf28edf1ac54360",
+        "policy_version": "payment-reconciliation-policy-v1",
+        "provider_scope": "merchant-26132-19",
+        "provider_snapshot_digest": "514b571519d12a5b585f49738ced18a8487357dfbb95e3557324b7eff092c82e",
+        "scenario_case": "CLEAR",
+        "snapshot_id": "clear-26132-18"
+      },
+      "mutation_recipe": {},
+      "provider": [
+        {
+          "authorized_amount_minor": 100,
+          "captured_amount_minor": 100,
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-000",
+          "provider_version": 1,
+          "refunded_amount_minor": 0,
+          "source_row_id": "provider:000"
+        },
+        {
+          "authorized_amount_minor": 101,
+          "captured_amount_minor": 101,
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-001",
+          "provider_version": 1,
+          "refunded_amount_minor": 0,
+          "source_row_id": "provider:001"
+        },
+        {
+          "authorized_amount_minor": 102,
+          "captured_amount_minor": 102,
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "provider_payment_id": "clear-26132-18-provider-002",
+          "provider_version": 1,
+          "refunded_amount_minor": 0,
+          "source_row_id": "provider:002"
+        }
+      ]
+    },
+    "violations": []
+  },
+  "scenario": "hard-crash-after-processing-commit",
+  "schema_version": 1,
+  "source_kind": "deterministic-frozen-recovery-fixture"
+}
