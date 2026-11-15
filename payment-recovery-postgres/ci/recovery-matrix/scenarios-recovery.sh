@@ -77,6 +77,26 @@ run_crash_case() {
   rm -f "$phases_file" "$side_file"
 }
 
+retry_cycle_diagnostics() {
+  local run_id="$1"
+  # Anonymous state/count and constraint-name summaries only; no SQL parameters.
+  workload_sql "
+    SELECT 'retry-cycle-db-summary generation=' || processing_generation
+           || ' run_state=' || run_state
+    FROM payment_recovery_workload.payment_recovery_run
+    WHERE run_id = '$run_id'
+  " >&2 || true
+  workload_sql "
+    SELECT 'retry-cycle-attempt-summary count=' || COUNT(*)
+           || ' max_attempt_no=' || COALESCE(MAX(attempt_no), 0)
+    FROM payment_recovery_workload.payment_recovery_attempt
+    WHERE run_id = '$run_id'
+  " >&2 || true
+  # Only constraint names are emitted; PostgreSQL DETAIL and statements are dropped.
+  "${workload_compose[@]}" logs --no-color postgres 2>/dev/null |
+    grep -Eo 'constraint "[A-Za-z0-9_]+"|column "[A-Za-z0-9_]+" violates not-null constraint' |
+    tail -n 8 >&2 || true
+}
 run_retry_later_generation_case() {
   printf 'payment-recovery scenario start=pre-side-effect-transient\n' >&2
   local suffix="retry-later" run_id="run-retry-later" amount=503
@@ -93,16 +113,24 @@ run_retry_later_generation_case() {
   jq -e '.operationState == "RETRY_PENDING"' /tmp/recovery-retry-503.json >/dev/null
   snapshot_candidate "$run_id" "$suffix" >/dev/null
 
-  "$binary" run --database-url "$DATABASE_URL" --merchant-base-url "$merchant_base" \
+  printf 'payment-recovery retry-cycle generation=1\n' >&2
+  if ! "$binary" run --database-url "$DATABASE_URL" --merchant-base-url "$merchant_base" \
     --provider-base-url "$provider_base" --run-id "$run_id" --chunk-size 1 --page-size 1 \
-    >/tmp/"$run_id"-g1.json
+    >/tmp/"$run_id"-g1.json; then
+    retry_cycle_diagnostics "$run_id"
+    fail "generation-1 execution failed"
+  fi
   [[ "$(result_classification "$run_id")" == "RETRY_LATER" ]] || fail "transient generation 1 did not remain RETRY_LATER"
   jq -n --argjson report "$(cat /tmp/"$run_id"-g1.json)" --argjson result "$(result_json "$run_id")" \
     '{name:"generation-1",processing_generation:$report.processing_generation,launched:$report.launched,result:$result}' >"$phases_file"
 
-  "$binary" run --database-url "$DATABASE_URL" --merchant-base-url "$merchant_base" \
+  printf 'payment-recovery retry-cycle generation=2\n' >&2
+  if ! "$binary" run --database-url "$DATABASE_URL" --merchant-base-url "$merchant_base" \
     --provider-base-url "$provider_base" --run-id "$run_id" --chunk-size 1 --page-size 1 \
-    >/tmp/"$run_id"-g2.json
+    >/tmp/"$run_id"-g2.json; then
+    retry_cycle_diagnostics "$run_id"
+    fail "generation-2 execution failed"
+  fi
   jq -e '.processing_generation == 2 and .launched == true' /tmp/"$run_id"-g2.json >/dev/null
   jq -n --argjson report "$(cat /tmp/"$run_id"-g2.json)" --argjson result "$(result_json "$run_id")" \
     '{name:"generation-2",processing_generation:$report.processing_generation,launched:$report.launched,result:$result}' >>"$phases_file"

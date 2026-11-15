@@ -106,7 +106,11 @@ impl ItemWriter<RecoveryWrite> for RecoveryWriter {
                 .execute(BusinessStatement::new(ATTEMPT_INSERT, &attempt_values))
                 .await
                 .map_err(|error| {
-                    eprintln!("payment-recovery writer failure stage=attempt-insert");
+                    eprintln!(
+                        "payment-recovery writer failure stage=attempt-insert generation={} attempt_no={} error_kind={error:?}",
+                        item.processing_generation,
+                        item.attempt_no
+                    );
                     classify_transaction_error(error)
                 })?;
             if attempt.rows_affected() != 1 {
