@@ -175,7 +175,7 @@ At minimum, `manifest.json` records:
 - exact OxideBatch version and registry provenance;
 - lockfile identity;
 - allocator identity plus wrapper/upstream versions when applicable;
-- Rust toolchain and target;
+- Rust compiler and Cargo versions, plus target;
 - OS, kernel, CPU, and memory observations;
 - build profile and material flags;
 - PostgreSQL configured image and observed server version;
@@ -273,6 +273,23 @@ The manual-only workflow
 repository's ARM64 Ubuntu runner and uploads the bundle for review. Ordinary PR
 CI runs only the dependency-free producer unit tests; it does not perform the
 release smoke matrix.
+
+## Manifest schema evolution
+
+Retained Phase 0 evidence may use either:
+
+- `oxide-batch-profile-manifest/v1` — original contract; Cargo version was not
+  recorded and remains valid historical evidence;
+- `oxide-batch-profile-manifest/v2` — current producer contract; adds exact
+  `subject.cargo` provenance while preserving the remaining v1 semantics.
+
+The validator accepts both versions so previously retained v1 artifacts remain
+independently reviewable. New producer runs emit v2 only. A v2 manifest without
+an exact Cargo version fails closed.
+
+This distinction matters for Rust/Cargo 1.100 and later because build-directory
+selection can vary with build configuration and feature state; allocator
+variants must therefore retain the exact Cargo version alongside `rustc`.
 
 ## Next implementation boundary
 

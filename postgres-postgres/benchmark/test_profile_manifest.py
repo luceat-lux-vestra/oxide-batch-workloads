@@ -39,7 +39,8 @@ def valid_manifest(*, lane: str = "benchmark", allocator: str = "system") -> dic
         "subject": {
             "workload_sha": "a" * 40,
             "cargo_lock_sha256": "b" * 64,
-            "rustc": "rustc 1.95.0",
+            "rustc": "rustc 1.100.0 (fixture)",
+            "cargo": "cargo 1.100.0 (fixture)",
             "target": "aarch64-unknown-linux-gnu",
             "build_profile": "release",
             "oxide_batch": {
@@ -103,6 +104,24 @@ def valid_manifest(*, lane: str = "benchmark", allocator: str = "system") -> dic
 
 
 class ProfileManifestTests(unittest.TestCase):
+    def test_preserves_v1_manifest_without_cargo_version(self) -> None:
+        document = valid_manifest()
+        document["schema"] = profile_manifest.SCHEMA_V1
+        document["subject"].pop("cargo")
+        profile_manifest.validate_manifest(document)
+
+    def test_v2_requires_cargo_version(self) -> None:
+        document = valid_manifest()
+        document["subject"].pop("cargo")
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "subject.cargo"):
+            profile_manifest.validate_manifest(document)
+
+    def test_rejects_unknown_schema_version(self) -> None:
+        document = valid_manifest()
+        document["schema"] = "oxide-batch-profile-manifest/v3"
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "schema must be one of"):
+            profile_manifest.validate_manifest(document)
+
     def test_valid_benchmark_system_manifest(self) -> None:
         profile_manifest.validate_manifest(valid_manifest())
 

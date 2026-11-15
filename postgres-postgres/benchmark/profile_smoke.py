@@ -156,9 +156,12 @@ def prepare_output_root(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def host_environment() -> tuple[dict[str, Any], str, str]:
+def host_environment() -> tuple[dict[str, Any], str, str, str]:
     rustc_vv = run_checked(["rustc", "-vV"]).stdout
     rustc_version = rustc_vv.splitlines()[0].strip()
+    cargo_version = run_checked(["cargo", "--version"]).stdout.strip()
+    if not cargo_version:
+        fail("cargo --version observation was empty")
     target = parse_rustc_host(rustc_vv)
 
     cpuinfo = Path("/proc/cpuinfo")
@@ -197,7 +200,7 @@ def host_environment() -> tuple[dict[str, Any], str, str]:
         "postgres_configured_image": images[0],
         "postgres_server_version": postgres_server,
     }
-    return environment, rustc_version, target
+    return environment, rustc_version, cargo_version, target
 
 
 def workload_sha() -> str:
@@ -292,6 +295,7 @@ def build_manifest(
     subject_sha: str,
     cargo_lock_sha256: str,
     rustc_version: str,
+    cargo_version: str,
     target: str,
     oxide_subject: dict[str, Any],
     environment: dict[str, Any],
@@ -315,6 +319,7 @@ def build_manifest(
             "workload_sha": subject_sha,
             "cargo_lock_sha256": cargo_lock_sha256,
             "rustc": rustc_version,
+            "cargo": cargo_version,
             "target": target,
             "build_profile": "release",
             "oxide_batch": {
@@ -386,6 +391,7 @@ def run_variant(
     token: str,
     environment: dict[str, Any],
     rustc_version: str,
+    cargo_version: str,
     target: str,
     subject_sha: str,
     cargo_lock_sha256: str,
@@ -456,6 +462,7 @@ def run_variant(
             subject_sha=subject_sha,
             cargo_lock_sha256=cargo_lock_sha256,
             rustc_version=rustc_version,
+            cargo_version=cargo_version,
             target=target,
             oxide_subject=oxide_subject,
             environment=environment,
@@ -498,7 +505,7 @@ def main() -> int:
     env["RUST_LOG"] = "error"
 
     binaries = build_variants()
-    environment, rustc_version, target = host_environment()
+    environment, rustc_version, cargo_version, target = host_environment()
     subject_sha = workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = sha256_file(lock_path)
@@ -537,6 +544,7 @@ def main() -> int:
                 token=token,
                 environment=environment,
                 rustc_version=rustc_version,
+                cargo_version=cargo_version,
                 target=target,
                 subject_sha=subject_sha,
                 cargo_lock_sha256=cargo_lock_sha256,

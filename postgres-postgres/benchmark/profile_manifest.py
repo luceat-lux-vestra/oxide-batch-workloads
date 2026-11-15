@@ -10,7 +10,10 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-SCHEMA = "oxide-batch-profile-manifest/v1"
+SCHEMA_V1 = "oxide-batch-profile-manifest/v1"
+SCHEMA_V2 = "oxide-batch-profile-manifest/v2"
+SCHEMA = SCHEMA_V2
+SUPPORTED_SCHEMAS = {SCHEMA_V1, SCHEMA_V2}
 CAMPAIGN = 266
 OXIDE_BATCH_VERSION = "0.6.0"
 CRATES_IO_SOURCES = {
@@ -67,10 +70,12 @@ def require_sha(value: Any, field: str, pattern: re.Pattern[str]) -> str:
     return text
 
 
-def validate_subject(subject: dict[str, Any]) -> None:
+def validate_subject(subject: dict[str, Any], schema: str) -> None:
     require_sha(subject.get("workload_sha"), "subject.workload_sha", SHA40)
     require_sha(subject.get("cargo_lock_sha256"), "subject.cargo_lock_sha256", SHA64)
     require_string(subject.get("rustc"), "subject.rustc")
+    if schema == SCHEMA_V2:
+        require_string(subject.get("cargo"), "subject.cargo")
     require_string(subject.get("target"), "subject.target")
     if subject.get("build_profile") != "release":
         fail("subject.build_profile must be 'release' for profile evidence")
@@ -222,8 +227,9 @@ def validate_correctness(correctness: dict[str, Any]) -> None:
 
 def validate_manifest(document: Any) -> None:
     manifest = require_dict(document, "manifest")
-    if manifest.get("schema") != SCHEMA:
-        fail(f"schema must be '{SCHEMA}'")
+    schema = manifest.get("schema")
+    if schema not in SUPPORTED_SCHEMAS:
+        fail(f"schema must be one of {sorted(SUPPORTED_SCHEMAS)}")
     if manifest.get("campaign") != CAMPAIGN:
         fail(f"campaign must be {CAMPAIGN}")
 
@@ -235,7 +241,7 @@ def validate_manifest(document: Any) -> None:
     require_string(run.get("id"), "run.id")
     require_positive_int(run.get("repetition"), "run.repetition")
 
-    validate_subject(require_dict(manifest.get("subject"), "subject"))
+    validate_subject(require_dict(manifest.get("subject"), "subject"), schema)
     validate_allocator(require_dict(manifest.get("allocator"), "allocator"))
     validate_environment(require_dict(manifest.get("environment"), "environment"))
     validate_workload(require_dict(manifest.get("workload"), "workload"))

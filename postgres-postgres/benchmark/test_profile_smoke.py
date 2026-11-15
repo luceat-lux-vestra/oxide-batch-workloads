@@ -97,7 +97,8 @@ checksum = "b"
             run_id="smoke-fixture-jemalloc-paging",
             subject_sha="a" * 40,
             cargo_lock_sha256="b" * 64,
-            rustc_version="rustc 1.95.0",
+            rustc_version="rustc 1.100.0 (fixture)",
+            cargo_version="cargo 1.100.0 (fixture)",
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
@@ -136,6 +137,8 @@ checksum = "b"
             elapsed_seconds=1.25,
         )
         profile_smoke.profile_manifest.validate_manifest(manifest)
+        self.assertEqual(manifest["schema"], profile_smoke.profile_manifest.SCHEMA_V2)
+        self.assertEqual(manifest["subject"]["cargo"], "cargo 1.100.0 (fixture)")
         self.assertEqual(manifest["allocator"]["identity"], "jemalloc")
         self.assertFalse(manifest["instrumentation"]["profiler_attached"])
         self.assertIn("diagnostic smoke", manifest["limitations"][0])
