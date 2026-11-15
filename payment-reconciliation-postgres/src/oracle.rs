@@ -146,8 +146,8 @@ fn classify_key(
         }
     };
 
-    let internal_row = (internal.len() == 1).then_some(internal[0]);
-    let provider_row = (provider.len() == 1).then_some(provider[0]);
+    let internal_row = (internal.len() == 1).then(|| internal[0]);
+    let provider_row = (provider.len() == 1).then(|| provider[0]);
 
     OracleDetail {
         provider_payment_id: key.to_owned(),
