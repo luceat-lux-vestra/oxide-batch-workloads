@@ -102,15 +102,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count=0
-          while IFS= read -r -d '' manifest; do
-            python3 benchmark/profile_manifest.py "$manifest"
-            count=$((count + 1))
-          done < <(find "$RUNNER_TEMP/profile-artifacts" -name manifest.json -print0)
-          [[ "$count" -eq 3 ]] || {
-            echo "::error::expected exactly three allocator manifests, found $count"
+
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          [[ -n "$target" ]] || {
+            echo "::error::rustc -vV did not report a host target"
             exit 1
           }
+
+          expected="$RUNNER_TEMP/expected-profile-allocators.txt"
+          actual="$RUNNER_TEMP/actual-profile-allocators.txt"
+
+          python3 benchmark/allocator_registry.py \
+            --active-lines \
+            --target "$target" \
+            | cut -d'|' -f1 \
+            | sort > "$expected"
+
+          : > "$actual"
+          while IFS= read -r -d '' manifest; do
+            python3 benchmark/profile_manifest.py "$manifest" > /dev/null
+            python3 - "$manifest" >> "$actual" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          print(manifest["allocator"]["identity"])
+          PY
+          done < <(find "$RUNNER_TEMP/profile-artifacts" -name manifest.json -print0)
+
+          sort -o "$actual" "$actual"
+
+          if ! diff -u "$expected" "$actual"; then
+            echo "::error::emitted allocator manifest set does not match qualified active registry candidates for $target"
+            exit 1
+          fi
 
       - name: Upload smoke evidence
         if: always()
