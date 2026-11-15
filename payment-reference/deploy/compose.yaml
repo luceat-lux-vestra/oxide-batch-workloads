@@ -39,6 +39,8 @@ services:
       POSTGRES_PASSWORD: merchant-local-only
     volumes:
       - merchant-db:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${MERCHANT_DB_PORT:-15435}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U merchant -d merchant"]
       interval: 5s
@@ -61,6 +63,8 @@ services:
       - payment-sandbox-data:/var/lib/payment-sandbox
     expose:
       - "8080"
+    ports:
+      - "127.0.0.1:${PAYMENT_SANDBOX_DIRECT_PORT:-18084}:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
       interval: 5s

@@ -1,0 +1,606 @@
+{
+  "environment": {
+    "limitations": [
+      "Producer run identity is recorded metadata, not an externally attested trusted-producer binding.",
+      "Crash/recovery records use deterministic frozen fixtures so recovery is isolated from mutable external state; separate business records retain the real payment-reference Merchant/provider snapshot.",
+      "This supplemental campaign validates exact OxideBatch 0.6.0 behavior and is not retroactive completion evidence for the closed 0.6 release horizon."
+    ],
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "source": "producer Cargo.toml in semantic closure",
+        "trust": "recorded-metadata",
+        "value": "1.95"
+      },
+      {
+        "name": "rustc-version",
+        "source": "producer workflow",
+        "trust": "recorded-metadata",
+        "value": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
+      },
+      {
+        "name": "cargo-version",
+        "source": "producer workflow",
+        "trust": "recorded-metadata",
+        "value": "cargo 1.100.0 (3acc79c0c 2026-11-05)"
+      },
+      {
+        "name": "postgres-version",
+        "source": "workload PostgreSQL container",
+        "trust": "recorded-metadata",
+        "value": "postgres (PostgreSQL) 18.7 (Debian 18.7-1.pgdg13+2)"
+      },
+      {
+        "name": "github-actions-run",
+        "source": "producer workflow metadata",
+        "trust": "recorded-metadata",
+        "value": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43661583104"
+      }
+    ]
+  },
+  "external_artifacts": [],
+  "producer": {
+    "base_revision": "fde16214fcac89be6174971bdbac8bf452992e71",
+    "revision_role": "producer-checkout",
+    "run": {
+      "binding": "recorded-metadata",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43661583104",
+      "kind": "github-actions-branch-evidence-producer"
+    }
+  },
+  "records": [
+    {
+      "artifact": {
+        "path": "validation/business-amount-mismatch.json",
+        "sha256": "bb02a8cda0ea01fb6e71359e8e88f798f99369f1928801bb7a1e7dc922bba484",
+        "size_bytes": 5446
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-derived-snapshot",
+          "sha256": "34cf324b0d52d3711e27dd556eaebfc8ce860bbe19cd773c0da23dcb48adc443"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "AMOUNT_MISMATCH",
+          "snapshot_id": "evidence-amount-mismatch"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "HELD",
+        "observations": {
+          "producer_path": "payment-reference-live-snapshot"
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "business-amount-mismatch"
+    },
+    {
+      "artifact": {
+        "path": "validation/business-clear.json",
+        "sha256": "a57ad6659022e3529619cfdd86d54d45c9c9574d963ff11575ddfb2359435fc2",
+        "size_bytes": 3801
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-base",
+          "sha256": "8df813288dfc1f50f67c6b84992568ccfa81edb6a174e9f928875938446a4b8c"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "evidence-live-clear"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "producer_path": "payment-reference-live-snapshot"
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "business-clear"
+    },
+    {
+      "artifact": {
+        "path": "validation/business-duplicate-provider.json",
+        "sha256": "6eb18fc830d54c146d20c626f9d49020257d036e7a0eeb3e785d06f4bcaad4a5",
+        "size_bytes": 5818
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-derived-snapshot",
+          "sha256": "938f1bc4d804b3dcc129fe81bb8679c0a7f291cf96e95ff096dcc93de1ed4f34"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "DUPLICATE_PROVIDER",
+          "snapshot_id": "evidence-duplicate-provider"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "HELD",
+        "observations": {
+          "producer_path": "payment-reference-live-snapshot"
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "business-duplicate-provider"
+    },
+    {
+      "artifact": {
+        "path": "validation/business-missing-internal.json",
+        "sha256": "50525c30cfc9134f88459e08beed8f3227841f84840d2f3976782831dc9b71be",
+        "size_bytes": 4987
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-derived-snapshot",
+          "sha256": "62b3ba4c07a70849aa36f386cc3071918472a372342a7798c6afd7176406fd52"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "MISSING_INTERNAL",
+          "snapshot_id": "evidence-missing-internal"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "HELD",
+        "observations": {
+          "producer_path": "payment-reference-live-snapshot"
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "business-missing-internal"
+    },
+    {
+      "artifact": {
+        "path": "validation/business-missing-provider.json",
+        "sha256": "f99a0cb545ec64a0579265ddd292a8bc8e1907625b63b4ba9f29943469e3db83",
+        "size_bytes": 4986
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-derived-snapshot",
+          "sha256": "3685a987f27bbbd27d32aedefd1583dbb475c1e54ae80596751f291e165f1dc4"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "MISSING_PROVIDER",
+          "snapshot_id": "evidence-missing-provider"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "HELD",
+        "observations": {
+          "producer_path": "payment-reference-live-snapshot"
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "business-missing-provider"
+    },
+    {
+      "artifact": {
+        "path": "validation/clear-finalize-replay.json",
+        "sha256": "365fc790aeba3a0c9c0f9135d34c07a2527a6c60b4ddeb255c842bf5c9c08414",
+        "size_bytes": 6659
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "38169d41bb8bcdb55ddbb7210ebd76dc1d09d0d1aa855b92c892e8bc930f95cb"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-1"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "final_publication_count": 1,
+          "finalize_replays": 2
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "clear-finalize-replay"
+    },
+    {
+      "artifact": {
+        "path": "validation/hard-crash-after-chunk-commit.json",
+        "sha256": "9e7fd9355e8dd66b96d7beff23edad7c8f9a76e0736b2208a6f2cc3bff3c4d12",
+        "size_bytes": 10181
+      },
+      "failure_point": {
+        "boundary": "chunk-after-business-commit",
+        "signal": 9,
+        "target_chunk": 2
+      },
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "f4f30f1c38cf5e02f90c19f117fbb5eed43e4378aa1fa282008331443258fe41"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-6"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "detail_count_after_kill": 4,
+          "explicit_public_recovery": true,
+          "final_publication_count": 1,
+          "new_process_continuation": true,
+          "plain_restart_rejected": true
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "hard-crash-after-chunk-commit"
+    },
+    {
+      "artifact": {
+        "path": "validation/hard-crash-after-processing-commit.json",
+        "sha256": "e63e735f2f03f15400e752fdd76098fc4a7b857daad76fed26930d64da69b4f9",
+        "size_bytes": 6863
+      },
+      "failure_point": {
+        "boundary": "after-processing-commit-before-finalization",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "02e755aad95d08b58c8df2e7cbce2e583d2a65f50f0ce0b7bfe9253edd2423ca"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-18"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "business_state_after_kill": null,
+          "final_publication_count": 1,
+          "publication_count_after_kill": 0,
+          "separate_process_finalization": true
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "hard-crash-after-processing-commit"
+    },
+    {
+      "artifact": {
+        "path": "validation/hard-crash-after-publication-commit.json",
+        "sha256": "7465cdb9f2c862a09c550aac2b14194c4ff1a06acb0327f8113e1fb8b2d62a2c",
+        "size_bytes": 6826
+      },
+      "failure_point": {
+        "boundary": "finalize-after-commit-before-ack",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "4f28972340bcf7572c03cc3d9f69bd54caf4b0b745a2b15f107418c6d042cd73"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-9"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "business_state_after_kill": "CLEAR",
+          "final_publication_count": 1,
+          "finalize_replay": true,
+          "publication_count_after_kill": 1
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "hard-crash-after-publication-commit"
+    },
+    {
+      "artifact": {
+        "path": "validation/hard-crash-before-finalize-commit.json",
+        "sha256": "aff212b73238302cbb2267d70a65415ea39df49c69636eacb5db4df438dd336d",
+        "size_bytes": 6827
+      },
+      "failure_point": {
+        "boundary": "finalize-before-commit",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "00a63324ffda386f2736e0dcc233cb972d9cdb096dd88ab001f8d0fcc1c7a931"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-12"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "business_state_after_kill": null,
+          "final_publication_count": 1,
+          "finalize_replay": true,
+          "publication_count_after_kill": 0
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "hard-crash-before-finalize-commit"
+    },
+    {
+      "artifact": {
+        "path": "validation/hard-crash-during-write.json",
+        "sha256": "c7020bd1a5001bb8d72b18bc86987ed9bd7b3071194641300ee124be60df944e",
+        "size_bytes": 10193
+      },
+      "failure_point": {
+        "boundary": "chunk-during-write",
+        "signal": 9,
+        "target_chunk": 2
+      },
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "d53ac664ebfed68421c2228c28a6c3168659266909100ca636dde98820ab081b"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "CLEAR",
+          "snapshot_id": "clear-26132-15"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "CLEAR",
+        "observations": {
+          "detail_count_after_kill": 2,
+          "explicit_public_recovery": true,
+          "final_publication_count": 1,
+          "new_process_continuation": true,
+          "plain_restart_rejected": true
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "hard-crash-during-write"
+    },
+    {
+      "artifact": {
+        "path": "validation/held-finalize-replay.json",
+        "sha256": "bc9c3d951febe303e160b69a01535ae819cde47b0eca8d10ea10c4615cbb79ef",
+        "size_bytes": 9649
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "deterministic-frozen-recovery-fixture",
+          "sha256": "5e97c0968eeefd7092c5e25ed2d3db01e3caca4afdac3943ee52d6cd4a4198b7"
+        },
+        "reproduction": {
+          "contract_version": "payment-reconciliation-v1",
+          "scenario_case": "AMOUNT_MISMATCH",
+          "snapshot_id": "held-26132-5"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 148,
+        "expected_business_state": "HELD",
+        "observations": {
+          "final_publication_count": 0,
+          "finalize_replays": 2
+        },
+        "validation_subject": "oxide-batch 0.6.0"
+      },
+      "scenario": "held-finalize-replay"
+    }
+  ],
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 12,
+      "max_total_bytes": 262144,
+      "supersession": "One canonical #148 supplemental business/recovery evidence set; replacement requires an atomic manifest, verifier and artifact update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "schema_version": 2,
+  "semantic_closure": {
+    "algorithm": "sha256-git-tree-entries-v1",
+    "digest_sha256": "8286d9ed26df3d60034d8cbe017c4ed86e49e1398e7c2b2765ef14c5cd4490c8",
+    "entries": [
+      {
+        "git_blob_oid": "11266e95bcd96e8b775ef6e2b05fa20e70ed0832",
+        "mode": "100644",
+        "path": "Cargo.lock"
+      },
+      {
+        "git_blob_oid": "da784a944fcca1c9f51b1eb900400e10110ba6cd",
+        "mode": "100644",
+        "path": "Cargo.toml"
+      },
+      {
+        "git_blob_oid": "9604666d603ad710dc9d646c77ea59a80e7fec83",
+        "mode": "100755",
+        "path": "ci/validate"
+      },
+      {
+        "git_blob_oid": "930e27db4ab8cd89ee65e64ff42b50fb2fab526e",
+        "mode": "100644",
+        "path": "docker-compose.yml"
+      },
+      {
+        "git_blob_oid": "b130cd179f0eb06bc339fd87e5e31ec5c21b9fb6",
+        "mode": "100755",
+        "path": "evidence/build-manifest.py"
+      },
+      {
+        "git_blob_oid": "a1e597b0d295506450961d7ee31382bcb644c598",
+        "mode": "100755",
+        "path": "evidence/produce.sh"
+      },
+      {
+        "git_blob_oid": "6ef1e9422f01151e929ab2096595938c5c17b843",
+        "mode": "100755",
+        "path": "evidence/test_verify_retained_evidence.py"
+      },
+      {
+        "git_blob_oid": "37b5286fbf69ffe1e48be7475d5f247971acd4a5",
+        "mode": "100755",
+        "path": "evidence/verify-retained-evidence.py"
+      },
+      {
+        "git_blob_oid": "978de3a01631dcda72491e23b94661780fa84775",
+        "mode": "100755",
+        "path": "evidence/wrap-business.py"
+      },
+      {
+        "git_blob_oid": "032b9c2bb1f22b1caa5a93b1e2b160fddd9c81fb",
+        "mode": "100644",
+        "path": "migrations/0001_init.sql"
+      },
+      {
+        "git_blob_oid": "394fe30f5a47a427ed6ca39ebae18d447fc70bd3",
+        "mode": "100644",
+        "path": "migrations/0002_processing.sql"
+      },
+      {
+        "git_blob_oid": "b85e49d1cd4b8de7d03a0699ff532b6fbf3a545a",
+        "mode": "100644",
+        "path": "src/evidence.rs"
+      },
+      {
+        "git_blob_oid": "ca0d1f5794f0c68103b2cf5916aa591f5995c347",
+        "mode": "100644",
+        "path": "src/failpoint.rs"
+      },
+      {
+        "git_blob_oid": "639625dc1aa2179c9b9c4f4b3fc91a24d885add8",
+        "mode": "100644",
+        "path": "src/finalize.rs"
+      },
+      {
+        "git_blob_oid": "f390854e5f9fa76bd779156d42ed003c524a15bf",
+        "mode": "100644",
+        "path": "src/finalize_failpoint.rs"
+      },
+      {
+        "git_blob_oid": "1df99cc42f6d1fdf2fea53da1398c9ff42cf0ca1",
+        "mode": "100644",
+        "path": "src/job.rs"
+      },
+      {
+        "git_blob_oid": "3441ec1f7238386c33dc84e4595eed79a3bbf2f0",
+        "mode": "100644",
+        "path": "src/main.rs"
+      },
+      {
+        "git_blob_oid": "31cae2749e4a5e5ab05d589e1e16d9f9b1bf3f42",
+        "mode": "100644",
+        "path": "src/model.rs"
+      },
+      {
+        "git_blob_oid": "dbc7be7817510147b53ae4eb6ea7a8a76e85e87e",
+        "mode": "100644",
+        "path": "src/oracle.rs"
+      },
+      {
+        "git_blob_oid": "d0900462472ba00b2aa1e1398d58db5cd57388a7",
+        "mode": "100644",
+        "path": "src/processor.rs"
+      },
+      {
+        "git_blob_oid": "fb102d610ac1ffc25b38c82e937a7ccaf88c9950",
+        "mode": "100644",
+        "path": "src/snapshot.rs"
+      },
+      {
+        "git_blob_oid": "f756c6ccc445218503a7fc06133afa90139c5009",
+        "mode": "100644",
+        "path": "src/writer.rs"
+      },
+      {
+        "git_blob_oid": "714fe7d5ad4eb8d00fb849e4aa7856ad7fbef5ad",
+        "mode": "100644",
+        "path": "tests/recovery_matrix.rs"
+      }
+    ],
+    "excluded_generated_paths": [
+      "validation/business-amount-mismatch.json",
+      "validation/business-clear.json",
+      "validation/business-duplicate-provider.json",
+      "validation/business-missing-internal.json",
+      "validation/business-missing-provider.json",
+      "validation/clear-finalize-replay.json",
+      "validation/hard-crash-after-chunk-commit.json",
+      "validation/hard-crash-after-processing-commit.json",
+      "validation/hard-crash-after-publication-commit.json",
+      "validation/hard-crash-before-finalize-commit.json",
+      "validation/hard-crash-during-write.json",
+      "validation/held-finalize-replay.json"
+    ],
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "src",
+      "migrations",
+      "tests/recovery_matrix.rs",
+      "docker-compose.yml",
+      "ci/validate",
+      "evidence"
+    ]
+  },
+  "validation_subject": {
+    "crates": [
+      {
+        "checksum": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b",
+        "name": "oxide-batch",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.6.0"
+      }
+    ],
+    "lockfile": {
+      "git_blob_oid": "11266e95bcd96e8b775ef6e2b05fa20e70ed0832",
+      "path": "Cargo.lock"
+    }
+  },
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-retained-evidence.py",
+      "result_model": "violations-v1",
+      "sha256": "cd196baef94f071582dd8961738ca91103177558f029686acaaadba83c6ff31c"
+    },
+    "producer": {
+      "git_blob_oid": "37b5286fbf69ffe1e48be7475d5f247971acd4a5",
+      "path": "evidence/verify-retained-evidence.py"
+    }
+  },
+  "workload": "payment-reconciliation-postgres"
+}

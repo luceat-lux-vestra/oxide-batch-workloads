@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "campaign_issue": 148,
+  "classification": "supplemental exact-artifact v0.6.0 business/reference-system evidence",
+  "scenario": "business-missing-internal",
+  "source_kind": "payment-reference-derived-snapshot",
+  "failure_point": null,
+  "observations": {
+    "producer_path": "payment-reference-live-snapshot"
+  },
+  "producer_report": {
+    "schema_version": 1,
+    "campaign_issue": 148,
+    "classification": "supplemental exact-artifact v0.6.0 business/reference-system evidence",
+    "snapshot": {
+      "metadata": {
+        "snapshot_id": "evidence-missing-internal",
+        "business_date": "2026-11-15",
+        "provider_scope": "merchant-evidence",
+        "scenario_case": "MISSING_INTERNAL",
+        "base_snapshot_id": "evidence-live-clear",
+        "internal_snapshot_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "provider_snapshot_digest": "cb49cf9686b9dcb91bf8664e13473a299157197b2b7553e5a69365aaf56764e9",
+        "policy_version": "payment-reconciliation-policy-v1"
+      },
+      "internal": [],
+      "provider": [
+        {
+          "source_row_id": "provider:kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "authorized_amount_minor": 1000,
+          "captured_amount_minor": 1000,
+          "refunded_amount_minor": 0,
+          "provider_version": 3
+        }
+      ],
+      "mutation_recipe": {
+        "kind": "MISSING_INTERNAL",
+        "target_provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29"
+      }
+    },
+    "base_snapshot": {
+      "metadata": {
+        "snapshot_id": "evidence-live-clear",
+        "business_date": "2026-11-15",
+        "provider_scope": "merchant-evidence",
+        "scenario_case": "CLEAR",
+        "base_snapshot_id": null,
+        "internal_snapshot_digest": "eacc169c812bad045bae50b502e608c54bbc441e13c2a284dfd7620e3a1e9c5b",
+        "provider_snapshot_digest": "cb49cf9686b9dcb91bf8664e13473a299157197b2b7553e5a69365aaf56764e9",
+        "policy_version": "payment-reconciliation-policy-v1"
+      },
+      "internal": [
+        {
+          "source_row_id": "internal:payment-evidence",
+          "merchant_payment_id": "payment-evidence",
+          "provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "authorized_amount_minor": 1000,
+          "captured_amount_minor": 1000,
+          "refunded_amount_minor": 0
+        }
+      ],
+      "provider": [
+        {
+          "source_row_id": "provider:kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "currency": "USD",
+          "normalized_status": "CAPTURED",
+          "authorized_amount_minor": 1000,
+          "captured_amount_minor": 1000,
+          "refunded_amount_minor": 0,
+          "provider_version": 3
+        }
+      ],
+      "mutation_recipe": {
+        "business_date_basis": "Merchant created_at projected to UTC date",
+        "kind": "payment-reference-base",
+        "merchant_source": "payment_reference_merchant PostgreSQL",
+        "provider_source": "payment-sandbox GET /payments/{provider_payment_id}"
+      }
+    },
+    "oracle": {
+      "business_state": "HELD",
+      "mismatch_count": 1,
+      "aggregate_delta_minor": 2000,
+      "result_digest": "00b8f1b6f4bd09ec3cd4550da0fca3c25a102046fdca27c0256f92e32ccc3017",
+      "details": [
+        {
+          "provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "classification": "MISSING_INTERNAL",
+          "internal_row_count": 0,
+          "provider_row_count": 1,
+          "internal_currency": null,
+          "provider_currency": "USD",
+          "internal_status": null,
+          "provider_status": "CAPTURED",
+          "authorized_delta_minor": null,
+          "captured_delta_minor": null,
+          "refunded_delta_minor": null
+        }
+      ]
+    },
+    "actual": {
+      "run_id": "f2d00ebab2d0f08c0a42e5905a6ecbb2d435084365caa369a4f82287fc3864a8",
+      "processing_state": "PROCESSED",
+      "business_state": "HELD",
+      "mismatch_count": 1,
+      "aggregate_delta_minor": 2000,
+      "result_digest": "00b8f1b6f4bd09ec3cd4550da0fca3c25a102046fdca27c0256f92e32ccc3017",
+      "details": [
+        {
+          "provider_payment_id": "kb-942fb49b-eb4b-43d7-9837-5a76f72fba29",
+          "classification": "MISSING_INTERNAL",
+          "internal_row_count": 0,
+          "provider_row_count": 1,
+          "internal_currency": null,
+          "provider_currency": "USD",
+          "internal_status": null,
+          "provider_status": "CAPTURED",
+          "authorized_delta_minor": null,
+          "captured_delta_minor": null,
+          "refunded_delta_minor": null
+        }
+      ],
+      "published_count": 0
+    },
+    "violations": []
+  }
+}

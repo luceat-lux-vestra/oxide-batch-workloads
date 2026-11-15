@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workload_dir="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(cd "$workload_dir/.." && pwd)"
+cd "$workload_dir"
+
+: "${GITHUB_SHA:?GITHUB_SHA is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+rm -rf validation
+mkdir -p validation
+cp evidence/verify-retained-evidence.py validation/verify-retained-evidence.py
+
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo build --locked --all-targets
+python3 evidence/test_verify_retained_evidence.py
+
+docker compose up -d --wait --wait-timeout 60
+cleanup() {
+  docker compose down --volumes || true
+  (cd "$repo_root/payment-reference/deploy" && docker compose -f compose.yaml down --volumes) || true
+}
+trap cleanup EXIT
+
+target/debug/payment-reconciliation-postgres migrate
+
+PAYMENT_REFERENCE_RESULT_PATH="${RUNNER_TEMP:-/tmp}/payment-reference-scenario-result.json"   "$repo_root/payment-reference/deploy/smoke.sh"
+
+# Build one stable Reference Merchant-owned payment. The baseline smoke's
+# stable happy paths intentionally exercise Gateway directly; its existing
+# integrated Merchant case is a retry-pending provider-503 negative case.
+merchant_base="http://127.0.0.1:18083"
+fault_proxy_base="http://127.0.0.1:18081"
+curl --fail --silent --show-error --request POST "$fault_proxy_base/__fault/reset" >/dev/null
+
+post_json() {
+  local url="$1"
+  local body="$2"
+  local output="$3"
+  curl --fail --silent --show-error --request POST --header 'Content-Type: application/json' --data "$body" "$url" >"$output"
+}
+
+post_json "$merchant_base/merchants" '{"merchantId":"merchant-evidence","displayName":"Reconciliation evidence merchant"}' "${RUNNER_TEMP:-/tmp}/evidence-merchant.json"
+post_json "$merchant_base/customers" '{"customerId":"customer-evidence","displayName":"Reconciliation evidence customer"}' "${RUNNER_TEMP:-/tmp}/evidence-customer.json"
+post_json "$merchant_base/orders" '{"merchantOrderId":"order-evidence","merchantId":"merchant-evidence","customerId":"customer-evidence","amountMinor":1000,"currency":"USD"}' "${RUNNER_TEMP:-/tmp}/evidence-order.json"
+post_json "$merchant_base/orders/order-evidence/payments" '{"merchantPaymentId":"payment-evidence","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-evidence"}' "${RUNNER_TEMP:-/tmp}/evidence-payment.json"
+post_json "$merchant_base/payments/payment-evidence/auth-capture" '{"operationId":"op-evidence-auth-capture","amountMinor":1000,"idempotencyKey":"idem-evidence-auth-capture"}' "${RUNNER_TEMP:-/tmp}/evidence-auth-capture.json"
+
+jq -e '.merchantPaymentId == "payment-evidence"
+  and .paymentState == "PAID"
+  and .operationState == "SUCCEEDED"
+  and ((.mapping.providerPaymentId | type) == "string")
+  and ((.mapping.providerPaymentId | length) > 0)' "${RUNNER_TEMP:-/tmp}/evidence-auth-capture.json" >/dev/null
+
+business_dates="$(
+  cd "$repo_root/payment-reference/deploy"
+  docker compose -f compose.yaml exec -T merchant-db     psql -U merchant -d merchant -Atc "
+      SELECT DISTINCT (mp.created_at AT TIME ZONE 'UTC')::date::text
+      FROM payment_reference_merchant.merchant_payment mp
+      JOIN payment_reference_merchant.orders o
+        ON o.merchant_order_id = mp.merchant_order_id
+      WHERE o.merchant_id = 'merchant-evidence'
+        AND mp.payment_state IN ('AUTHORIZED', 'PAID', 'REFUNDED')
+      ORDER BY 1"
+)"
+business_date="$(printf '%s\n' "$business_dates" | sed '/^$/d' | head -n 1)"
+business_date_count="$(printf '%s\n' "$business_dates" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [[ "$business_date_count" != "1" || -z "$business_date" ]]; then
+  echo "expected exactly one stable merchant-evidence UTC business date, observed: $business_dates" >&2
+  exit 1
+fi
+
+merchant_db="postgresql://merchant:merchant-local-only@127.0.0.1:15435/merchant"
+provider_base="http://127.0.0.1:18084"
+
+target/debug/payment-reconciliation-postgres snapshot   --database-url "$DATABASE_URL"   --merchant-database-url "$merchant_db"   --provider-base-url "$provider_base"   --snapshot-id evidence-live-clear   --business-date "$business_date"   --provider-scope merchant-evidence
+
+for spec in   "business-missing-provider:evidence-missing-provider:missing-provider"   "business-missing-internal:evidence-missing-internal:missing-internal"   "business-duplicate-provider:evidence-duplicate-provider:duplicate-provider"   "business-amount-mismatch:evidence-amount-mismatch:amount-mismatch"; do
+  IFS=: read -r _scenario snapshot scenario <<<"$spec"
+  target/debug/payment-reconciliation-postgres derive-scenario     --database-url "$DATABASE_URL"     --base-snapshot-id evidence-live-clear     --snapshot-id "$snapshot"     --scenario "$scenario"     --delta-minor 1
+done
+
+produce_business() {
+  scenario="$1"; snapshot="$2"; source_kind="$3"
+  target/debug/payment-reconciliation-postgres run --database-url "$DATABASE_URL" --snapshot-id "$snapshot" --chunk-size 2 --page-size 2
+  target/debug/payment-reconciliation-postgres finalize --database-url "$DATABASE_URL" --snapshot-id "$snapshot"
+  target/debug/payment-reconciliation-postgres verify --database-url "$DATABASE_URL" --snapshot-id "$snapshot" > "${RUNNER_TEMP:-/tmp}/report.json"
+  python3 evidence/wrap-business.py --scenario "$scenario" --source-kind "$source_kind"     --report "${RUNNER_TEMP:-/tmp}/report.json" --output "validation/$scenario.json"
+}
+
+produce_business business-clear evidence-live-clear payment-reference-live-base
+produce_business business-missing-provider evidence-missing-provider payment-reference-derived-snapshot
+produce_business business-missing-internal evidence-missing-internal payment-reference-derived-snapshot
+produce_business business-duplicate-provider evidence-duplicate-provider payment-reference-derived-snapshot
+produce_business business-amount-mismatch evidence-amount-mismatch payment-reference-derived-snapshot
+
+PAYMENT_RECONCILIATION_EVIDENCE_DIR="$workload_dir/validation"   cargo test --locked --test recovery_matrix -- --test-threads=1
+
+rustc_version="$(rustc --version)"
+cargo_version="$(cargo --version)"
+postgres_version="$(docker compose exec -T postgres postgres --version | tr -d '\r')"
+python3 evidence/build-manifest.py   --validation-dir validation   --producer-sha "$GITHUB_SHA"   --run-url "$run_url"   --rustc "$rustc_version"   --cargo "$cargo_version"   --postgres "$postgres_version"
+
+python3 validation/verify-retained-evidence.py --manifest validation/evidence-manifest.json
+cd "$repo_root"
+python3 .github/scripts/validate-evidence.py
