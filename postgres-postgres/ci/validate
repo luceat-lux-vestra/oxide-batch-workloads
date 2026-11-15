@@ -683,6 +683,9 @@ run_ci_stage() {
   run_raw_sqlx_static_guards
   run_raw_jdbc_static_guards
 
+  echo "profile manifest contract tests"
+  python3 benchmark/test_profile_manifest.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
