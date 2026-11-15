@@ -42,7 +42,20 @@ run_crash_case() {
     --provider-base-url "$provider_base" --run-id "$run_id" --chunk-size 1 --page-size 1 \
     >/tmp/"$run_id"-recover.json
   jq -e '.processing_generation == 1 and .launched == true' /tmp/"$run_id"-recover.json >/dev/null
-  [[ "$(result_classification "$run_id")" == "RESOLVED_SUCCEEDED" ]] || fail "$point did not resolve success"
+  if [[ "$(result_classification "$run_id")" != "RESOLVED_SUCCEEDED" ]]; then
+    echo "=== $point recovery diagnostics ===" >&2
+    echo "--- recover report ---" >&2
+    cat /tmp/"$run_id"-recover.json >&2 || true
+    echo "--- candidate ---" >&2
+    candidate_json "$run_id" >&2 || true
+    echo "--- attempts ---" >&2
+    attempts_json "$run_id" >&2 || true
+    echo "--- result ---" >&2
+    result_json "$run_id" >&2 || true
+    echo "--- fault proxy ---" >&2
+    fault_summary_json >&2 || true
+    fail "$point did not resolve success"
+  fi
   [[ "$(authorize_forward_count)" == "1" ]] || fail "$point repeated provider authorize"
 
   "$binary" run \
