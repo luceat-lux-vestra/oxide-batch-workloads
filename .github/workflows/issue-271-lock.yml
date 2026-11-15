@@ -1,0 +1,37 @@
+name: "Temporary #271 lockfile materializer"
+
+on:
+  push:
+    branches:
+      - issue-271-payment-recovery-scaffold
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    if: github.repository == 'luceat-lux-vestra/oxide-batch-workloads'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact branch source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - name: Materialize minimal lockfile update
+        working-directory: payment-recovery-postgres
+        run: |
+          cargo check --all-targets
+          echo 'LOCKFILE_BASE64_BEGIN'
+          base64 -w0 Cargo.lock
+          echo
+          echo 'LOCKFILE_BASE64_END'
+          git diff --exit-code -- Cargo.toml || {
+            echo 'Cargo.toml unexpectedly changed' >&2
+            exit 1
+          }
