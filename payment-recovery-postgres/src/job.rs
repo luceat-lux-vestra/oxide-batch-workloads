@@ -263,7 +263,10 @@ pub async fn run(request: RunRequest<'_>) -> anyhow::Result<RunReport> {
     )
     .await?;
     if status != BatchStatus::Completed {
-        anyhow::bail!("payment recovery execution ended with status {status}, not Completed");
+        anyhow::bail!(
+            "payment recovery execution ended with status {status}, not Completed (run_id={})",
+            metadata.run_id
+        );
     }
 
     mark_cycle_processed(

@@ -1,4 +1,5 @@
 run_identity_conflict_case() {
+  printf 'payment-recovery scenario start=identity-conflict-hold\n' >&2
   local suffix="identity-conflict" run_id="run-identity-conflict" amount=901
   local phases_file side_file
   phases_file="$(mktemp)"; side_file="$(mktemp)"
@@ -73,6 +74,7 @@ seed_failed_provider_overlay() {
 }
 
 run_async_failure_case() {
+  printf 'payment-recovery scenario start=async-failure-convergence\n' >&2
   local suffix="async-failure" run_id="run-async-failure" amount=912
   local phases_file side_file provider_id transition_effect
   phases_file="$(mktemp)"; side_file="$(mktemp)"

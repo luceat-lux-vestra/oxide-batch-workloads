@@ -3,6 +3,7 @@ run_crash_case() {
   local suffix="crash-${ordinal}" run_id="run-crash-${ordinal}"
   local marker="/tmp/payment-recovery-${ordinal}.marker"
   local phases_file side_file candidate marker_pid after_kill_state after_kill_attempts
+  printf 'payment-recovery scenario start=%s\n' "$scenario" >&2
   phases_file="$(mktemp)"; side_file="$(mktemp)"
 
   create_ambiguous_candidate "$suffix" "$((700 + ordinal))"
@@ -77,6 +78,7 @@ run_crash_case() {
 }
 
 run_retry_later_generation_case() {
+  printf 'payment-recovery scenario start=pre-side-effect-transient\n' >&2
   local suffix="retry-later" run_id="run-retry-later" amount=503
   local phases_file side_file
   phases_file="$(mktemp)"; side_file="$(mktemp)"
@@ -112,6 +114,7 @@ run_retry_later_generation_case() {
 
 run_visibility_case() {
   local mode="$1" scenario="$2" ordinal="$3"
+  printf 'payment-recovery scenario start=%s\n' "$scenario" >&2
   local suffix="visibility-${ordinal}" run_id="run-visibility-${ordinal}"
   local phases_file side_file
   phases_file="$(mktemp)"; side_file="$(mktemp)"
