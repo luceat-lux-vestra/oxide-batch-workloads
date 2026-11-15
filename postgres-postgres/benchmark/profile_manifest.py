@@ -175,6 +175,9 @@ def validate_instrumentation(instrumentation: dict[str, Any], lane: str) -> None
 
 
 def validate_artifacts(artifacts: list[Any]) -> None:
+    if not artifacts:
+        fail("artifacts must retain at least one raw evidence artifact")
+
     seen: set[str] = set()
     for index, artifact in enumerate(artifacts):
         item = require_dict(artifact, f"artifacts[{index}]")

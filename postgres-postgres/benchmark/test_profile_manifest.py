@@ -179,6 +179,14 @@ class ProfileManifestTests(unittest.TestCase):
         ):
             profile_manifest.validate_manifest(document)
 
+    def test_rejects_empty_artifact_set(self) -> None:
+        document = valid_manifest()
+        document["artifacts"] = []
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "at least one raw evidence artifact"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_rejects_unsafe_artifact_path(self) -> None:
         document = valid_manifest()
         document["artifacts"][0]["path"] = "../outside.json"
