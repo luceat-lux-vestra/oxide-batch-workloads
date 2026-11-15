@@ -122,6 +122,14 @@ class ProfileManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(profile_manifest.ManifestError, "must not attach"):
             profile_manifest.validate_manifest(document)
 
+    def test_cpu_lane_requires_profiler_attachment(self) -> None:
+        document = valid_manifest(lane="cpu")
+        document["instrumentation"]["profiler_attached"] = False
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "requires profiler attachment"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_profile_lane_rejects_benchmark_timing(self) -> None:
         document = valid_manifest(lane="cpu")
         document["benchmark_timing"] = {
@@ -147,6 +155,14 @@ class ProfileManifestTests(unittest.TestCase):
         ):
             profile_manifest.validate_manifest(document)
 
+    def test_allocator_identity_requires_pinned_wrapper(self) -> None:
+        document = valid_manifest(allocator="jemalloc")
+        document["allocator"]["wrapper"]["name"] = "mimalloc"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "must use pinned wrapper"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_unavailable_upstream_requires_reason(self) -> None:
         document = valid_manifest(allocator="mimalloc")
         document["allocator"]["upstream"]["reason"] = ""
@@ -168,6 +184,14 @@ class ProfileManifestTests(unittest.TestCase):
         document["artifacts"][0]["path"] = "../outside.json"
         with self.assertRaisesRegex(
             profile_manifest.ManifestError, "relative raw-artifact path"
+        ):
+            profile_manifest.validate_manifest(document)
+
+    def test_pass_requires_matching_digests(self) -> None:
+        document = valid_manifest()
+        document["correctness"]["actual_digest_sha256"] = "f" * 64
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "PASS requires matching"
         ):
             profile_manifest.validate_manifest(document)
 

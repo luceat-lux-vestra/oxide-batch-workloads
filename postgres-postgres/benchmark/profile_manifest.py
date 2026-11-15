@@ -14,6 +14,10 @@ CAMPAIGN = 266
 OXIDE_BATCH_VERSION = "0.6.0"
 LANES = {"benchmark", "cpu", "heap", "timeline", "allocator", "os-process"}
 ALLOCATORS = {"system", "jemalloc", "mimalloc"}
+WRAPPERS = {
+    "jemalloc": ("tikv-jemallocator", "0.7.0"),
+    "mimalloc": ("mimalloc", "0.1.52"),
+}
 READERS = {"cursor", "paging"}
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
@@ -102,8 +106,14 @@ def validate_allocator(allocator: dict[str, Any]) -> None:
             fail("allocator.wrapper must be null for the system allocator")
     else:
         wrapper_obj = require_dict(wrapper, "allocator.wrapper")
-        require_string(wrapper_obj.get("name"), "allocator.wrapper.name")
-        require_string(wrapper_obj.get("version"), "allocator.wrapper.version")
+        name = require_string(wrapper_obj.get("name"), "allocator.wrapper.name")
+        version = require_string(wrapper_obj.get("version"), "allocator.wrapper.version")
+        if (name, version) != WRAPPERS[identity]:
+            expected_name, expected_version = WRAPPERS[identity]
+            fail(
+                f"allocator {identity} must use pinned wrapper "
+                f"{expected_name} {expected_version}"
+            )
 
 
 def validate_environment(environment: dict[str, Any]) -> None:
@@ -157,6 +167,11 @@ def validate_instrumentation(instrumentation: dict[str, Any], lane: str) -> None
 
     if lane == "benchmark" and profiler_attached:
         fail("benchmark lane must not attach a profiler")
+    if lane in {"cpu", "heap"}:
+        if not profiler_attached:
+            fail(f"{lane} lane requires profiler attachment")
+        if not tools:
+            fail(f"{lane} lane requires at least one profiler tool")
 
 
 def validate_artifacts(artifacts: list[Any]) -> None:
@@ -178,16 +193,18 @@ def validate_correctness(correctness: dict[str, Any]) -> None:
     if correctness.get("verdict") not in {"PASS", "FAIL"}:
         fail("correctness.verdict must be PASS or FAIL")
     require_string(correctness.get("verifier"), "correctness.verifier")
-    require_sha(
+    expected = require_sha(
         correctness.get("expected_digest_sha256"),
         "correctness.expected_digest_sha256",
         SHA64,
     )
-    require_sha(
+    actual = require_sha(
         correctness.get("actual_digest_sha256"),
         "correctness.actual_digest_sha256",
         SHA64,
     )
+    if correctness.get("verdict") == "PASS" and expected != actual:
+        fail("correctness PASS requires matching expected/actual digests")
 
 
 def validate_manifest(document: Any) -> None:
