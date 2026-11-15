@@ -127,6 +127,9 @@ enum Command {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    let _allocator_background_actions =
+        postgres_postgres::allocator::initialize_selected_allocator();
+
     // Defaults to info (per-job/per-step/per-chunk progress, never
     // per-row) so useful diagnostics are visible without an operator
     // needing to know to set RUST_LOG first; still fully overridable.
