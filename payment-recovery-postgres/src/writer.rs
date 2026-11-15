@@ -28,7 +28,7 @@ INSERT INTO payment_recovery_workload.payment_recovery_attempt (
     outcome_kind,
     completed_at
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+VALUES ($1,$2,$3,$4,$5,$6::BIGINT,$7,$8,$9,$10,$11,$12,$13,$14,$15::BIGINT,$16::BIGINT,$17::BIGINT,$18,NOW())
 ";
 
 const RESULT_UPSERT: &str = "
@@ -183,6 +183,16 @@ fn classify_transaction_error(error: BusinessTransactionError) -> WriterError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nullable_bigint_parameters_have_explicit_casts() {
+        // OxideBatch 0.7.0 binds BusinessValue::null() as a textual NULL.
+        // Explicit SQL casts preserve nullable BIGINT fields without bypassing
+        // the public enlisted business transaction boundary.
+        for param in ["$6::BIGINT", "$15::BIGINT", "$16::BIGINT", "$17::BIGINT"] {
+            assert!(ATTEMPT_INSERT.contains(param), "missing cast for {param}");
+        }
+    }
 
     #[test]
     fn audit_and_result_sql_do_not_touch_framework_metadata() {
