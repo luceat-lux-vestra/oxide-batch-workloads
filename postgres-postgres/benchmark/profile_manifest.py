@@ -13,6 +13,10 @@ from typing import Any
 SCHEMA = "oxide-batch-profile-manifest/v1"
 CAMPAIGN = 266
 OXIDE_BATCH_VERSION = "0.6.0"
+CRATES_IO_SOURCES = {
+    "registry+https://github.com/rust-lang/crates.io-index",
+    "sparse+https://index.crates.io/",
+}
 LANES = {"benchmark", "cpu", "heap", "timeline", "allocator", "os-process"}
 ALLOCATORS = {"system", "jemalloc", "mimalloc"}
 WRAPPERS = {
@@ -77,8 +81,8 @@ def validate_subject(subject: dict[str, Any]) -> None:
     if oxide.get("version") != OXIDE_BATCH_VERSION:
         fail(f"subject.oxide_batch.version must be '{OXIDE_BATCH_VERSION}'")
     source = require_string(oxide.get("source"), "subject.oxide_batch.source")
-    if not source.startswith("registry+"):
-        fail("subject.oxide_batch.source must identify registry provenance")
+    if source not in CRATES_IO_SOURCES:
+        fail("subject.oxide_batch.source must identify canonical crates.io provenance")
     require_sha(oxide.get("checksum"), "subject.oxide_batch.checksum", SHA64)
 
 

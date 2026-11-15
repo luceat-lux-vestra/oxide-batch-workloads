@@ -154,6 +154,19 @@ class ProfileManifestTests(unittest.TestCase):
                 ):
                     profile_manifest.validate_manifest(document)
 
+    def test_accepts_sparse_crates_io_subject_provenance(self) -> None:
+        document = valid_manifest()
+        document["subject"]["oxide_batch"]["source"] = "sparse+https://index.crates.io/"
+        profile_manifest.validate_manifest(document)
+
+    def test_rejects_non_canonical_registry_subject_provenance(self) -> None:
+        document = valid_manifest()
+        document["subject"]["oxide_batch"]["source"] = "registry+https://example.test/index"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "canonical crates.io provenance"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_rejects_non_published_oxide_batch_subject(self) -> None:
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
