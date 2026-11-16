@@ -3,6 +3,7 @@ import importlib.util
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 MODULE_PATH = pathlib.Path(__file__).with_name("perfetto_heap_probe.py")
 SPEC = importlib.util.spec_from_file_location("perfetto_heap_probe", MODULE_PATH)
@@ -44,6 +45,38 @@ class PerfettoHeapProbeTests(unittest.TestCase):
                 perfetto_heap_probe.git_blob_sha1(path),
                 "ce013625030ba8dba906f756967f9e9ca394464a",
             )
+
+    def test_llvm_symbolizer_record_is_fail_closed(self) -> None:
+        with mock.patch.object(
+            perfetto_heap_probe.shutil,
+            "which",
+            return_value=None,
+        ):
+            record = perfetto_heap_probe.llvm_symbolizer_record()
+        self.assertFalse(record["available"])
+        self.assertIsNone(record["path"])
+        self.assertIsNone(record["version"])
+
+        completed = __import__("subprocess").CompletedProcess(
+            ["llvm-symbolizer", "--version"],
+            0,
+            stdout="llvm-symbolizer version 18.1.3\n",
+            stderr="",
+        )
+        with mock.patch.object(
+            perfetto_heap_probe.shutil,
+            "which",
+            return_value="/usr/bin/llvm-symbolizer",
+        ), mock.patch.object(
+            perfetto_heap_probe.subprocess,
+            "run",
+            return_value=completed,
+        ):
+            record = perfetto_heap_probe.llvm_symbolizer_record()
+        self.assertTrue(record["available"])
+        self.assertEqual(record["path"], "/usr/bin/llvm-symbolizer")
+        self.assertEqual(record["version"], "llvm-symbolizer version 18.1.3")
+        self.assertEqual(record["version_exit_status"], 0)
 
     def test_replacement_allocator_dependency_guard(self) -> None:
         safe = [
@@ -222,6 +255,7 @@ raise SystemExit(9)
             provenance_ok=True,
             dependency_ok=True,
             compile_ok=True,
+            symbolizer_ok=True,
             profiler_exit_status=0,
             raw_trace_bytes=1024,
             pprof_count=1,
@@ -238,6 +272,7 @@ raise SystemExit(9)
             ("provenance_ok", False),
             ("dependency_ok", False),
             ("compile_ok", False),
+            ("symbolizer_ok", False),
             ("profiler_exit_status", 1),
             ("raw_trace_bytes", 0),
             ("pprof_count", 0),

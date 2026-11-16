@@ -637,6 +637,8 @@ known noinline allocation function
 
 - sampling interval `1`, Perfetto's fully accurate high-overhead mode;
 - explicit pinned tracebox, preload, and trace processor paths;
+- a required, version-recorded `llvm-symbolizer` on `PATH` for native
+  symbolization;
 - blocking-client mode so the bounded capability run fails by latency rather
   than silently losing allocation events;
 - a retained raw Perfetto trace plus the generated gzipped pprof projections;
@@ -700,6 +702,37 @@ The upstream trace processor binary remains byte-for-byte pinned and is still
 used directly for all SQL evidence queries. The shim is campaign-owned,
 retained with SHA-256 evidence, and covered by dependency-free CI tests.
 
+### Second hosted ARM64 Perfetto run: missing llvm-symbolizer prerequisite
+
+Authoritative run `43875632737` on exact main
+`ccb8a69f62e8b85598e6e891f2a622a18fc27cc7` passed pinned provisioning and
+used the retained traceconv compatibility shim, but it still did not reach a
+valid unwind/symbolization classification.
+
+Retained evidence showed:
+
+- all pinned source/prebuilt identities matched exactly;
+- allocator semantics were still system/glibc;
+- the known C probe compiled successfully;
+- heapprofd connected, collected, shut down cleanly, and retained a non-empty
+  `raw-trace` (2,063 bytes);
+- the compatibility shim was present and retained with its SHA-256;
+- Perfetto then logged `Failed to exec llvm-symbolizer (errno: 2)`;
+- no symbolized trace or pprof projection was produced;
+- therefore allocation SQL / known-symbol gates were not reached.
+
+Perfetto's own native-symbolization documentation requires
+`llvm-symbolizer` on `PATH` and recommends installing the `llvm` package
+on Debian/Ubuntu. This run is classified as an **environment prerequisite
+failure**, not a heapprofd collection failure and not evidence that hosted ARM64
+unwinding is unsupported.
+
+The producer now records the exact observed `llvm-symbolizer` path/version and
+fails closed before profiling when it is unavailable. The manual workflow
+ensures the prerequisite is present (installing Ubuntu's `llvm` package when
+necessary) and retains a separate `perfetto-symbolizer.json` document with
+the install result, path, version, and availability verdict.
+
 ### Manual hosted ARM64 qualification workflow
 
 `.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and
@@ -709,6 +742,7 @@ the OxideBatch workload.
 The workflow retains:
 - exact repository SHA/run context;
 - per-download status plus observed size/hash/executable-bit evidence;
+- `llvm-symbolizer` install status, path, and exact observed version;
 - the capability document and all producer-retained raw/projection artifacts;
 - evidence even when provisioning or capability qualification fails.
 
