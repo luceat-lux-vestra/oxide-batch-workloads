@@ -854,16 +854,57 @@ provisioning, capability qualification, or retained-evidence validation did not
 pass. Therefore a red workflow remains a meaningful unsupported/blocked
 qualification artifact instead of losing the diagnostic state.
 
+### Manual hosted ARM64 Perfetto workload workflow
+
+`.github/workflows/profile-postgres-postgres-perfetto-heap.yml` is the
+manual runtime wrapper for the qualified Perfetto workload producer.
+
+It intentionally exposes no workflow inputs. The runtime geometry is fixed to
+the first claim-bearing workload qualification boundary:
+
+- runner: `ubuntu-24.04-arm`;
+- allocator: `system`;
+- reader: `paging`;
+- rows: 25,000;
+- seed: 266;
+- chunk size: 1,000;
+- page size: 750;
+- exact repository SHA from the dispatched ref.
+
+The workflow:
+
+- installs the repository stable Rust toolchain and build cache;
+- executes the producer/manifest unit contracts before runtime work;
+- records exact run/runner/geometry context;
+- provisions and independently verifies the same pinned Perfetto v59.1 script
+  and v58.2 ARM64 helper identities qualified by the C capability run;
+- ensures `llvm-symbolizer` exists and records its parsed version plus
+  executable SHA-256;
+- starts PostgreSQL 18;
+- executes only `benchmark/perfetto_heap_profile.py`;
+- independently revalidates the resulting manifest, every retained artifact
+  hash, Perfetto provenance, symbolizer identity, profiled binary digest,
+  correctness digest, and fail-closed cross-boundary allocation-stack summary;
+- uploads prerequisite and partial producer evidence even when runtime
+  qualification fails;
+- tears PostgreSQL down unconditionally.
+
+The final workflow verdict remains fail-closed. A successful artifact upload
+does not convert a failed prerequisite or producer run into a PASS.
+
+This workflow is orchestration only. Merging it does **not** establish real
+OxideBatch heap attribution; that claim requires a later manual dispatch on an
+exact protected-main SHA and independent inspection of the retained artifact.
+
 ## Next implementation boundary
 
-Review and merge the Perfetto-backed OxideBatch workload producer first. The
-following separate unit may add a manual hosted-ARM64 workflow that provisions
-the already-qualified pinned Perfetto inputs, starts PostgreSQL, and runs only
-one bounded `system+paging` workload profile.
+Review and merge the manual hosted-ARM64 Perfetto workload workflow first.
+The following separate unit may dispatch it exactly once on protected main.
+Do not poll after dispatch.
 
-That runtime workflow must retain evidence even on failure and must not weaken
-the cross-boundary Rust/OxideBatch stack gate. Only after a real workload run
-passes correctness plus readable `postgres_postgres -> oxide_batch`
-allocation attribution can the generic heap-attribution part of lane C be
-closed. Replacement allocators remain Lane E; timeline/concurrency,
-soak/quiescence, and allocator-native telemetry remain separate later units.
+A later classification unit must independently inspect the retained artifact
+and require correctness plus readable same-callsite
+`postgres_postgres -> oxide_batch` allocation attribution before the generic
+system-allocator portion of lane C can be closed. Replacement allocators remain
+Lane E; timeline/concurrency, soak/quiescence, and allocator-native telemetry
+remain separate later units.
