@@ -38,6 +38,35 @@ KNOWN_REPLACEMENT_ALLOCATOR_TOKENS = (
 ALLOCATION_COUNT = re.compile(r"^calls to allocation functions:\s*(\d+)\b", re.MULTILINE)
 TEMPORARY_COUNT = re.compile(r"^temporary memory allocations:\s*(\d+)\b", re.MULTILINE)
 MASSIF_HEAP = re.compile(r"^mem_heap_B=(\d+)\s*$", re.MULTILINE)
+HEX_FRAME = re.compile(r"^0x[0-9a-fA-F]+$")
+PROBE_FUNCTION = "oxide_batch_heap_probe_allocate"
+PROBE_SOURCE = r"""
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+volatile uint64_t oxide_batch_heap_probe_checksum = 0;
+
+__attribute__((noinline))
+void oxide_batch_heap_probe_allocate(void) {
+    for (size_t i = 0; i < 32; ++i) {
+        size_t size = 4096 + i * 17;
+        unsigned char *ptr = (unsigned char *)malloc(size);
+        if (ptr == NULL) {
+            abort();
+        }
+        memset(ptr, (int)(i + 1), size);
+        oxide_batch_heap_probe_checksum += ptr[i];
+        free(ptr);
+    }
+}
+
+int main(void) {
+    oxide_batch_heap_probe_allocate();
+    return oxide_batch_heap_probe_checksum == UINT64_MAX ? 1 : 0;
+}
+"""
 
 
 def fail(message: str) -> None:
@@ -171,6 +200,121 @@ def capability_document() -> dict[str, Any]:
     }
 
 
+def folded_stack_summary(text: str) -> dict[str, Any]:
+    line_count = 0
+    total_weight = 0
+    readable_line_count = 0
+    readable_weight = 0
+
+    for number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            stack, raw_weight = line.rsplit(" ", 1)
+            weight = int(raw_weight)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                f"invalid folded-stack line {number}: {raw_line!r}"
+            ) from exc
+        if weight <= 0:
+            fail(f"folded-stack weight must be positive at line {number}")
+
+        frames = [frame.strip() for frame in stack.split(";") if frame.strip()]
+        readable = any(
+            frame not in {"??", "0x0"}
+            and HEX_FRAME.fullmatch(frame) is None
+            for frame in frames
+        )
+        line_count += 1
+        total_weight += weight
+        if readable:
+            readable_line_count += 1
+            readable_weight += weight
+
+    return {
+        "line_count": line_count,
+        "total_weight": total_weight,
+        "readable_line_count": readable_line_count,
+        "readable_weight": readable_weight,
+        "unknown_only": line_count > 0 and readable_line_count == 0,
+    }
+
+
+def require_readable_stack_attribution(
+    text: str,
+    *,
+    required_symbol: str | None = None,
+) -> dict[str, Any]:
+    summary = folded_stack_summary(text)
+    if summary["line_count"] <= 0 or summary["total_weight"] <= 0:
+        fail("heaptrack allocation stack projection contained no weighted stacks")
+    if summary["readable_line_count"] <= 0:
+        fail(
+            "heaptrack allocation stack projection contains only unknown/raw-address "
+            "frames; allocation attribution is not readable"
+        )
+    if required_symbol is not None and required_symbol not in text:
+        fail(
+            f"heaptrack capability projection did not contain required symbol "
+            f"{required_symbol!r}"
+        )
+    return summary
+
+
+def compile_runtime_probe(probe_root: Path) -> tuple[Path | None, dict[str, Any]]:
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    source = probe_root / "heaptrack-probe.c"
+    binary = probe_root / "heaptrack-probe"
+    source.write_text(PROBE_SOURCE, encoding="utf-8")
+
+    if compiler is None:
+        return None, {
+            "compiler": None,
+            "compiler_version": None,
+            "compile_exit_status": None,
+            "compile_stderr": "no cc/gcc compiler found",
+            "binary_bytes": 0,
+        }
+
+    version = subprocess.run(
+        [compiler, "--version"],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    compile_run = subprocess.run(
+        [
+            compiler,
+            "-g",
+            "-O0",
+            "-fno-omit-frame-pointer",
+            "-fno-optimize-sibling-calls",
+            "-rdynamic",
+            str(source),
+            "-o",
+            str(binary),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    binary_bytes = binary.stat().st_size if binary.is_file() else 0
+    return (
+        binary if compile_run.returncode == 0 and binary_bytes > 0 else None,
+        {
+            "compiler": compiler,
+            "compiler_version": (version.stdout or version.stderr).splitlines()[0]
+            if (version.stdout or version.stderr).strip()
+            else None,
+            "compile_exit_status": compile_run.returncode,
+            "compile_stderr": compile_run.stderr[-4000:],
+            "binary_bytes": binary_bytes,
+            "required_symbol": PROBE_FUNCTION,
+        },
+    )
+
+
 def runtime_capability_probe(output: Path) -> dict[str, Any]:
     capability = capability_document()
     probe_root = output.parent / ".heaptrack-runtime-probe"
@@ -178,73 +322,100 @@ def runtime_capability_probe(output: Path) -> dict[str, Any]:
         shutil.rmtree(probe_root)
     probe_root.mkdir(parents=True, exist_ok=True)
     output_base = probe_root / "probe"
-    true_binary = shutil.which("true")
-    if true_binary is None:
-        fail("runtime capability probe requires /usr/bin/true or equivalent")
+    stack_path = probe_root / "allocation-stacks.folded"
 
     record_status = None
     print_status = None
     trace_bytes = 0
     report_nonempty = False
+    stack_bytes = 0
+    stack_summary = None
+    known_probe_symbol_observed = False
     record_stderr = None
     print_stderr = None
+    probe_error = None
+    probe_binary, compile_evidence = compile_runtime_probe(probe_root)
+
     try:
-        record = subprocess.run(
-            heaptrack_record_command(
-                heaptrack=capability["heaptrack_path"],
-                output_base=output_base,
-                workload=[true_binary],
-            ),
-            check=False,
-            text=True,
-            capture_output=True,
-            env=os.environ.copy(),
-        )
-        record_status = record.returncode
-        record_stderr = record.stderr[-4000:]
-        if record.returncode == 0:
-            trace = find_native_trace(output_base)
-            trace_bytes = trace.stat().st_size
-            printed = subprocess.run(
-                [
-                    capability["heaptrack_print_path"],
-                    "--file",
-                    str(trace),
-                ],
+        if probe_binary is not None:
+            record = subprocess.run(
+                heaptrack_record_command(
+                    heaptrack=capability["heaptrack_path"],
+                    output_base=output_base,
+                    workload=[str(probe_binary)],
+                ),
                 check=False,
                 text=True,
                 capture_output=True,
                 env=os.environ.copy(),
             )
-            print_status = printed.returncode
-            print_stderr = printed.stderr[-4000:]
-            report_nonempty = bool(printed.stdout.strip())
+            record_status = record.returncode
+            record_stderr = record.stderr[-4000:]
+            if record.returncode == 0:
+                try:
+                    trace = find_native_trace(output_base)
+                    trace_bytes = trace.stat().st_size
+                    printed = subprocess.run(
+                        [
+                            capability["heaptrack_print_path"],
+                            "--file",
+                            str(trace),
+                            "--print-flamegraph",
+                            str(stack_path),
+                            "--flamegraph-cost-type",
+                            "allocations",
+                        ],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=os.environ.copy(),
+                    )
+                    print_status = printed.returncode
+                    print_stderr = printed.stderr[-4000:]
+                    report_nonempty = bool(printed.stdout.strip())
+                    if stack_path.is_file():
+                        stack_bytes = stack_path.stat().st_size
+                        stack_text = stack_path.read_text(encoding="utf-8")
+                        stack_summary = folded_stack_summary(stack_text)
+                        known_probe_symbol_observed = PROBE_FUNCTION in stack_text
+                except (OSError, RuntimeError, UnicodeError) as exc:
+                    probe_error = str(exc)
     finally:
         shutil.rmtree(probe_root, ignore_errors=True)
 
     supported = (
-        record_status == 0
+        probe_binary is not None
+        and record_status == 0
         and print_status == 0
         and trace_bytes > 0
         and report_nonempty
+        and stack_bytes > 0
+        and stack_summary is not None
+        and stack_summary["readable_line_count"] > 0
+        and known_probe_symbol_observed
     )
     document = {
         **capability,
+        "schema": "oxide-batch-heaptrack-capability/v2",
         "runtime_probe": {
-            "debuggee": true_binary,
+            **compile_evidence,
+            "debuggee": "compiled-known-malloc-stack-probe",
             "record_exit_status": record_status,
             "record_stderr": record_stderr,
             "trace_bytes": trace_bytes,
             "heaptrack_print_exit_status": print_status,
             "heaptrack_print_stderr": print_stderr,
             "report_nonempty": report_nonempty,
+            "stack_projection_bytes": stack_bytes,
+            "stack_summary": stack_summary,
+            "known_probe_symbol_observed": known_probe_symbol_observed,
+            "probe_error": probe_error,
         },
         "supported": supported,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     profile_smoke.write_json(output, document)
     return document
-
 
 def write_probe(output: Path) -> int:
     document = runtime_capability_probe(output)
@@ -458,6 +629,7 @@ def build_heap_summary(
     report_text: str,
     histogram_text: str,
     massif_text: str,
+    allocation_stacks_text: str,
 ) -> dict[str, Any]:
     report_allocations, temporary_allocations = parse_report_counts(report_text)
     histogram = parse_histogram(histogram_text)
@@ -467,8 +639,14 @@ def build_heap_summary(
             f"{histogram['allocation_count']} != {report_allocations}"
         )
     peak_live_bytes = parse_massif_peak(massif_text)
+    stack_summary = require_readable_stack_attribution(allocation_stacks_text)
+    if stack_summary["total_weight"] != report_allocations:
+        fail(
+            "heaptrack allocation-stack weight does not match report allocation count: "
+            f"{stack_summary['total_weight']} != {report_allocations}"
+        )
     return {
-        "schema": "oxide-batch-heap-profile-summary/v1",
+        "schema": "oxide-batch-heap-profile-summary/v2",
         "allocation_count": report_allocations,
         "cumulative_allocated_bytes": histogram["cumulative_allocated_bytes"],
         "peak_live_bytes": peak_live_bytes,
@@ -476,6 +654,10 @@ def build_heap_summary(
         "temporary_allocation_ratio": temporary_allocations / report_allocations,
         "size_histogram_bucket_count": histogram["bucket_count"],
         "largest_allocation_bytes": histogram["largest_allocation_bytes"],
+        "allocation_stack_line_count": stack_summary["line_count"],
+        "allocation_stack_readable_line_count": stack_summary["readable_line_count"],
+        "allocation_stack_readable_weight": stack_summary["readable_weight"],
+        "allocation_stack_attribution": "readable",
         "coverage_scope": "system-allocator-malloc-family-interposition",
         "timing_claim": "attribution-only",
     }
@@ -488,6 +670,7 @@ def heap_limitations() -> list[str]:
         "the profiled release build sets CARGO_PROFILE_RELEASE_DEBUG=1 for symbolization and is not the benchmark-lane binary",
         "cumulative allocated bytes are derived from heaptrack's event-counted size histogram and are accepted only when histogram count equals the heaptrack global allocation count",
         "heaptrack peak-live bytes are derived from the Massif projection; the native heaptrack trace remains authoritative",
+        "heap attribution is accepted only when the allocation folded-stack projection contains at least one readable non-unknown frame and its total weight equals the global allocation count",
         "hosted-runner heap attribution validates orchestration and trace readability, not stable-host absolute memory-performance truth",
         "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
     ]
@@ -721,6 +904,9 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
             report_text=report_path.read_text(encoding="utf-8"),
             histogram_text=histogram_path.read_text(encoding="utf-8"),
             massif_text=massif_path.read_text(encoding="utf-8"),
+            allocation_stacks_text=allocation_stacks_path.read_text(
+                encoding="utf-8"
+            ),
         )
         summary_path = heap_root / "summary.json"
         profile_smoke.write_json(summary_path, summary)

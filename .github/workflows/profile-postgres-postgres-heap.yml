@@ -175,7 +175,7 @@ jobs:
           assert temporary_stacks.is_file()
 
           summary = json.loads((root / "heap/summary.json").read_text(encoding="utf-8"))
-          assert summary["schema"] == "oxide-batch-heap-profile-summary/v1"
+          assert summary["schema"] == "oxide-batch-heap-profile-summary/v2"
           assert summary["allocation_count"] > 0
           assert summary["cumulative_allocated_bytes"] > 0
           assert summary["peak_live_bytes"] > 0
@@ -183,21 +183,35 @@ jobs:
           assert 0.0 <= summary["temporary_allocation_ratio"] <= 1.0
           assert summary["size_histogram_bucket_count"] > 0
           assert summary["largest_allocation_bytes"] > 0
+          assert summary["allocation_stack_line_count"] > 0
+          assert summary["allocation_stack_readable_line_count"] > 0
+          assert summary["allocation_stack_readable_weight"] > 0
+          assert summary["allocation_stack_attribution"] == "readable"
           assert summary["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert summary["timing_claim"] == "attribution-only"
 
           probe = json.loads(probe_path.read_text(encoding="utf-8"))
-          assert probe["schema"] == "oxide-batch-heaptrack-capability/v1"
+          assert probe["schema"] == "oxide-batch-heaptrack-capability/v2"
           assert probe["profiler"] == "heaptrack"
           assert probe["supported"] is True
           assert probe["static_checks_passed"] is True
           assert probe["allocator_semantics_preserved"] is True
           assert probe["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert probe["replacement_allocator_generic_coverage"] == "unsupported"
-          assert probe["runtime_probe"]["record_exit_status"] == 0
-          assert probe["runtime_probe"]["heaptrack_print_exit_status"] == 0
-          assert probe["runtime_probe"]["trace_bytes"] > 0
-          assert probe["runtime_probe"]["report_nonempty"] is True
+          runtime_probe = probe["runtime_probe"]
+          assert runtime_probe["compile_exit_status"] == 0
+          assert runtime_probe["binary_bytes"] > 0
+          assert runtime_probe["required_symbol"] == "oxide_batch_heap_probe_allocate"
+          assert runtime_probe["record_exit_status"] == 0
+          assert runtime_probe["heaptrack_print_exit_status"] == 0
+          assert runtime_probe["trace_bytes"] > 0
+          assert runtime_probe["report_nonempty"] is True
+          assert runtime_probe["stack_projection_bytes"] > 0
+          assert runtime_probe["stack_summary"]["line_count"] > 0
+          assert runtime_probe["stack_summary"]["readable_line_count"] > 0
+          assert runtime_probe["stack_summary"]["readable_weight"] > 0
+          assert runtime_probe["stack_summary"]["unknown_only"] is False
+          assert runtime_probe["known_probe_symbol_observed"] is True
 
           replacement_tokens = ("jemalloc", "mimalloc", "snmalloc", "tcmalloc", "rpmalloc")
           assert not any(

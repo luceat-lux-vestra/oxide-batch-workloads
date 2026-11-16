@@ -108,6 +108,7 @@ mem_heap_B=64
             report_text=report,
             histogram_text=histogram,
             massif_text=massif,
+            allocation_stacks_text="postgres_postgres::processor::fingerprint 5\n",
         )
         self.assertEqual(summary["allocation_count"], 5)
         self.assertEqual(summary["cumulative_allocated_bytes"], 64)
@@ -116,6 +117,11 @@ mem_heap_B=64
         self.assertEqual(summary["temporary_allocation_ratio"], 0.4)
         self.assertEqual(summary["size_histogram_bucket_count"], 2)
         self.assertEqual(summary["largest_allocation_bytes"], 16)
+        self.assertEqual(summary["schema"], "oxide-batch-heap-profile-summary/v2")
+        self.assertEqual(summary["allocation_stack_line_count"], 1)
+        self.assertEqual(summary["allocation_stack_readable_line_count"], 1)
+        self.assertEqual(summary["allocation_stack_readable_weight"], 5)
+        self.assertEqual(summary["allocation_stack_attribution"], "readable")
 
     def test_heap_summary_rejects_histogram_report_count_mismatch(self) -> None:
         report = """
@@ -127,7 +133,50 @@ temporary memory allocations: 2 (4/s)
                 report_text=report,
                 histogram_text="8\t2\n16\t3\n",
                 massif_text="mem_heap_B=64\n",
+                allocation_stacks_text="postgres_postgres::job::map_source_row 5\n",
             )
+
+    def test_folded_stack_gate_rejects_unknown_only_attribution(self) -> None:
+        summary = heap_profile.folded_stack_summary("?? 739985\n")
+        self.assertEqual(summary["line_count"], 1)
+        self.assertEqual(summary["total_weight"], 739985)
+        self.assertEqual(summary["readable_line_count"], 0)
+        self.assertTrue(summary["unknown_only"])
+
+        with self.assertRaisesRegex(RuntimeError, "not readable"):
+            heap_profile.require_readable_stack_attribution("?? 739985\n")
+
+    def test_folded_stack_gate_accepts_readable_symbolized_stack(self) -> None:
+        text = (
+            "postgres_postgres::processor::fingerprint;"
+            "oxide_batch::chunk_runtime::run_attempt 42\n"
+            "??;postgres_postgres::job::map_source_row 8\n"
+        )
+        summary = heap_profile.require_readable_stack_attribution(text)
+        self.assertEqual(summary["line_count"], 2)
+        self.assertEqual(summary["total_weight"], 50)
+        self.assertEqual(summary["readable_line_count"], 2)
+        self.assertEqual(summary["readable_weight"], 50)
+        self.assertFalse(summary["unknown_only"])
+
+    def test_folded_stack_gate_requires_known_probe_symbol(self) -> None:
+        good = f"main;{heap_profile.PROBE_FUNCTION} 32\n"
+        summary = heap_profile.require_readable_stack_attribution(
+            good,
+            required_symbol=heap_profile.PROBE_FUNCTION,
+        )
+        self.assertEqual(summary["total_weight"], 32)
+
+        with self.assertRaisesRegex(RuntimeError, "required symbol"):
+            heap_profile.require_readable_stack_attribution(
+                "main;malloc_user 32\n",
+                required_symbol=heap_profile.PROBE_FUNCTION,
+            )
+
+    def test_probe_source_contains_named_noinline_malloc_site(self) -> None:
+        self.assertIn(heap_profile.PROBE_FUNCTION, heap_profile.PROBE_SOURCE)
+        self.assertIn("__attribute__((noinline))", heap_profile.PROBE_SOURCE)
+        self.assertIn("malloc(size)", heap_profile.PROBE_SOURCE)
 
     def test_heap_manifest_passes_shared_validator(self) -> None:
         manifest = heap_profile.build_manifest(
