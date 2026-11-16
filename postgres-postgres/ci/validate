@@ -705,6 +705,9 @@ run_ci_stage() {
   python3 benchmark/test_cpu_profile.py
   python3 benchmark/test_cpu_profile_gperftools.py
 
+  echo "Heap attribution producer tests"
+  python3 benchmark/test_heap_profile.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
