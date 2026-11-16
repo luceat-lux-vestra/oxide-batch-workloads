@@ -452,10 +452,104 @@ The hosted workflow preserves both capability records:
 - the original Linux `perf` probe, which may remain unsupported;
 - the gperftools capability record used by the fallback producer.
 
+## CPU attribution rehearsal status
+
+The authoritative hosted ARM64 fallback dispatch completed successfully for
+system+paging on exact OxideBatch 0.6.0. The retained bundle independently
+validated the unavailable Linux perf capability, the allocator-safe
+gperftools fallback, raw CPU profile, projections, exact profiled binary,
+correctness verifier, and artifact hashes. The CPU attribution lane is
+therefore rehearsed for Phase 0; its samples remain attribution-only evidence.
+
+## Heap/allocation tool screening
+
+For the generic heap lane, the first host/tool combination selected for
+runtime qualification is Ubuntu 24.04 ARM64 plus the distribution
+`heaptrack` package. Package availability alone is not treated as runtime
+support.
+
+The screening boundary is intentional:
+
+- `heaptrack` is selected for the system allocator because it records
+  allocation call stacks, allocation counts, peak-live contributors,
+  temporary allocations, allocation-size histograms, Massif-compatible
+  live-heap projections, and folded stacks while retaining a native trace;
+- Valgrind Massif remains a fallback for cases where page-level allocation
+  visibility is more important, but its substantially heavier instrumentation
+  and earlier aggregation make it a poorer first Phase 0 allocation tracer;
+- the gperftools heap profiler is not a generic fallback because it requires
+  tcmalloc and would therefore replace the allocator under test;
+- replacement Rust global allocators such as jemalloc/mimalloc/snmalloc/tcmalloc
+  may bypass the malloc-family functions heaptrack interposes. Generic
+  heaptrack evidence must therefore not be claimed for those allocators.
+  Their memory state belongs in later allocator-native tooling unless a
+  separate generic interception path is qualified.
+
+## Heap/allocation attribution producer
+
+`benchmark/heap_profile.py` is the initial heap-lane producer and is
+fail-closed to `allocator=system`.
+
+The producer:
+
+- builds the exact published OxideBatch 0.6.0 workload in release mode with
+  `CARGO_PROFILE_RELEASE_DEBUG=1` in an isolated Cargo target directory so
+  allocation stacks can be symbolized without changing benchmark-lane builds;
+- retains the exact profiled binary and records the material build flag;
+- passes the PostgreSQL URL through `DATABASE_URL` for the profiled child so
+  credentials are absent from the heaptrack-recorded argv;
+- rejects a pre-existing `LD_PRELOAD`;
+- records exact Ubuntu `heaptrack`/`libheaptrack` package versions,
+  `libheaptrack_preload.so` path/SHA-256/dynamic dependencies, and fails
+  closed if the preload library dynamically names a known replacement
+  allocator;
+- provides a DB-independent `--probe-output` mode that runs heaptrack against
+  the host `true` executable, verifies a non-empty native trace and readable
+  `heaptrack_print` projection, records bounded stderr/status evidence, and
+  writes the capability JSON before failing when runtime capture is unavailable;
+- retains the native heaptrack trace as authoritative evidence;
+- derives reviewable projections with `heaptrack_print`: the full allocation
+  report, allocation-size histogram, allocation folded stacks, temporary
+  allocation folded stacks, and Massif-compatible live-heap snapshots;
+- emits a compact `heap/summary.json` containing allocation count,
+  cumulative allocated bytes, peak-live bytes, temporary-allocation count and
+  ratio, histogram bucket count, and largest allocation size;
+- derives cumulative allocated bytes from the event-counted size histogram
+  only when the histogram event count exactly matches heaptrack's global
+  allocation count;
+- derives exact peak-live bytes from the maximum `mem_heap_B` Massif
+  snapshot;
+- runs the unchanged independent workload verifier and emits a validated
+  `lane=heap` manifest with `profiler_attached=true` and no
+  `benchmark_timing`.
+
+Default heap geometry is intentionally smaller than the benchmark lane:
+25,000 rows, seed 266, chunk size 1000, and the normal reader-specific
+fetch/page size. The producer caps this instrumentation lane at 100,000 rows.
+
+Capability probe before starting PostgreSQL:
+
+```bash
+python3 benchmark/heap_profile.py \
+  --probe-output "$RUNNER_TEMP/heaptrack-capability.json"
+```
+
+Example profile after PostgreSQL and heaptrack are available:
+
+```bash
+python3 benchmark/heap_profile.py \
+  --base-database-url "$DATABASE_URL" \
+  --output "$RUNNER_TEMP/heap-profile-artifacts" \
+  --allocator system \
+  --reader paging
+```
+
+The native heaptrack trace remains authoritative over the summary and all
+generated projections. Heap-instrumented runtime is never benchmark evidence.
+
 ## Next implementation boundary
 
-One authoritative system+paging fallback dispatch and independent artifact
-review remain before the CPU attribution lane is considered rehearsed.
-Heap/allocation profiling, timeline/concurrency instrumentation,
-soak/quiescence execution, allocator-native telemetry, and retained
-claim-bearing benchmark measurements remain separate later units.
+A manual opt-in heap-profile workflow, hosted ARM64 capability probe, and one
+authoritative system+paging artifact review are the next bounded unit.
+Timeline/concurrency instrumentation, soak/quiescence execution, and
+allocator-native telemetry remain separate later units.
