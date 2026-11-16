@@ -618,10 +618,12 @@ floating download:
 - linux-arm64 trace processor SHA-256:
   `0e6e0c5452c505c8d46fe472fd196a0d17d963460727e2ce2013b02aa1309555`.
 
-The producer does not download any of those files. A later opt-in workflow must
-provision them from the pinned upstream URLs; the producer independently checks
-the script Git-blob identity, prebuilt byte sizes, and SHA-256 values before
-execution.
+The producer does not download any of those files. The manual
+`.github/workflows/probe-perfetto-heap-capability.yml` workflow provisions
+them from the pinned upstream URLs, records a provision manifest, and fails
+closed unless the script Git-blob identity plus prebuilt byte sizes/SHA-256
+values match exactly. The producer independently repeats the same identity
+checks before any profiler execution.
 
 The allocator boundary is also fail-closed. Perfetto documents the standalone
 glibc preload interceptor as calling glibc-specific `__libc_malloc`-family
@@ -662,12 +664,30 @@ projections, hashes, and capability document. Sampling interval 1 is strictly
 instrumentation evidence and must never be compared with benchmark-lane
 timings.
 
+### Manual hosted ARM64 qualification workflow
+
+`.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and
+runs on `ubuntu-24.04-arm`. It does not install Rust, start PostgreSQL, or run
+the OxideBatch workload.
+
+The workflow retains:
+- exact repository SHA/run context;
+- per-download status plus observed size/hash/executable-bit evidence;
+- the capability document and all producer-retained raw/projection artifacts;
+- evidence even when provisioning or capability qualification fails.
+
+Provisioning and capability execution use `continue-on-error` only so the
+evidence can be uploaded. A final postcondition still fails the workflow when
+provisioning, capability qualification, or retained-evidence validation did not
+pass. Therefore a red workflow remains a meaningful unsupported/blocked
+qualification artifact instead of losing the diagnostic state.
+
 ## Next implementation boundary
 
-Review and merge the Perfetto capability producer contract first. The following
-separate unit may add a manual ARM64 workflow that provisions the exact pinned
-upstream files and executes the C known-symbol capability probe once. Only if
-that probe passes should a later workload producer be implemented for
+Review and merge the manual Perfetto capability workflow first. The following
+separate unit may dispatch it once on the exact protected-main SHA and
+independently inspect the retained artifact. Only if the known-symbol C
+capability passes should a later workload producer be implemented for
 system+paging OxideBatch evidence. BCC/libbpf memleak remains the next generic
 allocator-preserving fallback if hosted Perfetto is blocked. Timeline/
 concurrency instrumentation, soak/quiescence execution, and allocator-native
