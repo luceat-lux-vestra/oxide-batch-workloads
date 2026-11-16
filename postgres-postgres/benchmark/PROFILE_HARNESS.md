@@ -733,6 +733,108 @@ ensures the prerequisite is present (installing Ubuntu's `llvm` package when
 necessary) and retains a separate `perfetto-symbolizer.json` document with
 the install result, path, version, and availability verdict.
 
+### Third hosted ARM64 Perfetto run: capability PASS
+
+Authoritative run `43880787544` on exact main
+`65dfb6ebdd87976d5a5ec7188b3cd19e0189e922` closed the generic
+system-allocator capability qualification:
+
+- workflow conclusion: SUCCESS;
+- all pinned Perfetto source/prebuilt identities matched;
+- allocator semantics remained system/glibc with no replacement allocator;
+- `llvm-symbolizer` was available;
+- profiler exit status was 0;
+- raw trace: 2,061 bytes;
+- symbol packets: 332 bytes;
+- symbolized trace: 2,393 bytes;
+- one non-empty pprof projection;
+- 35 positive allocations / 139,602 positive allocation bytes across four
+  allocation callsites;
+- 37 allocation-reachable frame rows, eight named frame rows;
+- exact known C allocation symbol
+  `oxide_batch_perfetto_probe_allocate` survived in an allocation-reachable
+  stack;
+- heapprofd error counter: 0.
+
+Therefore Ubuntu 24.04 hosted ARM64 plus the pinned Perfetto heapprofd host path
+is **qualified for generic system-allocator allocation-stack attribution**.
+This capability result replaces heaptrack as the selected generic heap
+attribution path, but does not itself complete the heap lane because it used a
+purpose-built C probe rather than the OxideBatch workload.
+
+The earlier symbolizer evidence stored only the first output line
+(`llvm-symbolizer`), which proves executable availability but not the LLVM
+version. The workload producer tightens this by parsing the full
+`llvm-symbolizer --version` output for the version token and retaining both
+that version and the executable SHA-256.
+
+### Perfetto-backed OxideBatch heap workload producer
+
+`benchmark/perfetto_heap_profile.py` carries the capability contract into the
+real `postgres-postgres` workload while remaining intentionally limited to
+the `system` allocator.
+
+It reuses the existing heap workload geometry and correctness path:
+
+- default rows: 25,000;
+- seed: 266;
+- chunk size: 1,000;
+- cursor fetch size: 500;
+- paging page size: 750;
+- release build with `CARGO_PROFILE_RELEASE_DEBUG=1`;
+- exact locked OxideBatch `=0.6.0`;
+- independent `postgres-postgres verify` correctness digest after the
+  profiled run.
+- Perfetto host mode does not propagate the child workload exit code, so the
+  independent verifier digest is the authoritative workload completion and
+  correctness gate.
+
+The producer independently rechecks:
+
+- Perfetto v59.1 `heap_profile` source identity;
+- exact v58.2 ARM64 tracebox/preload/trace-processor sizes and SHA-256 values;
+- glibc preload dynamic dependencies and absence of known replacement
+  allocators;
+- Linux aarch64 host scope;
+- `llvm-symbolizer` availability, parsed version, and executable SHA-256.
+
+The profiler command retains interval 1, blocking-client mode, explicit pinned
+helper paths, and the campaign traceconv compatibility shim. The workload
+database URL is supplied only through the child environment, not command-line
+evidence.
+
+The producer retains the authoritative raw trace plus:
+
+- symbol packets;
+- symbolized trace;
+- pprof projection(s);
+- positive allocation-count/byte/callsite SQL projection;
+- heapprofd failure/data-loss SQL projection;
+- complete allocation-reachable named-symbol projection;
+- stack summary projection;
+- profiler stdout/stderr;
+- compatibility shim;
+- profiled binary;
+- correctness verifier;
+- run/capability/summary metadata and hashes.
+
+The workload attribution gate is deliberately stronger than the C capability
+gate. A PASS requires at least one **single allocation callsite stack** that
+contains all of:
+
+- a readable Rust-style frame;
+- a `postgres_postgres` frame;
+- an `oxide_batch` frame.
+
+It also requires non-empty raw/symbolized/symbol/pprof evidence, positive
+allocation counters, zero heapprofd error counters, and correctness PASS.
+Merely producing a trace or some readable symbols is insufficient.
+
+The summary schema is
+`oxide-batch-perfetto-heap-profile-summary/v1`. The campaign profile manifest
+remains lane `heap`, carries no `benchmark_timing`, and marks all profiler
+timing as attribution-only.
+
 ### Manual hosted ARM64 qualification workflow
 
 `.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and
@@ -754,11 +856,14 @@ qualification artifact instead of losing the diagnostic state.
 
 ## Next implementation boundary
 
-Review and merge the manual Perfetto capability workflow first. The following
-separate unit may dispatch it once on the exact protected-main SHA and
-independently inspect the retained artifact. Only if the known-symbol C
-capability passes should a later workload producer be implemented for
-system+paging OxideBatch evidence. BCC/libbpf memleak remains the next generic
-allocator-preserving fallback if hosted Perfetto is blocked. Timeline/
-concurrency instrumentation, soak/quiescence execution, and allocator-native
-telemetry remain separate later lanes.
+Review and merge the Perfetto-backed OxideBatch workload producer first. The
+following separate unit may add a manual hosted-ARM64 workflow that provisions
+the already-qualified pinned Perfetto inputs, starts PostgreSQL, and runs only
+one bounded `system+paging` workload profile.
+
+That runtime workflow must retain evidence even on failure and must not weaken
+the cross-boundary Rust/OxideBatch stack gate. Only after a real workload run
+passes correctness plus readable `postgres_postgres -> oxide_batch`
+allocation attribution can the generic heap-attribution part of lane C be
+closed. Replacement allocators remain Lane E; timeline/concurrency,
+soak/quiescence, and allocator-native telemetry remain separate later units.
