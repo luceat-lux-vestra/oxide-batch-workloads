@@ -1,0 +1,259 @@
+name: Profile PostgreSQL heap attribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      reader:
+        description: PostgreSQL reader mode to profile
+        required: true
+        default: paging
+        type: choice
+        options:
+          - paging
+          - cursor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-heap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  heap-profile:
+    name: postgres-postgres-heap-profile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      PROFILE_READER: ${{ inputs.reader }}
+      EXPECTED_SHA: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate heap profile producer
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_heap_profile.py
+
+      - name: Install heaptrack
+        id: install-heaptrack
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            heaptrack \
+            libheaptrack
+
+      - name: Probe heaptrack runtime capability
+        id: heaptrack
+        if: steps.install-heaptrack.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/heap_profile.py \
+            --probe-output "$RUNNER_TEMP/heaptrack-capability.json"
+
+      - name: Start PostgreSQL 18
+        if: steps.heaptrack.outcome == 'success'
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run heap attribution producer
+        id: producer
+        if: steps.heaptrack.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/heap_profile.py \
+            --base-database-url "$DATABASE_URL" \
+            --output "$RUNNER_TEMP/heap-profile-artifacts" \
+            --allocator system \
+            --reader "$PROFILE_READER" \
+            --rows 25000 \
+            --seed 266 \
+            --chunk-size 1000 \
+            --fetch-size 500 \
+            --page-size 750
+
+      - name: Validate retained heap evidence
+        if: steps.producer.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 benchmark/profile_manifest.py "$RUNNER_TEMP/heap-profile-artifacts/manifest.json" > /dev/null
+          python3 - \
+            "$RUNNER_TEMP/heap-profile-artifacts" \
+            "$RUNNER_TEMP/heaptrack-capability.json" \
+            "$PROFILE_READER" \
+            "$EXPECTED_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          probe_path = pathlib.Path(sys.argv[2])
+          reader = sys.argv[3]
+          expected_sha = sys.argv[4]
+
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          assert manifest["lane"] == "heap"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["subject"]["build_profile"] == "release"
+          assert manifest["subject"]["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
+          assert manifest["allocator"]["identity"] == "system"
+          assert manifest["workload"]["reader_mode"] == reader
+          assert manifest["workload"]["rows"] == 25000
+          assert manifest["workload"]["seed"] == 266
+          assert manifest["workload"]["chunk_size"] == 1000
+          if reader == "paging":
+              assert manifest["workload"]["page_size"] == 750
+              assert manifest["workload"]["fetch_size"] is None
+          else:
+              assert manifest["workload"]["fetch_size"] == 500
+              assert manifest["workload"]["page_size"] is None
+          assert manifest["instrumentation"]["profiler_attached"] is True
+          tool = manifest["instrumentation"]["tools"][0]
+          assert tool["name"] == "heaptrack"
+          assert "allocation-stack attribution" in tool["role"]
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == artifact["sha256"], path
+
+          native = [
+              path
+              for path in (root / "heap").glob("heaptrack.*")
+              if path.is_file() and path.suffix in {".gz", ".zst"}
+          ]
+          assert len(native) == 1, native
+          assert native[0].stat().st_size > 0
+
+          for required in (
+              "heap/heaptrack-report.txt",
+              "heap/allocation-size-histogram.tsv",
+              "heap/allocation-stacks.folded",
+              "heap/heaptrack.massif",
+              "heap/summary.json",
+              "heap/capability.json",
+              "heap/run.json",
+              "correctness/verifier.json",
+              "binary/postgres-postgres-system",
+          ):
+              path = root / required
+              assert path.is_file() and path.stat().st_size > 0, path
+
+          temporary_stacks = root / "heap/temporary-allocation-stacks.folded"
+          assert temporary_stacks.is_file()
+
+          summary = json.loads((root / "heap/summary.json").read_text(encoding="utf-8"))
+          assert summary["schema"] == "oxide-batch-heap-profile-summary/v1"
+          assert summary["allocation_count"] > 0
+          assert summary["cumulative_allocated_bytes"] > 0
+          assert summary["peak_live_bytes"] > 0
+          assert 0 <= summary["temporary_allocation_count"] <= summary["allocation_count"]
+          assert 0.0 <= summary["temporary_allocation_ratio"] <= 1.0
+          assert summary["size_histogram_bucket_count"] > 0
+          assert summary["largest_allocation_bytes"] > 0
+          assert summary["coverage_scope"] == "system-allocator-malloc-family-interposition"
+          assert summary["timing_claim"] == "attribution-only"
+
+          probe = json.loads(probe_path.read_text(encoding="utf-8"))
+          assert probe["schema"] == "oxide-batch-heaptrack-capability/v1"
+          assert probe["profiler"] == "heaptrack"
+          assert probe["supported"] is True
+          assert probe["static_checks_passed"] is True
+          assert probe["allocator_semantics_preserved"] is True
+          assert probe["coverage_scope"] == "system-allocator-malloc-family-interposition"
+          assert probe["replacement_allocator_generic_coverage"] == "unsupported"
+          assert probe["runtime_probe"]["record_exit_status"] == 0
+          assert probe["runtime_probe"]["heaptrack_print_exit_status"] == 0
+          assert probe["runtime_probe"]["trace_bytes"] > 0
+          assert probe["runtime_probe"]["report_nonempty"] is True
+
+          replacement_tokens = ("jemalloc", "mimalloc", "snmalloc", "tcmalloc", "rpmalloc")
+          assert not any(
+              token in line.lower()
+              for line in probe["preload_dynamic_dependencies"]
+              for token in replacement_tokens
+          )
+
+          runtime_capability = json.loads(
+              (root / "heap/capability.json").read_text(encoding="utf-8")
+          )
+          assert runtime_capability["static_checks_passed"] is True
+          assert runtime_capability["allocator_semantics_preserved"] is True
+          assert (
+              runtime_capability["preload_library_sha256"]
+              == probe["preload_library_sha256"]
+          )
+
+          run = json.loads((root / "heap/run.json").read_text(encoding="utf-8"))
+          binary = root / "binary/postgres-postgres-system"
+          binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          assert run["profiled_binary_sha256"] == binary_digest
+          assert run["allocator"] == "system"
+          assert run["reader_mode"] == reader
+          assert run["rows"] == 25000
+          assert run["seed"] == 266
+          assert run["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
+          assert run["timing_claim"] == "attribution-only"
+          assert run["coverage_scope"] == "system-allocator-malloc-family-interposition"
+          assert run["child_exit_status"] == 0
+
+          print(
+              f"validated heap attribution evidence: allocator=system "
+              f"reader={reader} sha={expected_sha} "
+              f"allocations={summary['allocation_count']} "
+              f"peak_live_bytes={summary['peak_live_bytes']}"
+          )
+          PY
+
+      - name: Upload heap profile evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-heap-profile-system-${{ inputs.reader }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/heap-profile-artifacts
+            ${{ runner.temp }}/heaptrack-capability.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if heaptrack capability or producer failed
+        if: steps.install-heaptrack.outcome != 'success' || steps.heaptrack.outcome != 'success' || steps.producer.outcome != 'success'
+        run: |
+          echo "::error::heaptrack capability or heap producer failed; inspect retained capability/evidence artifact"
+          exit 1
