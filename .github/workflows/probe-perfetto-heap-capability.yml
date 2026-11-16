@@ -214,6 +214,74 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure llvm-symbolizer prerequisite
+        id: symbolizer
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          INSTALL_STATUS=0
+          if ! command -v llvm-symbolizer >/dev/null 2>&1; then
+            set +e
+            sudo apt-get update
+            UPDATE_STATUS=$?
+            if (( UPDATE_STATUS == 0 )); then
+              sudo apt-get install -y --no-install-recommends llvm
+              INSTALL_STATUS=$?
+            else
+              INSTALL_STATUS=$UPDATE_STATUS
+            fi
+            set -e
+          fi
+
+          python3 - "$RUNNER_TEMP/perfetto-symbolizer.json" "$INSTALL_STATUS" <<'PY'
+          import json
+          import pathlib
+          import shutil
+          import subprocess
+          import sys
+
+          output = pathlib.Path(sys.argv[1])
+          install_status = int(sys.argv[2])
+          path = shutil.which("llvm-symbolizer")
+          version_status = None
+          version = None
+          if path is not None:
+              completed = subprocess.run(
+                  [path, "--version"],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              version_status = completed.returncode
+              text = (completed.stdout or completed.stderr).strip()
+              version = text.splitlines()[0] if text else None
+
+          document = {
+              "schema": "oxide-batch-perfetto-symbolizer/v1",
+              "campaign": 266,
+              "install_exit_status": install_status,
+              "path": path,
+              "version_exit_status": version_status,
+              "version": version,
+              "available": (
+                  install_status == 0
+                  and path is not None
+                  and version_status == 0
+                  and bool(version)
+              ),
+              "upstream_requirement": (
+                  "Perfetto native symbolization requires llvm-symbolizer on PATH"
+              ),
+          }
+          output.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(document, sort_keys=True))
+          if not document["available"]:
+              raise SystemExit("llvm-symbolizer prerequisite unavailable")
+          PY
+
       - name: Run Perfetto known-symbol capability probe
         id: perfetto
         if: always()
@@ -228,10 +296,11 @@ jobs:
         continue-on-error: true
         env:
           PROVISION_OUTCOME: ${{ steps.provision.outcome }}
+          SYMBOLIZER_OUTCOME: ${{ steps.symbolizer.outcome }}
           PROBE_OUTCOME: ${{ steps.perfetto.outcome }}
         run: |
           set -euo pipefail
-          python3 - "$RUNNER_TEMP/perfetto-capability" "$RUNNER_TEMP/perfetto-provision.json" "$RUNNER_TEMP/perfetto-run-context.json" "$EXPECTED_SHA" "$PROVISION_OUTCOME" "$PROBE_OUTCOME" <<'PY'
+          python3 - "$RUNNER_TEMP/perfetto-capability" "$RUNNER_TEMP/perfetto-provision.json" "$RUNNER_TEMP/perfetto-run-context.json" "$RUNNER_TEMP/perfetto-symbolizer.json" "$EXPECTED_SHA" "$PROVISION_OUTCOME" "$SYMBOLIZER_OUTCOME" "$PROBE_OUTCOME" <<'PY'
           import hashlib
           import json
           import pathlib
@@ -240,9 +309,11 @@ jobs:
           root = pathlib.Path(sys.argv[1])
           provision_path = pathlib.Path(sys.argv[2])
           context_path = pathlib.Path(sys.argv[3])
-          expected_sha = sys.argv[4]
-          provision_outcome = sys.argv[5]
-          probe_outcome = sys.argv[6]
+          symbolizer_path = pathlib.Path(sys.argv[4])
+          expected_sha = sys.argv[5]
+          provision_outcome = sys.argv[6]
+          symbolizer_outcome = sys.argv[7]
+          probe_outcome = sys.argv[8]
 
           assert context_path.is_file()
           context = json.loads(context_path.read_text(encoding="utf-8"))
@@ -267,6 +338,16 @@ jobs:
                   for record in provision["files"].values()
               )
 
+          assert symbolizer_path.is_file()
+          symbolizer = json.loads(symbolizer_path.read_text(encoding="utf-8"))
+          assert symbolizer["schema"] == "oxide-batch-perfetto-symbolizer/v1"
+          assert symbolizer["campaign"] == 266
+          if symbolizer_outcome == "success":
+              assert symbolizer["available"] is True
+              assert symbolizer["path"]
+              assert symbolizer["version_exit_status"] == 0
+              assert symbolizer["version"]
+
           capability_path = root / "capability.json"
           assert capability_path.is_file(), capability_path
           capability = json.loads(capability_path.read_text(encoding="utf-8"))
@@ -281,6 +362,12 @@ jobs:
           assert capability["perfetto"]["sampling_claim"] == "fully-accurate-high-overhead"
           assert capability["host"]["system"] == "Linux"
           assert capability["host"]["machine"].lower() == "aarch64"
+          assert capability["symbolization"]["required"] is True
+          if symbolizer_outcome == "success":
+              observed_symbolizer = capability["symbolization"]["llvm_symbolizer"]
+              assert observed_symbolizer["available"] is True
+              assert observed_symbolizer["path"] == symbolizer["path"]
+              assert observed_symbolizer["version"] == symbolizer["version"]
           assert capability["allocator_boundary"]["identity"] == "system"
           assert capability["allocator_boundary"]["interceptor"] == "glibc LD_PRELOAD"
           assert capability["allocator_boundary"]["replacement_allocator_dependencies"] == []
@@ -326,12 +413,13 @@ jobs:
           path: |
             ${{ runner.temp }}/perfetto-capability
             ${{ runner.temp }}/perfetto-provision.json
+            ${{ runner.temp }}/perfetto-symbolizer.json
             ${{ runner.temp }}/perfetto-run-context.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail if provisioning, capability, or evidence validation failed
-        if: steps.provision.outcome != 'success' || steps.perfetto.outcome != 'success' || steps.evidence.outcome != 'success'
+      - name: Fail if provisioning, symbolization, capability, or evidence validation failed
+        if: steps.provision.outcome != 'success' || steps.symbolizer.outcome != 'success' || steps.perfetto.outcome != 'success' || steps.evidence.outcome != 'success'
         run: |
-          echo "::error::Perfetto heap capability qualification failed; inspect retained provision/capability evidence artifact"
+          echo "::error::Perfetto heap capability qualification failed; inspect retained provision/symbolizer/capability evidence artifact"
           exit 1

@@ -209,6 +209,30 @@ def dynamic_dependencies(path: Path) -> dict[str, Any]:
     }
 
 
+def llvm_symbolizer_record() -> dict[str, Any]:
+    path = shutil.which("llvm-symbolizer")
+    if path is None:
+        return {
+            "available": False,
+            "path": None,
+            "version": None,
+            "version_exit_status": None,
+        }
+    completed = subprocess.run(
+        [path, "--version"],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    version_text = (completed.stdout or completed.stderr).strip()
+    return {
+        "available": completed.returncode == 0,
+        "path": path,
+        "version": version_text.splitlines()[0] if version_text else None,
+        "version_exit_status": completed.returncode,
+    }
+
+
 def replacement_allocator_dependencies(lines: list[str]) -> list[str]:
     return [
         line
@@ -517,6 +541,7 @@ def supported_capability(
     provenance_ok: bool,
     dependency_ok: bool,
     compile_ok: bool,
+    symbolizer_ok: bool,
     profiler_exit_status: int | None,
     raw_trace_bytes: int,
     pprof_count: int,
@@ -531,6 +556,7 @@ def supported_capability(
         and provenance_ok
         and dependency_ok
         and compile_ok
+        and symbolizer_ok
         and profiler_exit_status == 0
         and raw_trace_bytes > 0
         and pprof_count > 0
@@ -559,6 +585,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         "trace_processor",
     )
     dependencies = dynamic_dependencies(args.preload_library.resolve())
+    symbolizer = llvm_symbolizer_record()
     replacement_dependencies = replacement_allocator_dependencies(
         dependencies["lines"]
     )
@@ -599,6 +626,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         and provenance_ok
         and dependency_ok
         and compile_ok
+        and symbolizer["available"]
         and debuggee is not None
     ):
         if os.environ.get("LD_PRELOAD"):
@@ -720,6 +748,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         provenance_ok=provenance_ok,
         dependency_ok=dependency_ok,
         compile_ok=compile_ok,
+        symbolizer_ok=symbolizer["available"],
         profiler_exit_status=profiler_status,
         raw_trace_bytes=raw_trace_bytes,
         pprof_count=len(pprof_files),
@@ -779,6 +808,10 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
             "trace_processor": trace_processor,
             "matches_expected": provenance_ok,
         },
+        "symbolization": {
+            "llvm_symbolizer": symbolizer,
+            "required": True,
+        },
         "allocator_boundary": {
             "identity": "system",
             "interceptor": "glibc LD_PRELOAD",
@@ -821,6 +854,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         "claim_boundary": [
             "capability only; no workload or benchmark result is produced",
             "sampling interval 1 is intentionally high-overhead and must not be used as benchmark timing",
+            "support requires llvm-symbolizer on PATH and records its exact observed version",
             "support requires the known C allocation function to survive capture, remote unwind, trace import, and symbolization",
             "the retained traceconv compatibility shim only translates legacy heap_profile calls onto the pinned trace_processor_shell subcommands",
             "support requires zero recorded heapprofd corruption/overrun/guardrail/client/missing-packet errors",
