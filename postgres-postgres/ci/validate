@@ -708,6 +708,9 @@ run_ci_stage() {
   echo "Heap attribution producer tests"
   python3 benchmark/test_heap_profile.py
 
+  echo "Perfetto heap capability producer tests"
+  python3 benchmark/test_perfetto_heap_probe.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
