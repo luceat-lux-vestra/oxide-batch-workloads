@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import contextlib
 import importlib.util
+import io
 import pathlib
 import subprocess
 import tempfile
@@ -65,11 +67,11 @@ class PerfettoHeapProfileTests(unittest.TestCase):
                     "--import-name",
                     "perfetto_heap_system_paging",
                     "--chunk-size",
-                    "1000",
+                    "200",
                     "--reader",
                     "paging",
                     "--page-size",
-                    "750",
+                    "128",
                 ],
             )
         self.assertEqual(
@@ -91,13 +93,113 @@ class PerfettoHeapProfileTests(unittest.TestCase):
                 "--import-name",
                 "perfetto_heap_system_paging",
                 "--chunk-size",
-                "1000",
+                "200",
                 "--reader",
                 "paging",
                 "--page-size",
-                "750",
+                "128",
             ],
         )
+
+    def test_profiler_runner_streams_and_retains_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            stdout_path = root / "stdout.txt"
+            stderr_path = root / "stderr.txt"
+            console_out = io.StringIO()
+            console_err = io.StringIO()
+            with contextlib.redirect_stdout(console_out), contextlib.redirect_stderr(
+                console_err
+            ):
+                result = perfetto_heap_profile.run_profiler_observable(
+                    command=[
+                        perfetto_heap_profile.sys.executable,
+                        "-c",
+                        (
+                            "import sys; "
+                            "print('observable-out', flush=True); "
+                            "print('observable-err', file=sys.stderr, flush=True)"
+                        ),
+                    ],
+                    env=dict(perfetto_heap_profile.os.environ),
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    timeout_seconds=2.0,
+                    terminate_grace_seconds=0.2,
+                )
+
+            self.assertEqual(
+                result["schema"],
+                "oxide-batch-perfetto-profiler-process/v1",
+            )
+            self.assertEqual(result["exit_status"], 0)
+            self.assertFalse(result["timed_out"])
+            self.assertEqual(result["termination"], "natural")
+            self.assertTrue(result["process_group_isolated"])
+            self.assertIn("observable-out", stdout_path.read_text(encoding="utf-8"))
+            self.assertIn("observable-err", stderr_path.read_text(encoding="utf-8"))
+            self.assertIn("observable-out", console_out.getvalue())
+            self.assertIn("observable-err", console_err.getvalue())
+
+    def test_profiler_runner_times_out_and_terminates_process_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            stdout_path = root / "stdout.txt"
+            stderr_path = root / "stderr.txt"
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                io.StringIO()
+            ):
+                result = perfetto_heap_profile.run_profiler_observable(
+                    command=[
+                        perfetto_heap_profile.sys.executable,
+                        "-c",
+                        (
+                            "import time; "
+                            "print('timeout-started', flush=True); "
+                            "time.sleep(5)"
+                        ),
+                    ],
+                    env=dict(perfetto_heap_profile.os.environ),
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    timeout_seconds=0.1,
+                    terminate_grace_seconds=0.2,
+                )
+
+            self.assertTrue(result["timed_out"])
+            self.assertIn(
+                result["termination"],
+                {"timeout-sigterm", "timeout-sigkill"},
+            )
+            self.assertNotEqual(result["exit_status"], 0)
+            self.assertIn("timeout-started", stdout_path.read_text(encoding="utf-8"))
+
+    def test_perfetto_defaults_use_bounded_qualification_geometry(self) -> None:
+        self.assertEqual(perfetto_heap_profile.DEFAULT_ROWS, 2000)
+        self.assertEqual(perfetto_heap_profile.DEFAULT_CHUNK_SIZE, 200)
+        self.assertEqual(perfetto_heap_profile.DEFAULT_FETCH_SIZE, 128)
+        self.assertEqual(perfetto_heap_profile.DEFAULT_PAGE_SIZE, 128)
+        self.assertEqual(
+            perfetto_heap_profile.DEFAULT_PROFILER_TIMEOUT_SECONDS,
+            600,
+        )
+
+    def test_manual_workflow_uses_bounded_fixed_geometry(self) -> None:
+        workflow = (
+            MODULE_PATH.parents[2]
+            / ".github"
+            / "workflows"
+            / "profile-postgres-postgres-perfetto-heap.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("timeout-minutes: 60", workflow)
+        self.assertIn("--profiler-timeout-seconds 600", workflow)
+        self.assertIn("--rows 2000", workflow)
+        self.assertIn("--chunk-size 200", workflow)
+        self.assertIn("--fetch-size 128", workflow)
+        self.assertIn("--page-size 128", workflow)
+        self.assertNotIn("--rows 25000", workflow)
+        self.assertNotIn("--chunk-size 1000", workflow)
+        self.assertNotIn("--page-size 750", workflow)
 
     def test_stack_summary_requires_same_callsite_workload_and_oxide_frames(self) -> None:
         query = perfetto_heap_profile.stack_summary_query()
@@ -219,11 +321,11 @@ class PerfettoHeapProfileTests(unittest.TestCase):
                 "postgres_server_version": "18.0",
             },
             reader="paging",
-            rows=25000,
+            rows=2000,
             seed=266,
-            chunk_size=1000,
-            fetch_size=500,
-            page_size=750,
+            chunk_size=200,
+            fetch_size=128,
+            page_size=128,
             dataset_identity="dataset-digest",
             artifacts=[
                 {
