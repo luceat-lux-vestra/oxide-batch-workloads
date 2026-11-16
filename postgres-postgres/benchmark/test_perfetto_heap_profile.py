@@ -78,8 +78,9 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             command[:3],
             [perfetto_heap_profile.sys.executable, "/tools/heap_profile", "host"],
         )
-        self.assertEqual(command[command.index("--interval") + 1], "1")
+        self.assertEqual(command[command.index("--interval") + 1], "4096")
         self.assertIn("--block-client", command)
+        self.assertNotIn("--no-block-client", command)
         self.assertEqual(
             command[command.index("--traceconv-binary") + 1],
             "/tmp/traceconv-compat.py",
@@ -183,6 +184,27 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             perfetto_heap_profile.DEFAULT_PROFILER_TIMEOUT_SECONDS,
             600,
         )
+        self.assertEqual(
+            perfetto_heap_profile.WORKLOAD_SAMPLING_INTERVAL_BYTES,
+            4096,
+        )
+        self.assertTrue(perfetto_heap_profile.WORKLOAD_BLOCK_CLIENT)
+        self.assertNotEqual(
+            perfetto_heap_profile.WORKLOAD_SAMPLING_INTERVAL_BYTES,
+            perfetto_heap_profile.perfetto_heap_probe.SAMPLING_INTERVAL_BYTES,
+        )
+        self.assertEqual(
+            perfetto_heap_profile.sampling_contract(),
+            {
+                "interval_bytes": 4096,
+                "mode": "poisson-sampled-attribution",
+                "block_client": True,
+                "overflow_policy": "block-client",
+                "allocation_counter_claim": (
+                    "sampled-attribution-not-exact-allocation-event-count"
+                ),
+            },
+        )
 
     def test_manual_workflow_uses_bounded_fixed_geometry(self) -> None:
         workflow = (
@@ -197,6 +219,8 @@ class PerfettoHeapProfileTests(unittest.TestCase):
         self.assertIn("--chunk-size 200", workflow)
         self.assertIn("--fetch-size 128", workflow)
         self.assertIn("--page-size 128", workflow)
+        self.assertIn('"interval_bytes": 4096', workflow)
+        self.assertIn('"block_client": True', workflow)
         self.assertNotIn("--rows 25000", workflow)
         self.assertNotIn("--chunk-size 1000", workflow)
         self.assertNotIn("--page-size 750", workflow)
@@ -288,6 +312,14 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             symbol_projection_rows=60,
         )
         self.assertTrue(summary["supported"])
+        self.assertEqual(
+            summary["schema"],
+            "oxide-batch-perfetto-heap-profile-summary/v2",
+        )
+        self.assertEqual(
+            summary["sampling"],
+            perfetto_heap_profile.sampling_contract(),
+        )
         self.assertEqual(
             summary["allocation_stack_attribution"],
             "readable-rust-workload-to-oxide-batch",

@@ -799,10 +799,16 @@ The producer independently rechecks:
 - Linux aarch64 host scope;
 - `llvm-symbolizer` availability, parsed version, and executable SHA-256.
 
-The profiler command retains interval 1, blocking-client mode, explicit pinned
-helper paths, and the campaign traceconv compatibility shim. The workload
-database URL is supplied only through the child environment, not command-line
-evidence.
+The real-workload profiler command uses Perfetto's upstream default
+4,096-byte sampling interval with blocking-client mode, explicit pinned helper
+paths, and the campaign traceconv compatibility shim. Sampling is intentional:
+the workload lane needs readable allocation call-stack attribution, not exact
+every-allocation accounting. The purpose-built C capability probe remains at
+interval 1 because its tiny geometry can afford the fully accurate mode.
+Blocking-client is retained for the claim-bearing workload so a full buffer
+does not silently terminate profiling early; the existing 600-second
+process-group timeout remains the outer safety bound. The workload database URL
+is supplied only through the child environment, not command-line evidence.
 
 The upstream profiler is launched in an isolated process group with stdout and
 stderr streamed live to both the GitHub job log and retained files. The
@@ -840,9 +846,12 @@ allocation counters, zero heapprofd error counters, and correctness PASS.
 Merely producing a trace or some readable symbols is insufficient.
 
 The summary schema is
-`oxide-batch-perfetto-heap-profile-summary/v1`. The campaign profile manifest
-remains lane `heap`, carries no `benchmark_timing`, and marks all profiler
-timing as attribution-only.
+`oxide-batch-perfetto-heap-profile-summary/v2`. Capability/run/summary
+evidence records the 4,096-byte Poisson-sampling contract, blocking-client
+policy, and that trace allocation counters are sampled attribution evidence,
+not exact allocation-event totals. The campaign profile manifest remains lane
+`heap`, carries no `benchmark_timing`, and marks all profiler timing as
+attribution-only.
 
 ### Manual hosted ARM64 qualification workflow
 
@@ -897,9 +906,52 @@ The corrected harness therefore:
 - reduces the first qualification geometry to 2,000 rows / chunk 200 /
   paging 128, matching the repository's bounded golden-path scale while still
   exercising multiple chunks and pages;
-- keeps interval 1, exact provenance, system-only allocator scope,
-  correctness verification, and the same-callsite
+- at that point kept interval 1, exact provenance, system-only allocator
+  scope, correctness verification, and the same-callsite
   `postgres_postgres + oxide_batch` fail-closed stack gate unchanged.
+
+### Second real OxideBatch Perfetto workload attempt: bounded exact mode timed out
+
+Authoritative run `43929111788` on exact main
+`3cce5eb81621dfaf1895f853c7dab88640e0b2b0` exercised the corrected
+observable/timeout harness with the reduced 2,000-row geometry. Provisioning,
+symbolizer setup, PostgreSQL startup, pinned provenance, and the system/glibc
+allocator boundary all passed. The profiler still exceeded the explicit
+600-second timeout under interval 1 plus blocking-client mode.
+
+The retained evidence proved that the harness itself now behaved correctly:
+
+- stdout/stderr were retained;
+- the profiler ran in an isolated process group;
+- `profiler-process.json` recorded `timed_out=true`,
+  `termination=timeout-sigterm`, and exit status -15;
+- a non-empty raw trace (80,568 bytes) and the profiled binary were retained;
+- capability remained `supported=true`.
+
+Symbol packets, symbolized trace, pprof, SQL projections, summary, correctness
+verifier, and final manifest were not reached before timeout. Therefore this
+run is classified as a **real-workload instrumentation-mode failure**, not a
+Perfetto capability, unwind/symbolization, PostgreSQL, or correctness failure.
+
+Perfetto documents interval 1 as the fully accurate high-overhead mode and
+uses 4,096 bytes as the default sampling interval. Heapprofd samples one
+allocation on average per configured byte interval using size-weighted Poisson
+sampling; increasing the interval is the documented way to reduce profiler
+impact. The claim-bearing real-workload contract therefore changes to:
+
+- sampling interval: 4,096 bytes;
+- sampling purpose: call-stack attribution, not exact allocation-event counts;
+- blocking-client: retained so buffer pressure does not silently truncate the
+  profile;
+- explicit 600-second process-group timeout: retained as the outer fail-closed
+  bound;
+- positive allocation count/byte SQL values: sampled attribution counters only;
+- same-callsite `postgres_postgres + oxide_batch` readability gate,
+  correctness verifier, exact provenance, and system-only allocator boundary:
+  unchanged.
+
+The C capability probe remains interval 1 because its tiny known-symbol program
+is specifically intended to prove maximum-fidelity host capability.
 
 ### Manual hosted ARM64 Perfetto workload workflow
 
@@ -916,6 +968,8 @@ the first claim-bearing workload qualification boundary:
 - seed: 266;
 - chunk size: 200;
 - page size: 128;
+- sampling interval: 4,096 bytes;
+- blocking-client: retained;
 - explicit profiler timeout: 600 seconds;
 - exact repository SHA from the dispatched ref.
 
@@ -947,7 +1001,7 @@ exact protected-main SHA and independent inspection of the retained artifact.
 
 ## Next implementation boundary
 
-Review and merge the bounded/observable Perfetto workload harness fix first.
+Review and merge the practical-sampling Perfetto workload contract first.
 The following separate unit may dispatch the manual workflow exactly once on
 protected main. Do not poll after dispatch.
 

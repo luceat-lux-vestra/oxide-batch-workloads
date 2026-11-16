@@ -63,7 +63,7 @@ jobs:
           output = pathlib.Path(sys.argv[1])
           expected_sha = sys.argv[2]
           document = {
-              "schema": "oxide-batch-perfetto-heap-workflow-context/v1",
+              "schema": "oxide-batch-perfetto-heap-workflow-context/v2",
               "campaign": 266,
               "repository_sha": expected_sha,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
@@ -82,6 +82,15 @@ jobs:
                   "chunk_size": 200,
                   "fetch_size": 128,
                   "page_size": 128,
+              },
+              "sampling": {
+                  "interval_bytes": 4096,
+                  "mode": "poisson-sampled-attribution",
+                  "block_client": True,
+                  "overflow_policy": "block-client",
+                  "allocation_counter_claim": (
+                      "sampled-attribution-not-exact-allocation-event-count"
+                  ),
               },
               "profiler_timeout_seconds": 600,
           }
@@ -357,7 +366,7 @@ jobs:
 
           assert context_path.is_file()
           context = json.loads(context_path.read_text(encoding="utf-8"))
-          assert context["schema"] == "oxide-batch-perfetto-heap-workflow-context/v1"
+          assert context["schema"] == "oxide-batch-perfetto-heap-workflow-context/v2"
           assert context["campaign"] == 266
           assert context["repository_sha"] == expected_sha
           assert context["github_event_name"] == "workflow_dispatch"
@@ -371,6 +380,15 @@ jobs:
               "chunk_size": 200,
               "fetch_size": 128,
               "page_size": 128,
+          }
+          assert context["sampling"] == {
+              "interval_bytes": 4096,
+              "mode": "poisson-sampled-attribution",
+              "block_client": True,
+              "overflow_policy": "block-client",
+              "allocation_counter_claim": (
+                  "sampled-attribution-not-exact-allocation-event-count"
+              ),
           }
           assert context["profiler_timeout_seconds"] == 600
 
@@ -486,13 +504,13 @@ jobs:
           capability = json.loads(
               (root / "heap/capability.json").read_text(encoding="utf-8")
           )
-          assert capability["schema"] == "oxide-batch-perfetto-heap-workload-tools/v1"
+          assert capability["schema"] == "oxide-batch-perfetto-heap-workload-tools/v2"
           assert capability["campaign"] == 266
           assert capability["supported"] is True
           assert capability["perfetto"]["release"] == "v59.1"
           assert capability["perfetto"]["commit"] == "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d"
           assert capability["perfetto"]["prebuilt_roll"] == "v58.2"
-          assert capability["perfetto"]["sampling_interval_bytes"] == 1
+          assert capability["perfetto"]["sampling"] == context["sampling"]
           assert capability["provenance"]["matches_expected"] is True
           assert capability["allocator_boundary"]["identity"] == "system"
           assert capability["allocator_boundary"]["allocator_semantics_preserved"] is True
@@ -506,7 +524,7 @@ jobs:
           summary = json.loads(
               (root / "heap/summary.json").read_text(encoding="utf-8")
           )
-          assert summary["schema"] == "oxide-batch-perfetto-heap-profile-summary/v1"
+          assert summary["schema"] == "oxide-batch-perfetto-heap-profile-summary/v2"
           assert summary["supported"] is True
           assert summary["profiler_exit_status"] == 0
           assert summary["raw_trace_bytes"] > 0
@@ -524,6 +542,7 @@ jobs:
           assert summary["cross_boundary_callsite_count"] > 0
           assert summary["symbol_projection_rows"] > 0
           assert summary["heapprofd_error_count"] == 0
+          assert summary["sampling"] == context["sampling"]
           assert (
               summary["allocation_stack_attribution"]
               == "readable-rust-workload-to-oxide-batch"
@@ -544,7 +563,7 @@ jobs:
           run = json.loads((root / "heap/run.json").read_text(encoding="utf-8"))
           binary = root / "binary/postgres-postgres-system"
           binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-          assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v1"
+          assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v2"
           assert run["allocator"] == "system"
           assert run["reader_mode"] == "paging"
           assert run["rows"] == 2000
@@ -553,6 +572,7 @@ jobs:
           assert run["profiled_binary_sha256"] == binary_digest
           assert run["profiler_exit_status"] == 0
           assert run["profiler_process"] == process
+          assert run["profiler"]["sampling"] == context["sampling"]
           assert run["timing_claim"] == "attribution-only"
           assert run["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert run["profiler"]["llvm_symbolizer"]["sha256"] == symbolizer["sha256"]
@@ -560,7 +580,7 @@ jobs:
 
           print(
               "validated Perfetto heap workload evidence: "
-              f"sha={expected_sha} allocations={summary['positive_allocation_count']} "
+              f"sha={expected_sha} sampled_allocations={summary['positive_allocation_count']} "
               f"cross_boundary_callsites={summary['cross_boundary_callsite_count']}"
           )
           PY
