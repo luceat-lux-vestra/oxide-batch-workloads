@@ -10,8 +10,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +24,13 @@ import profile_manifest
 import profile_smoke
 
 SYSTEM_ALLOCATOR = "system"
-DEFAULT_ROWS = heap_profile.DEFAULT_ROWS
+DEFAULT_ROWS = 2_000
 DEFAULT_SEED = heap_profile.DEFAULT_SEED
-DEFAULT_CHUNK_SIZE = heap_profile.DEFAULT_CHUNK_SIZE
-DEFAULT_FETCH_SIZE = heap_profile.DEFAULT_FETCH_SIZE
-DEFAULT_PAGE_SIZE = heap_profile.DEFAULT_PAGE_SIZE
+DEFAULT_CHUNK_SIZE = 200
+DEFAULT_FETCH_SIZE = 128
+DEFAULT_PAGE_SIZE = 128
+DEFAULT_PROFILER_TIMEOUT_SECONDS = 600
+PROFILER_TERMINATE_GRACE_SECONDS = 10
 VERSION_PATTERN = re.compile(r"\bversion\s+([^\s]+)", re.IGNORECASE)
 
 
@@ -190,6 +194,112 @@ def profiler_command(
         "--",
         *workload,
     ]
+
+
+def _tee_stream(stream: Any, sink: Any, console: Any) -> None:
+    try:
+        for line in iter(stream.readline, ""):
+            sink.write(line)
+            sink.flush()
+            console.write(line)
+            console.flush()
+    finally:
+        stream.close()
+
+
+def run_profiler_observable(
+    *,
+    command: list[str],
+    env: dict[str, str],
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: float,
+    terminate_grace_seconds: float = PROFILER_TERMINATE_GRACE_SECONDS,
+) -> dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise ValueError("profiler timeout must be positive")
+    if terminate_grace_seconds <= 0:
+        raise ValueError("profiler terminate grace must be positive")
+
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with stdout_path.open("w", encoding="utf-8", buffering=1) as stdout_file, \
+         stderr_path.open("w", encoding="utf-8", buffering=1) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            bufsize=1,
+            start_new_session=True,
+        )
+        if process.stdout is None or process.stderr is None:
+            fail("Perfetto profiler subprocess pipes were not created")
+
+        stdout_thread = threading.Thread(
+            target=_tee_stream,
+            args=(process.stdout, stdout_file, sys.stdout),
+            daemon=True,
+            name="perfetto-stdout-tee",
+        )
+        stderr_thread = threading.Thread(
+            target=_tee_stream,
+            args=(process.stderr, stderr_file, sys.stderr),
+            daemon=True,
+            name="perfetto-stderr-tee",
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        timed_out = False
+        termination = "natural"
+        try:
+            exit_status = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            termination = "timeout-sigterm"
+            print(
+                f"Perfetto profiler exceeded {timeout_seconds:g}s; "
+                f"terminating process group {process.pid}",
+                file=sys.stderr,
+                flush=True,
+            )
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                exit_status = process.wait(timeout=terminate_grace_seconds)
+            except subprocess.TimeoutExpired:
+                termination = "timeout-sigkill"
+                print(
+                    "Perfetto profiler process group ignored SIGTERM; "
+                    "sending SIGKILL",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                exit_status = process.wait()
+
+        stdout_thread.join(timeout=terminate_grace_seconds)
+        stderr_thread.join(timeout=terminate_grace_seconds)
+        if stdout_thread.is_alive() or stderr_thread.is_alive():
+            fail("Perfetto profiler output tee threads did not terminate")
+
+    return {
+        "schema": "oxide-batch-perfetto-profiler-process/v1",
+        "exit_status": exit_status,
+        "timed_out": timed_out,
+        "termination": termination,
+        "timeout_seconds": timeout_seconds,
+        "terminate_grace_seconds": terminate_grace_seconds,
+        "process_group_isolated": True,
+    }
 
 
 def stack_summary_query() -> str:
@@ -634,21 +744,30 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
         profiled_env["DATABASE_URL"] = database_url
         profiled_env["PERFETTO_BINARY_PATH"] = str(binary.parent)
 
-        completed = subprocess.run(
-            command,
-            check=False,
-            text=True,
-            capture_output=True,
-            env=profiled_env,
-        )
         stdout_path = heap_root / "heap_profile.stdout.txt"
         stderr_path = heap_root / "heap_profile.stderr.txt"
-        stdout_path.write_text(completed.stdout, encoding="utf-8")
-        stderr_path.write_text(completed.stderr, encoding="utf-8")
-        if completed.returncode != 0:
+        process_path = heap_root / "profiler-process.json"
+        process_result = run_profiler_observable(
+            command=command,
+            env=profiled_env,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout_seconds=args.profiler_timeout_seconds,
+        )
+        profile_smoke.write_json(process_path, process_result)
+        if process_result["timed_out"]:
             fail(
-                f"Perfetto heap_profile exited {completed.returncode}: "
-                f"{completed.stderr[-2000:]}"
+                "Perfetto heap_profile exceeded explicit profiler timeout "
+                f"{args.profiler_timeout_seconds}s"
+            )
+        if process_result["exit_status"] != 0:
+            stderr_tail = stderr_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )[-2000:]
+            fail(
+                f"Perfetto heap_profile exited {process_result['exit_status']}: "
+                f"{stderr_tail}"
             )
 
         raw_trace = profile_root / "raw-trace"
@@ -716,7 +835,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
             fail("Perfetto workload SQL projection returned no summary row")
 
         summary = build_summary(
-            profiler_exit_status=completed.returncode,
+            profiler_exit_status=process_result["exit_status"],
             raw_trace_bytes=raw_trace.stat().st_size,
             symbol_packets_bytes=symbols.stat().st_size,
             symbolized_trace_bytes=symbolized_trace.stat().st_size,
@@ -761,7 +880,8 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
             "seed": args.seed,
             "build_flags": ["CARGO_PROFILE_RELEASE_DEBUG=1"],
             "profiled_binary_sha256": profile_smoke.sha256_file(binary),
-            "profiler_exit_status": completed.returncode,
+            "profiler_exit_status": process_result["exit_status"],
+            "profiler_process": process_result,
             "timing_claim": "attribution-only",
             "coverage_scope": capability["allocator_boundary"]["coverage_scope"],
         }
@@ -780,6 +900,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
             },
             profile_smoke.artifact_record(args.output, stdout_path),
             profile_smoke.artifact_record(args.output, stderr_path),
+            profile_smoke.artifact_record(args.output, process_path),
             profile_smoke.artifact_record(args.output, capability_path),
             profile_smoke.artifact_record(args.output, metadata_path),
             {
@@ -855,6 +976,11 @@ def main() -> int:
     parser.add_argument("--preload-library", type=Path, required=True)
     parser.add_argument("--trace-processor-binary", type=Path, required=True)
     parser.add_argument(
+        "--profiler-timeout-seconds",
+        type=float,
+        default=DEFAULT_PROFILER_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
         "--allocator",
         choices=(SYSTEM_ALLOCATOR,),
         default=SYSTEM_ALLOCATOR,
@@ -866,6 +992,8 @@ def main() -> int:
     parser.add_argument("--fetch-size", type=int, default=DEFAULT_FETCH_SIZE)
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE)
     args = parser.parse_args()
+    if args.profiler_timeout_seconds <= 0:
+        parser.error("--profiler-timeout-seconds must be positive")
 
     manifest = run_profile(args)
     print(

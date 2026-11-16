@@ -14,7 +14,7 @@ jobs:
   perfetto-heap-profile:
     name: postgres-postgres-perfetto-heap-profile
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    timeout-minutes: 60
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
       RUST_LOG: error
@@ -77,12 +77,13 @@ jobs:
               "allocator": "system",
               "reader": "paging",
               "geometry": {
-                  "rows": 25000,
+                  "rows": 2000,
                   "seed": 266,
-                  "chunk_size": 1000,
-                  "fetch_size": 500,
-                  "page_size": 750,
+                  "chunk_size": 200,
+                  "fetch_size": 128,
+                  "page_size": 128,
               },
+              "profiler_timeout_seconds": 600,
           }
           output.write_text(
               json.dumps(document, indent=2, sort_keys=True) + "\n",
@@ -325,7 +326,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          python3 benchmark/perfetto_heap_profile.py             --base-database-url "$DATABASE_URL"             --output "$RUNNER_TEMP/perfetto-heap-profile-artifacts"             --heap-profile-script "$RUNNER_TEMP/perfetto-tools/heap_profile"             --tracebox-binary "$RUNNER_TEMP/perfetto-tools/tracebox"             --preload-library "$RUNNER_TEMP/perfetto-tools/libheapprofd_glibc_preload.so"             --trace-processor-binary "$RUNNER_TEMP/perfetto-tools/trace_processor_shell"             --allocator system             --reader paging             --rows 25000             --seed 266             --chunk-size 1000             --fetch-size 500             --page-size 750
+          python3 benchmark/perfetto_heap_profile.py             --base-database-url "$DATABASE_URL"             --output "$RUNNER_TEMP/perfetto-heap-profile-artifacts"             --heap-profile-script "$RUNNER_TEMP/perfetto-tools/heap_profile"             --tracebox-binary "$RUNNER_TEMP/perfetto-tools/tracebox"             --preload-library "$RUNNER_TEMP/perfetto-tools/libheapprofd_glibc_preload.so"             --trace-processor-binary "$RUNNER_TEMP/perfetto-tools/trace_processor_shell"             --profiler-timeout-seconds 600             --allocator system             --reader paging             --rows 2000             --seed 266             --chunk-size 200             --fetch-size 128             --page-size 128
 
       - name: Validate retained Perfetto heap workload evidence
         id: evidence
@@ -365,12 +366,13 @@ jobs:
           assert context["allocator"] == "system"
           assert context["reader"] == "paging"
           assert context["geometry"] == {
-              "rows": 25000,
+              "rows": 2000,
               "seed": 266,
-              "chunk_size": 1000,
-              "fetch_size": 500,
-              "page_size": 750,
+              "chunk_size": 200,
+              "fetch_size": 128,
+              "page_size": 128,
           }
+          assert context["profiler_timeout_seconds"] == 600
 
           assert provision_path.is_file()
           provision = json.loads(provision_path.read_text(encoding="utf-8"))
@@ -397,11 +399,24 @@ jobs:
               assert symbolizer["version"]
               assert symbolizer["version_exit_status"] == 0
 
+          process_path = root / "heap/profiler-process.json"
+          if process_path.is_file():
+              process = json.loads(process_path.read_text(encoding="utf-8"))
+              assert process["schema"] == "oxide-batch-perfetto-profiler-process/v1"
+              assert process["timeout_seconds"] == 600
+              assert process["process_group_isolated"] is True
+              for relative in (
+                  "heap/heap_profile.stdout.txt",
+                  "heap/heap_profile.stderr.txt",
+              ):
+                  assert (root / relative).is_file(), relative
+
           if producer_outcome != "success":
               print(
                   "retained prerequisite/partial evidence validated: "
                   f"provision={provision_outcome} symbolizer={symbolizer_outcome} "
-                  f"postgres={postgres_outcome} producer={producer_outcome}"
+                  f"postgres={postgres_outcome} producer={producer_outcome} "
+                  f"profiler_process_retained={process_path.is_file()}"
               )
               raise SystemExit(0)
 
@@ -417,11 +432,11 @@ jobs:
           assert manifest["subject"]["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
           assert manifest["allocator"]["identity"] == "system"
           assert manifest["workload"]["reader_mode"] == "paging"
-          assert manifest["workload"]["rows"] == 25000
+          assert manifest["workload"]["rows"] == 2000
           assert manifest["workload"]["seed"] == 266
-          assert manifest["workload"]["chunk_size"] == 1000
+          assert manifest["workload"]["chunk_size"] == 200
           assert manifest["workload"]["fetch_size"] is None
-          assert manifest["workload"]["page_size"] == 750
+          assert manifest["workload"]["page_size"] == 128
           assert manifest["instrumentation"]["profiler_attached"] is True
           assert [tool["name"] for tool in manifest["instrumentation"]["tools"]] == [
               "perfetto-heapprofd-host",
@@ -452,6 +467,7 @@ jobs:
               "heap/summary.json",
               "heap/capability.json",
               "heap/run.json",
+              "heap/profiler-process.json",
               "heap/compat/traceconv-compat.py",
               "correctness/verifier.json",
               "binary/postgres-postgres-system",
@@ -515,17 +531,28 @@ jobs:
           assert summary["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert summary["timing_claim"] == "attribution-only"
 
+          process = json.loads(
+              (root / "heap/profiler-process.json").read_text(encoding="utf-8")
+          )
+          assert process["schema"] == "oxide-batch-perfetto-profiler-process/v1"
+          assert process["exit_status"] == 0
+          assert process["timed_out"] is False
+          assert process["termination"] == "natural"
+          assert process["timeout_seconds"] == 600
+          assert process["process_group_isolated"] is True
+
           run = json.loads((root / "heap/run.json").read_text(encoding="utf-8"))
           binary = root / "binary/postgres-postgres-system"
           binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
           assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v1"
           assert run["allocator"] == "system"
           assert run["reader_mode"] == "paging"
-          assert run["rows"] == 25000
+          assert run["rows"] == 2000
           assert run["seed"] == 266
           assert run["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
           assert run["profiled_binary_sha256"] == binary_digest
           assert run["profiler_exit_status"] == 0
+          assert run["profiler_process"] == process
           assert run["timing_claim"] == "attribution-only"
           assert run["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert run["profiler"]["llvm_symbolizer"]["sha256"] == symbolizer["sha256"]

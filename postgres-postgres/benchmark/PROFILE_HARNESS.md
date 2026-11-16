@@ -774,13 +774,14 @@ that version and the executable SHA-256.
 real `postgres-postgres` workload while remaining intentionally limited to
 the `system` allocator.
 
-It reuses the existing heap workload geometry and correctness path:
+It uses a Perfetto-specific bounded qualification geometry and the existing
+correctness path:
 
-- default rows: 25,000;
+- default rows: 2,000;
 - seed: 266;
-- chunk size: 1,000;
-- cursor fetch size: 500;
-- paging page size: 750;
+- chunk size: 200;
+- cursor fetch size: 128;
+- paging page size: 128;
 - release build with `CARGO_PROFILE_RELEASE_DEBUG=1`;
 - exact locked OxideBatch `=0.6.0`;
 - independent `postgres-postgres verify` correctness digest after the
@@ -802,6 +803,14 @@ The profiler command retains interval 1, blocking-client mode, explicit pinned
 helper paths, and the campaign traceconv compatibility shim. The workload
 database URL is supplied only through the child environment, not command-line
 evidence.
+
+The upstream profiler is launched in an isolated process group with stdout and
+stderr streamed live to both the GitHub job log and retained files. The
+producer imposes a 600-second profiler timeout; timeout first sends SIGTERM to
+the whole process group and escalates to SIGKILL after a bounded grace period.
+The retained `profiler-process.json` records the timeout contract, exit status,
+termination path, and process-group isolation. Profiler timeout/runtime is
+instrumentation evidence only, never benchmark timing.
 
 The producer retains the authoritative raw trace plus:
 
@@ -854,6 +863,44 @@ provisioning, capability qualification, or retained-evidence validation did not
 pass. Therefore a red workflow remains a meaningful unsupported/blocked
 qualification artifact instead of losing the diagnostic state.
 
+### First real OxideBatch Perfetto workload attempt: cancelled
+
+Authoritative run `43896923666` on exact main
+`5778d112e91c94eab05161eec6f31f1536ee10cf` reached the real workload
+producer after all prerequisites passed, but step 10 remained in progress for
+roughly half an hour and was manually cancelled.
+
+The retained partial artifact proved:
+
+- pinned Perfetto provenance and system/glibc allocator boundary still passed;
+- `llvm-symbolizer` 18.1.3 was available;
+- the profiled system binary was retained;
+- a non-empty raw Perfetto trace (75,239 bytes) was produced;
+- no symbol packets, symbolized trace, pprof, SQL projections, summary,
+  correctness verifier, or manifest had been produced before cancellation.
+
+The producer at that point launched `heap_profile host` using
+`capture_output=True`, so child output was buffered until process exit and the
+GitHub step was operationally opaque. It also reused the heaptrack 25,000-row
+geometry with interval 1 plus blocking-client mode, creating pathological event
+volume for the first real Perfetto workload qualification.
+
+This run is classified as a **harness/runtime-geometry failure**, not a
+Perfetto capability, unwind/symbolization, PostgreSQL, or workload-correctness
+failure.
+
+The corrected harness therefore:
+
+- streams profiler stdout/stderr live and retains the same bytes;
+- isolates the profiler and descendants in one process group;
+- imposes a 600-second profiler timeout with TERM/KILL cleanup;
+- reduces the first qualification geometry to 2,000 rows / chunk 200 /
+  paging 128, matching the repository's bounded golden-path scale while still
+  exercising multiple chunks and pages;
+- keeps interval 1, exact provenance, system-only allocator scope,
+  correctness verification, and the same-callsite
+  `postgres_postgres + oxide_batch` fail-closed stack gate unchanged.
+
 ### Manual hosted ARM64 Perfetto workload workflow
 
 `.github/workflows/profile-postgres-postgres-perfetto-heap.yml` is the
@@ -865,10 +912,11 @@ the first claim-bearing workload qualification boundary:
 - runner: `ubuntu-24.04-arm`;
 - allocator: `system`;
 - reader: `paging`;
-- rows: 25,000;
+- rows: 2,000;
 - seed: 266;
-- chunk size: 1,000;
-- page size: 750;
+- chunk size: 200;
+- page size: 128;
+- explicit profiler timeout: 600 seconds;
 - exact repository SHA from the dispatched ref.
 
 The workflow:
@@ -881,7 +929,8 @@ The workflow:
 - ensures `llvm-symbolizer` exists and records its parsed version plus
   executable SHA-256;
 - starts PostgreSQL 18;
-- executes only `benchmark/perfetto_heap_profile.py`;
+- executes only `benchmark/perfetto_heap_profile.py` with the explicit
+  600-second profiler timeout;
 - independently revalidates the resulting manifest, every retained artifact
   hash, Perfetto provenance, symbolizer identity, profiled binary digest,
   correctness digest, and fail-closed cross-boundary allocation-stack summary;
@@ -898,9 +947,9 @@ exact protected-main SHA and independent inspection of the retained artifact.
 
 ## Next implementation boundary
 
-Review and merge the manual hosted-ARM64 Perfetto workload workflow first.
-The following separate unit may dispatch it exactly once on protected main.
-Do not poll after dispatch.
+Review and merge the bounded/observable Perfetto workload harness fix first.
+The following separate unit may dispatch the manual workflow exactly once on
+protected main. Do not poll after dispatch.
 
 A later classification unit must independently inspect the retained artifact
 and require correctness plus readable same-callsite
