@@ -581,10 +581,94 @@ call site must survive recording and projection with its named symbol visible.
 The workload producer independently enforces readable folded-stack attribution
 as a second gate.
 
+The hardened authoritative rerun, run `43858820727` on
+`316b8d24b28283fa6e5d368af19d6d0b081ec01b`, then closed the host/tool
+classification. Its purpose-built C probe compiled successfully, heaptrack
+recorded a non-empty native trace, and `heaptrack_print` completed, but the
+folded allocation stack still contained only unknown attribution. The known
+symbol `oxide_batch_heap_probe_allocate` was absent. Therefore Ubuntu 24.04
+hosted ARM64 plus the distribution heaptrack 1.5.0 package is **unsupported
+for generic heap allocation-stack attribution** in this campaign. This does
+not invalidate the scalar heap evidence retained from run 43845055327.
+
+## Perfetto heapprofd fallback capability
+
+The first allocator-preserving fallback selected for qualification is Perfetto
+heapprofd host mode. This is a separate capability path from heaptrack and does
+not weaken the heaptrack failure classification.
+
+`benchmark/perfetto_heap_probe.py` is intentionally capability-only. It does
+not run PostgreSQL, produce OxideBatch workload evidence, or make benchmark
+timing claims.
+
+The provenance contract follows the upstream release itself rather than a
+floating download:
+
+- Perfetto release: `v59.1`;
+- release commit: `1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d`;
+- `tools/heap_profile` Git blob:
+  `1d5b1cc8d9bd38749c6d200a8d5aac9b616b84ed`;
+- the v59.1 script embeds prebuilts rolled at `v58.2`, so the campaign pins
+  those exact upstream artifacts instead of pretending that they are v59.1
+  binaries;
+- linux-arm64 tracebox SHA-256:
+  `2d21883e9c55818f851fd8c391afb9b366032b3110076b4fd41f31f30b5849fa`;
+- linux-arm64 `libheapprofd_glibc_preload.so` SHA-256:
+  `4ca10d32455973389d0f772f1c9ad8616b61eb46edc3b995a2825dee9fab2662`;
+- linux-arm64 trace processor SHA-256:
+  `0e6e0c5452c505c8d46fe472fd196a0d17d963460727e2ce2013b02aa1309555`.
+
+The producer does not download any of those files. A later opt-in workflow must
+provision them from the pinned upstream URLs; the producer independently checks
+the script Git-blob identity, prebuilt byte sizes, and SHA-256 values before
+execution.
+
+The allocator boundary is also fail-closed. Perfetto documents the standalone
+glibc preload interceptor as calling glibc-specific `__libc_malloc`-family
+symbols so that the system allocator continues to serve the allocations. The
+probe additionally records `ldd` output and rejects a preload binary that
+dynamically names jemalloc, mimalloc, snmalloc, tcmalloc, or rpmalloc.
+
+The runtime qualification uses another tiny debug-symbol C program with the
+known noinline allocation function
+`oxide_batch_perfetto_probe_allocate`. It runs host-mode heapprofd with:
+
+- sampling interval `1`, Perfetto's fully accurate high-overhead mode;
+- explicit pinned tracebox, preload, and trace processor paths;
+- blocking-client mode so the bounded capability run fails by latency rather
+  than silently losing allocation events;
+- a retained raw Perfetto trace plus the generated gzipped pprof projections;
+- `PERFETTO_BINARY_PATH` fixed to the probe-binary directory so the helper
+  emits separate symbol packets and a `symbolized-trace`; the untouched
+  `raw-trace` remains authoritative.
+
+The symbolized trace is queried with the pinned trace processor when available;
+otherwise the raw trace is queried and the known-symbol gate will fail closed.
+Support requires:
+
+- positive allocation count and bytes in `heap_profile_allocation`;
+- at least one named frame reachable from a positive allocation callsite;
+- the exact known probe symbol to appear in an allocation-reachable stack;
+- at least one non-empty pprof projection;
+- zero recorded heapprofd corruption, buffer-overrun, guardrail, client,
+  malformed/missing-packet, non-finalized-profile, or sampling-interval-adjusted
+  events;
+- all pinned provenance and allocator-boundary checks to pass.
+
+Capability schema is
+`oxide-batch-perfetto-heap-capability/v1`. The output directory retains the
+probe source/binary, helper stdout/stderr, raw trace, pprof projections, SQL
+projections, hashes, and capability document. Sampling interval 1 is strictly
+instrumentation evidence and must never be compared with benchmark-lane
+timings.
+
 ## Next implementation boundary
 
-Merge and exercise the hardened attribution gate once. If hosted ARM64 fails
-the known-symbol probe, classify that host/tool combination as unsupported for
-generic heap stack attribution and evaluate a separate allocator-safe fallback
-in a later bounded unit. Timeline/concurrency instrumentation,
-soak/quiescence execution, and allocator-native telemetry remain separate.
+Review and merge the Perfetto capability producer contract first. The following
+separate unit may add a manual ARM64 workflow that provisions the exact pinned
+upstream files and executes the C known-symbol capability probe once. Only if
+that probe passes should a later workload producer be implemented for
+system+paging OxideBatch evidence. BCC/libbpf memleak remains the next generic
+allocator-preserving fallback if hosted Perfetto is blocked. Timeline/
+concurrency instrumentation, soak/quiescence execution, and allocator-native
+telemetry remain separate later lanes.
