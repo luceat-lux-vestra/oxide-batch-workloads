@@ -276,12 +276,80 @@ def compile_probe(root: Path) -> tuple[Path | None, dict[str, Any]]:
     return binary.resolve(), evidence
 
 
+def write_traceconv_compat_shim(root: Path, trace_processor: Path) -> tuple[Path, dict[str, Any]]:
+    shim = root / "traceconv-compat.py"
+    script = f'''#!/usr/bin/env python3
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+TRACE_PROCESSOR = {str(trace_processor)!r}
+
+def main() -> int:
+    args = list(sys.argv[1:])
+    if not args:
+        print("traceconv compatibility shim requires a mode", file=sys.stderr)
+        return 2
+    mode = args.pop(0)
+    if mode == "symbolize":
+        if len(args) != 1:
+            print("symbolize requires exactly one trace path", file=sys.stderr)
+            return 2
+        completed = subprocess.run(
+            [TRACE_PROCESSOR, "util", "symbolize", args[0]],
+            check=False,
+            stdout=sys.stdout.buffer,
+            stderr=sys.stderr.buffer,
+        )
+        return completed.returncode
+    if mode == "profile":
+        no_annotations = False
+        if args and args[0] == "--no-annotations":
+            no_annotations = True
+            args.pop(0)
+        if len(args) != 1:
+            print("profile requires exactly one trace path", file=sys.stderr)
+            return 2
+        output_dir = pathlib.Path(tempfile.mkdtemp(prefix="heap_profile-"))
+        command = [TRACE_PROCESSOR, "convert", "profile"]
+        if no_annotations:
+            command.append("--no-annotations")
+        command += ["--output-dir", str(output_dir), args[0]]
+        completed = subprocess.run(command, check=False, text=True, capture_output=True)
+        if completed.returncode != 0:
+            sys.stderr.write(completed.stdout)
+            sys.stderr.write(completed.stderr)
+            return completed.returncode
+        print(output_dir)
+        return 0
+    print(f"unsupported legacy traceconv mode: {{mode}}", file=sys.stderr)
+    return 2
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+    shim.write_text(script, encoding="utf-8")
+    shim.chmod(0o755)
+    return shim, {
+        "path": str(shim),
+        "sha256": sha256_file(shim),
+        "bytes": shim.stat().st_size,
+        "trace_processor": str(trace_processor),
+        "legacy_modes": ["symbolize", "profile"],
+        "translated_commands": [
+            "util symbolize",
+            "convert profile --output-dir",
+        ],
+    }
+
+
 def profiler_command(
     *,
     heap_profile_script: Path,
     tracebox: Path,
     preload: Path,
-    trace_processor: Path,
+    traceconv_compat: Path,
     output: Path,
     debuggee: Path,
 ) -> list[str]:
@@ -297,7 +365,7 @@ def profiler_command(
         "--output",
         str(output),
         "--traceconv-binary",
-        str(trace_processor),
+        str(traceconv_compat),
         "--preload-library",
         str(preload),
         "--tracebox-binary",
@@ -508,6 +576,10 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     probe_root = root / "probe"
     probe_root.mkdir()
     debuggee, compile_evidence = compile_probe(probe_root)
+    traceconv_compat, traceconv_compat_evidence = write_traceconv_compat_shim(
+        probe_root,
+        args.trace_processor_binary.resolve(),
+    )
     compile_ok = (
         debuggee is not None
         and compile_evidence["compile_exit_status"] == 0
@@ -536,7 +608,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                 heap_profile_script=args.heap_profile_script.resolve(),
                 tracebox=args.tracebox_binary.resolve(),
                 preload=args.preload_library.resolve(),
-                trace_processor=args.trace_processor_binary.resolve(),
+                traceconv_compat=traceconv_compat,
                 output=profile_root,
                 debuggee=debuggee,
             )
@@ -663,6 +735,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         (profiler_stdout, "log"),
         (profiler_stderr, "log"),
         (probe_root / "perfetto-heap-probe.c", "probe-source"),
+        (traceconv_compat, "compat-shim"),
     ):
         if path.is_file():
             artifacts.append(evidence_record(root, path, kind))
@@ -720,6 +793,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
         "probe": {
             **compile_evidence,
             "profiler_command": profiler_command_value,
+            "traceconv_compat": traceconv_compat_evidence,
             "profiler_exit_status": profiler_status,
             "profiler_stdout_path": profiler_stdout.relative_to(root).as_posix(),
             "profiler_stderr_path": profiler_stderr.relative_to(root).as_posix(),
@@ -748,6 +822,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
             "capability only; no workload or benchmark result is produced",
             "sampling interval 1 is intentionally high-overhead and must not be used as benchmark timing",
             "support requires the known C allocation function to survive capture, remote unwind, trace import, and symbolization",
+            "the retained traceconv compatibility shim only translates legacy heap_profile calls onto the pinned trace_processor_shell subcommands",
             "support requires zero recorded heapprofd corruption/overrun/guardrail/client/missing-packet errors",
             "replacement Rust global allocators remain outside this generic system-allocator probe",
             "Perfetto host-mode capability does not by itself establish OxideBatch workload stack readability",

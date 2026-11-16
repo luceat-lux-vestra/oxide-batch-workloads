@@ -664,6 +664,42 @@ projections, hashes, and capability document. Sampling interval 1 is strictly
 instrumentation evidence and must never be compared with benchmark-lane
 timings.
 
+### First hosted ARM64 Perfetto run: wrapper compatibility failure
+
+Authoritative run `43869082342` on exact main
+`16966581bc04b147c973f85ff799c4c40a6b314b` successfully provisioned every
+pinned Perfetto input and compiled/executed the known C probe far enough to
+produce a non-empty raw trace. The run did **not** classify heapprofd
+unwinding support because post-processing failed first.
+
+The retained evidence showed:
+
+- all v59.1 script / v58.2 ARM64 helper identities matched exactly;
+- the glibc preload retained only system-library dependencies and no known
+  replacement allocator;
+- the C probe compiled successfully;
+- `raw-trace` was non-empty;
+- the v59.1 `heap_profile` wrapper invoked its helper using the legacy
+  `traceconv symbolize` / `traceconv profile` CLI;
+- the pinned v58.2 helper is `trace_processor_shell`, whose supported
+  interface is `util symbolize` and `convert profile --output-dir`;
+- therefore symbol packets, pprof output, and SQL attribution checks were never
+  reached.
+
+This is classified as a **harness compatibility failure**, not a hosted-runner
+permission failure and not a heapprofd unwind/symbolization failure.
+
+The capability producer now generates and retains a narrow compatibility shim
+that translates only the two legacy calls made by `heap_profile`:
+
+- `symbolize TRACE` -> `trace_processor_shell util symbolize TRACE`;
+- `profile [--no-annotations] TRACE` ->
+  `trace_processor_shell convert profile [--no-annotations] --output-dir ... TRACE`.
+
+The upstream trace processor binary remains byte-for-byte pinned and is still
+used directly for all SQL evidence queries. The shim is campaign-owned,
+retained with SHA-256 evidence, and covered by dependency-free CI tests.
+
 ### Manual hosted ARM64 qualification workflow
 
 `.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and

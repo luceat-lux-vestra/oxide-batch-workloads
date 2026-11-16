@@ -77,7 +77,7 @@ class PerfettoHeapProbeTests(unittest.TestCase):
             heap_profile_script=pathlib.Path("/tools/heap_profile"),
             tracebox=pathlib.Path("/tools/tracebox"),
             preload=pathlib.Path("/tools/libheapprofd_glibc_preload.so"),
-            trace_processor=pathlib.Path("/tools/trace_processor_shell"),
+            traceconv_compat=pathlib.Path("/tmp/traceconv-compat.py"),
             output=pathlib.Path("/tmp/profile"),
             debuggee=pathlib.Path("/tmp/probe"),
         )
@@ -98,10 +98,67 @@ class PerfettoHeapProbeTests(unittest.TestCase):
         )
         self.assertEqual(
             command[command.index("--traceconv-binary") + 1],
-            "/tools/trace_processor_shell",
+            "/tmp/traceconv-compat.py",
         )
         self.assertEqual(command[-2:], ["--", "/tmp/probe"])
         self.assertFalse(any("postgresql://" in item for item in command))
+
+    def test_traceconv_compat_shim_translates_v58_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            fake_tp = root / "trace_processor_shell"
+            fake_tp.write_text(
+                """#!/usr/bin/env python3
+import pathlib
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["util", "symbolize"]:
+    sys.stdout.buffer.write(b"symbol-packets")
+    raise SystemExit(0)
+if len(args) >= 5 and args[:2] == ["convert", "profile"]:
+    output_dir = pathlib.Path(args[args.index("--output-dir") + 1])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "heap_dump.fake.pb").write_bytes(b"pprof")
+    raise SystemExit(0)
+raise SystemExit(9)
+""",
+                encoding="utf-8",
+            )
+            fake_tp.chmod(0o755)
+
+            shim, evidence = perfetto_heap_probe.write_traceconv_compat_shim(
+                root,
+                fake_tp,
+            )
+            self.assertTrue(shim.is_file())
+            self.assertTrue(shim.stat().st_mode & 0o111)
+            self.assertGreater(evidence["bytes"], 0)
+            self.assertEqual(evidence["trace_processor"], str(fake_tp))
+
+            trace = root / "trace.pb"
+            trace.write_bytes(b"trace")
+            symbolized = __import__("subprocess").run(
+                [str(shim), "symbolize", str(trace)],
+                check=False,
+                capture_output=True,
+            )
+            self.assertEqual(symbolized.returncode, 0)
+            self.assertEqual(symbolized.stdout, b"symbol-packets")
+
+            profile = __import__("subprocess").run(
+                [str(shim), "profile", "--no-annotations", str(trace)],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(profile.returncode, 0, profile.stderr)
+            output_dir = pathlib.Path(profile.stdout.strip())
+            self.assertIn("heap_profile-", output_dir.name)
+            self.assertEqual(
+                (output_dir / "heap_dump.fake.pb").read_bytes(),
+                b"pprof",
+            )
 
     def test_trace_query_command_uses_csv_subcommand_interface(self) -> None:
         command = perfetto_heap_probe.trace_query_command(
