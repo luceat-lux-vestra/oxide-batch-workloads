@@ -503,22 +503,31 @@ The producer:
   `libheaptrack_preload.so` path/SHA-256/dynamic dependencies, and fails
   closed if the preload library dynamically names a known replacement
   allocator;
-- provides a DB-independent `--probe-output` mode that runs heaptrack against
-  the host `true` executable, verifies a non-empty native trace and readable
-  `heaptrack_print` projection, records bounded stderr/status evidence, and
-  writes the capability JSON before failing when runtime capture is unavailable;
+- provides a DB-independent `--probe-output` mode that compiles a tiny
+  debug-symbol C program with a known noinline malloc call site, profiles it,
+  generates an allocation folded-stack projection, and accepts the host only
+  when that exact known symbol is present in a readable stack; non-empty trace
+  bytes and a non-empty report alone are not sufficient;
+- records the probe compiler/version, compile status, binary size, trace size,
+  folded-stack size/weights/readability, known-symbol observation, and bounded
+  stderr/status evidence in capability schema
+  `oxide-batch-heaptrack-capability/v2`;
 - retains the native heaptrack trace as authoritative evidence;
 - derives reviewable projections with `heaptrack_print`: the full allocation
   report, allocation-size histogram, allocation folded stacks, temporary
   allocation folded stacks, and Massif-compatible live-heap snapshots;
-- emits a compact `heap/summary.json` containing allocation count,
+- emits a compact `heap/summary.json` v2 containing allocation count,
   cumulative allocated bytes, peak-live bytes, temporary-allocation count and
-  ratio, histogram bucket count, and largest allocation size;
+  ratio, histogram bucket count, largest allocation size, and allocation-stack
+  readability/weight evidence;
 - derives cumulative allocated bytes from the event-counted size histogram
   only when the histogram event count exactly matches heaptrack's global
   allocation count;
 - derives exact peak-live bytes from the maximum `mem_heap_B` Massif
   snapshot;
+- rejects a workload profile whose allocation folded-stack projection is empty,
+  consists only of `??`/raw-address frames, or whose folded-stack total weight
+  does not equal heaptrack's global allocation count;
 - runs the unchanged independent workload verifier and emits a validated
   `lane=heap` manifest with `profiler_attached=true` and no
   `benchmark_timing`.
@@ -547,9 +556,35 @@ python3 benchmark/heap_profile.py \
 The native heaptrack trace remains authoritative over the summary and all
 generated projections. Heap-instrumented runtime is never benchmark evidence.
 
+### Authoritative hosted ARM64 finding
+
+The first authoritative main dispatch, run `43845055327` on
+`b2749a7526569c2ab02a5283812bb29499e7bca9`, proved that heaptrack 1.5.0 on
+the hosted ARM64 image can record reproducible scalar heap evidence while
+failing the actual attribution requirement.
+
+That retained run independently validated 739,985 allocations, 74,352,509
+cumulative allocated bytes, 1,283,088 peak-live bytes, 276,130 temporary
+allocations, the complete artifact hashes, and unchanged workload correctness.
+However both folded-stack projections collapsed to `??`, the textual report
+collapsed to `0x0 / in ??`, and all native allocation-info records referred to
+trace index zero. The retained Rust binary was independently confirmed to
+contain debug/unwind/symbol sections and was not stripped.
+
+Therefore run 43845055327 is accepted as **scalar heap evidence** but explicitly
+rejected as allocation-stack attribution evidence. The older v1 capability
+probe was too weak because it only proved that heaptrack could produce a
+non-empty trace/report.
+
+The v2 capability contract fixes that false positive: a compiled known malloc
+call site must survive recording and projection with its named symbol visible.
+The workload producer independently enforces readable folded-stack attribution
+as a second gate.
+
 ## Next implementation boundary
 
-A manual opt-in heap-profile workflow, hosted ARM64 capability probe, and one
-authoritative system+paging artifact review are the next bounded unit.
-Timeline/concurrency instrumentation, soak/quiescence execution, and
-allocator-native telemetry remain separate later units.
+Merge and exercise the hardened attribution gate once. If hosted ARM64 fails
+the known-symbol probe, classify that host/tool combination as unsupported for
+generic heap stack attribution and evaluate a separate allocator-safe fallback
+in a later bounded unit. Timeline/concurrency instrumentation,
+soak/quiescence execution, and allocator-native telemetry remain separate.
