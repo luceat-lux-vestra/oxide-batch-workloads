@@ -29,6 +29,10 @@ DEFAULT_SEED = heap_profile.DEFAULT_SEED
 DEFAULT_CHUNK_SIZE = 200
 DEFAULT_FETCH_SIZE = 128
 DEFAULT_PAGE_SIZE = 128
+WORKLOAD_SAMPLING_INTERVAL_BYTES = 4_096
+WORKLOAD_BLOCK_CLIENT = True
+WORKLOAD_SAMPLING_MODE = "poisson-sampled-attribution"
+WORKLOAD_COUNTER_CLAIM = "sampled-attribution-not-exact-allocation-event-count"
 DEFAULT_PROFILER_TIMEOUT_SECONDS = 600
 PROFILER_TERMINATE_GRACE_SECONDS = 10
 VERSION_PATTERN = re.compile(r"\bversion\s+([^\s]+)", re.IGNORECASE)
@@ -36,6 +40,16 @@ VERSION_PATTERN = re.compile(r"\bversion\s+([^\s]+)", re.IGNORECASE)
 
 def fail(message: str) -> None:
     raise RuntimeError(message)
+
+
+def sampling_contract() -> dict[str, Any]:
+    return {
+        "interval_bytes": WORKLOAD_SAMPLING_INTERVAL_BYTES,
+        "mode": WORKLOAD_SAMPLING_MODE,
+        "block_client": WORKLOAD_BLOCK_CLIENT,
+        "overflow_policy": "block-client",
+        "allocation_counter_claim": WORKLOAD_COUNTER_CLAIM,
+    }
 
 
 def perfetto_import_name(reader: str) -> str:
@@ -116,7 +130,7 @@ def tool_capability(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     document = {
-        "schema": "oxide-batch-perfetto-heap-workload-tools/v1",
+        "schema": "oxide-batch-perfetto-heap-workload-tools/v2",
         "campaign": profile_manifest.CAMPAIGN,
         "profiler": "perfetto-heapprofd-host",
         "perfetto": {
@@ -124,8 +138,7 @@ def tool_capability(args: argparse.Namespace) -> dict[str, Any]:
             "commit": perfetto_heap_probe.PERFETTO_COMMIT,
             "heap_profile_git_blob_sha1": perfetto_heap_probe.HEAP_PROFILE_BLOB_SHA1,
             "prebuilt_roll": perfetto_heap_probe.PREBUILT_ROLL,
-            "sampling_interval_bytes": perfetto_heap_probe.SAMPLING_INTERVAL_BYTES,
-            "sampling_claim": "fully-accurate-high-overhead",
+            "sampling": sampling_contract(),
         },
         "host": host,
         "provenance": {
@@ -179,7 +192,7 @@ def profiler_command(
         str(heap_profile_script),
         "host",
         "--interval",
-        str(perfetto_heap_probe.SAMPLING_INTERVAL_BYTES),
+        str(WORKLOAD_SAMPLING_INTERVAL_BYTES),
         "--shmem-size",
         str(perfetto_heap_probe.SHMEM_SIZE_BYTES),
         "--block-client",
@@ -524,7 +537,7 @@ def build_summary(
         fail("Perfetto workload allocation-stack attribution did not pass fail-closed gates")
 
     return {
-        "schema": "oxide-batch-perfetto-heap-profile-summary/v1",
+        "schema": "oxide-batch-perfetto-heap-profile-summary/v2",
         "profiler_exit_status": profiler_exit_status,
         "raw_trace_bytes": raw_trace_bytes,
         "symbol_packets_bytes": symbol_packets_bytes,
@@ -541,6 +554,7 @@ def build_summary(
         "cross_boundary_callsite_count": cross_boundary_callsite_count,
         "symbol_projection_rows": symbol_projection_rows,
         "heapprofd_error_count": heapprofd_error_count,
+        "sampling": sampling_contract(),
         "allocation_stack_attribution": "readable-rust-workload-to-oxide-batch",
         "coverage_scope": "system-allocator-malloc-family-interposition",
         "timing_claim": "attribution-only",
@@ -551,13 +565,13 @@ def build_summary(
 def limitations() -> list[str]:
     return [
         "Perfetto heapprofd runtime is allocation-attribution evidence only and must not be compared with benchmark-lane timing",
-        "sampling interval 1 is intentionally fully accurate and high overhead; profiler wall-clock time is not a performance result",
+        "the real workload uses Perfetto's 4096-byte default Poisson sampling interval for practical stack attribution; interval 1 remains capability-probe-only and is not used for the workload",
         "generic Perfetto coverage in this producer is intentionally limited to the system allocator because replacement Rust global allocators can bypass glibc malloc-family interposition",
         "the profiled release build sets CARGO_PROFILE_RELEASE_DEBUG=1 for symbolization and is not the benchmark-lane binary",
         "the raw Perfetto trace is authoritative; pprof and SQL outputs are derived projections",
         "Perfetto heap_profile host mode does not propagate the child workload exit code; the independent postgres-postgres verifier digest is the authoritative workload-completion/correctness gate",
         "workload attribution is accepted only when an allocation-reachable stack contains readable Rust-style frames from both postgres_postgres and oxide_batch",
-        "positive allocation counts and bytes are trace SQL attribution counters and are not generalized into stable-host absolute memory-performance claims",
+        "positive allocation counts and bytes are sampled trace-attribution counters, not exact allocation-event totals, and are not generalized into stable-host absolute memory-performance claims",
         "hosted-runner evidence validates orchestration, correctness, and stack readability rather than stable-machine memory-performance truth",
         "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
     ]
@@ -859,14 +873,13 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
         verifier_path.write_text(verifier_stdout, encoding="utf-8")
 
         run_metadata = {
-            "schema": "oxide-batch-perfetto-heap-profile-run/v1",
+            "schema": "oxide-batch-perfetto-heap-profile-run/v2",
             "profiler": {
                 "name": "perfetto-heapprofd-host",
                 "release": perfetto_heap_probe.PERFETTO_RELEASE,
                 "commit": perfetto_heap_probe.PERFETTO_COMMIT,
                 "prebuilt_roll": perfetto_heap_probe.PREBUILT_ROLL,
-                "sampling_interval_bytes": perfetto_heap_probe.SAMPLING_INTERVAL_BYTES,
-                "sampling_claim": "fully-accurate-high-overhead",
+                "sampling": sampling_contract(),
                 "trace_processor_sha256": capability["provenance"][
                     "trace_processor"
                 ]["sha256"],
