@@ -137,9 +137,29 @@ standalone duration. This workload's chunk driver is deterministic and
 single-threaded, so queue/backpressure or multi-worker concurrency is not
 inferred when those mechanisms are not present.
 
-A later producer/workflow unit must turn this raw recorder output into retained
-Lane D campaign evidence with exact subject/environment/correctness provenance.
-The recorder plumbing itself does not close Lane D.
+`benchmark/timeline_profile.py` now turns this raw recorder output into a
+self-contained Lane D evidence root. The manual-only
+`.github/workflows/profile-postgres-postgres-timeline.yml` runs the producer on
+the repository's ARM64 Ubuntu runner against the exact checked-out workload SHA.
+
+The first authoritative geometry is intentionally bounded to 2,000 rows,
+seed 266, chunk size 200, and page/fetch size 128. The producer uses only the
+system allocator so Lane D does not become an allocator-comparison experiment.
+It retains the release binary, raw `timeline/events.jsonl`, recorder
+`timeline/summary.json`, run metadata, workload stdout/stderr, the independent
+verifier report, and a validated `lane=timeline` campaign manifest.
+
+Evidence acceptance fails closed when recorder output is missing, record
+sequence or monotonic elapsed time regresses, required read/process/write and
+`chunk.committed` boundaries are absent, any records were dropped, artifact
+digests disagree, or the independent final-state verifier fails. The producer
+reserves recorder-cap headroom before execution and still requires
+`dropped_records == 0` after execution.
+
+The producer/workflow establishes the executable retained-evidence path; Lane D
+is closed only after an exact-main authoritative dispatch succeeds and its
+uploaded artifact is independently inspected. It does not add DB-wait,
+queue/backpressure, multi-worker, or standalone checkpoint-duration claims.
 
 ### Allocator-native lane
 
