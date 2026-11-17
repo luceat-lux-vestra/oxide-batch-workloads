@@ -680,11 +680,13 @@ run_ci_stage() {
   cargo clippy --locked --workspace --all-targets -- -D warnings
   cargo build --locked --workspace --all-targets
 
-  echo "guard: no unguarded unwrap/expect on the production path"
-  if grep -rnE '\.(unwrap|expect)\(' src/; then
-    echo "::error::found .unwrap()/.expect() in src/" >&2
-    exit 1
-  fi
+  echo "production panic guard contract tests"
+  python3 ci/test-production-panic-guard.py
+
+  echo "guard: no unwrap/expect on compiled production Rust targets"
+  python3 ci/validate-production-panics.py \
+    --manifest-path Cargo.toml \
+    --package postgres-postgres
 
   run_raw_sqlx_static_guards
   run_raw_jdbc_static_guards
