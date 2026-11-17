@@ -10,6 +10,7 @@ This repository is deliberately separate from `luceat-lux-vestra/oxide-batch`. A
 
 - Depend on an exact published OxideBatch version, for example `oxide-batch = "=0.6.0"`.
 - The committed lockfile must resolve OxideBatch from the public registry. No path dependency, git dependency, workspace override, `[patch]`, vendored modified framework, or unpublished framework artifact may satisfy validation.
+- Never hand-edit `Cargo.lock`. After any dependency/version/optional-feature graph change, run `python3 .github/scripts/validate-cargo-locks.py refresh --name <registered-name>`; before completion, run `python3 .github/scripts/validate-cargo-locks.py check --name <registered-name>`. Cargo's resolver is the lockfile authority.
 - Never edit framework source from this repository to make a workload pass.
 - Preserve correctness and recovery semantics before throughput, ergonomics, or benchmark numbers.
 - Treat claims such as `exactly-once`, `restartable`, `bounded memory`, `production-ready`, `faster`, and `compatible` as evidence claims, not adjectives.
@@ -116,6 +117,7 @@ Do not trade transaction durability, checkpoint semantics, validation, or resour
 - New dependencies must justify maintenance, MSRV, compile-time, supply-chain, and feature cost.
 - Preserve the workload's declared MSRV unless an intentional, documented change is reviewed.
 - Keep formatting and Clippy warning-free; use `--locked` for reproducibility-sensitive Cargo commands.
+- Dependency graph edits and lockfile generation are one work unit: never synthesize or patch lockfile package/dependency entries by hand. If Cargo cannot be run in the current environment, leave the lockfile untouched and obtain a Cargo-capable execution path before claiming the dependency change complete.
 
 ## Tests and CI
 
