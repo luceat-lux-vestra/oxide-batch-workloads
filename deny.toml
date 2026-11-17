@@ -17,11 +17,12 @@
 # .github/scripts/install-cargo-deny.sh, invoked from .github/workflows/ci.yml).
 # This file is not validated against, and must not rely on, another version's defaults.
 #
-# Policy exceptions: none. Every section below is zero-exception as of this
-# writing; if a future workload genuinely requires one, scope it as tightly
-# as the cargo-deny schema allows (exact crate/version/advisory-id), give it
-# a concrete owner/reason comment immediately above the entry, and never add
-# a broad/indefinite/generic bypass.
+# This canonical base remains exception-free. Workload-scoped informational
+# advisory exceptions, when unavoidable, are declared in
+# .github/supply-chain-advisory-exceptions.json with exact workload,
+# advisory ID, package, owner/reason, and removal condition. The repository
+# validator materializes only that workload's effective ignore list. Never
+# add a broad, indefinite, or global bypass here.
 
 [graph]
 # All primary CI runners now build real workloads on ubuntu-24.04-arm.
@@ -45,6 +46,10 @@ unmaintained = "all"
 unsound = "all"
 unused-ignored-advisory = "deny"
 maximum-db-staleness = "P90D"
+# Canonical base policy is intentionally exception-free. Workload-scoped
+# informational advisory exceptions are declared separately in
+# .github/supply-chain-advisory-exceptions.json and materialized by the
+# repository-owned validator only for the named workload.
 ignore = []
 
 # This section is considered when running `cargo deny check licenses`.

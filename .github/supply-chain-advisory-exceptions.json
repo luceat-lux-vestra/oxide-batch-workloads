@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "workload": "csv-postgres",
+      "advisory_id": "RUSTSEC-2026-0543",
+      "package": "chrono",
+      "classification": "informational/unmaintained",
+      "owner": "#297",
+      "reason": "OxideBatch 0.6.0 workload still uses chrono directly and through SQLx date/time integration; no patched chrono release exists.",
+      "remove_when": "csv-postgres no longer resolves chrono in its committed Cargo.lock."
+    },
+    {
+      "workload": "postgres-postgres",
+      "advisory_id": "RUSTSEC-2026-0543",
+      "package": "chrono",
+      "classification": "informational/unmaintained",
+      "owner": "#297",
+      "reason": "Qualified tcmalloc candidate resolves chrono through tcmalloc-better -> libtcmalloc-sys -> patch; no patched chrono release exists.",
+      "remove_when": "postgres-postgres no longer resolves chrono in its committed Cargo.lock."
+    }
+  ]
+}
