@@ -107,6 +107,40 @@ Only add signals needed to distinguish materially useful boundaries such as
 read/process/write/checkpoint, worker/task lifetime, DB wait, queue/backpressure,
 and explicit quiescence windows.
 
+The first Lane D implementation uses only public OxideBatch 0.6.0 hooks. Setting
+`OXIDE_BATCH_TIMELINE_DIR=<directory>` on the `postgres-postgres run` command
+attaches:
+
+- the framework's `LifecycleEventSink` to the existing `JobLauncher`;
+- one bounded `ItemListenerSet` covering read/process/write callbacks.
+
+No alternate execution path, reader/writer wrapper, or post-0.6.0 API is
+introduced. Without the environment variable, no timeline recorder is created
+and the normal workload path is unchanged.
+
+The recorder retains at most 50,000 observations in memory and writes only after
+the framework launch returns:
+
+- `events.jsonl`: monotonic process-relative lifecycle and item phase
+  boundaries, including chunk sequence where the 0.6.0 callback exposes it;
+- `summary.json`: schema/provenance-oriented recorder metadata, retained/drop
+  counts, and exact limitations.
+
+This is attribution evidence only. Listener timestamps include instrumentation
+overhead and are never benchmark-lane timing. `item.read` and `item.write`
+are database-facing operation boundaries, not isolated PostgreSQL wait time.
+The 0.6.0 public hook surface does not expose a separate checkpoint-duration
+callback; the workload's checkpoint and business write remain one
+`AtomicSameResource` transaction, so checkpoint durability is represented only
+by the framework's `chunk.committed` lifecycle boundary rather than a fabricated
+standalone duration. This workload's chunk driver is deterministic and
+single-threaded, so queue/backpressure or multi-worker concurrency is not
+inferred when those mechanisms are not present.
+
+A later producer/workflow unit must turn this raw recorder output into retained
+Lane D campaign evidence with exact subject/environment/correctness provenance.
+The recorder plumbing itself does not close Lane D.
+
 ### Allocator-native lane
 
 Purpose: allocator-specific state.
