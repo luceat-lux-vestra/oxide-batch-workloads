@@ -33,6 +33,9 @@ WORKLOAD_SAMPLING_INTERVAL_BYTES = 4_096
 WORKLOAD_BLOCK_CLIENT = True
 WORKLOAD_SAMPLING_MODE = "poisson-sampled-attribution"
 WORKLOAD_COUNTER_CLAIM = "sampled-attribution-not-exact-allocation-event-count"
+RUST_SYMBOL_CLASSIFICATION_MODE = "demangled-or-rust-v0"
+RUST_DEMANGLED_SEPARATOR = "::"
+RUST_V0_SYMBOL_PREFIX = "_R"
 DEFAULT_PROFILER_TIMEOUT_SECONDS = 600
 PROFILER_TERMINATE_GRACE_SECONDS = 10
 VERSION_PATTERN = re.compile(r"\bversion\s+([^\s]+)", re.IGNORECASE)
@@ -50,6 +53,29 @@ def sampling_contract() -> dict[str, Any]:
         "overflow_policy": "block-client",
         "allocation_counter_claim": WORKLOAD_COUNTER_CLAIM,
     }
+
+
+def rust_symbol_contract() -> dict[str, Any]:
+    return {
+        "mode": RUST_SYMBOL_CLASSIFICATION_MODE,
+        "demangled_separator": RUST_DEMANGLED_SEPARATOR,
+        "rust_v0_prefix": RUST_V0_SYMBOL_PREFIX,
+        "crate_identity_markers": ["postgres_postgres", "oxide_batch"],
+    }
+
+
+def is_rust_symbol_name(name: str) -> bool:
+    return (
+        RUST_DEMANGLED_SEPARATOR in name
+        or name.startswith(RUST_V0_SYMBOL_PREFIX)
+    )
+
+
+def rust_symbol_sql_predicate() -> str:
+    return (
+        "(instr(name, '::') > 0 "
+        "OR substr(name, 1, 2) = '_R')"
+    )
 
 
 def perfetto_import_name(reader: str) -> str:
@@ -316,7 +342,8 @@ def run_profiler_observable(
 
 
 def stack_summary_query() -> str:
-    return """
+    rust_symbol_predicate = rust_symbol_sql_predicate()
+    return f"""
 WITH RECURSIVE
   root_ids(root_id) AS (
     SELECT DISTINCT callsite_id
@@ -344,8 +371,8 @@ WITH RECURSIVE
       COUNT(*) AS frame_rows,
       SUM(CASE WHEN name IS NOT NULL AND name <> '' THEN 1 ELSE 0 END)
         AS named_frame_rows,
-      MAX(CASE WHEN instr(name, '::') > 0 THEN 1 ELSE 0 END)
-        AS has_rust_style,
+      MAX(CASE WHEN {rust_symbol_predicate} THEN 1 ELSE 0 END)
+        AS has_rust_symbol,
       MAX(CASE WHEN instr(lower(name), 'oxide_batch') > 0 THEN 1 ELSE 0 END)
         AS has_oxide_batch,
       MAX(CASE WHEN instr(lower(name), 'postgres_postgres') > 0 THEN 1 ELSE 0 END)
@@ -356,12 +383,12 @@ WITH RECURSIVE
 SELECT
   COALESCE(SUM(frame_rows), 0) AS frame_rows,
   COALESCE(SUM(named_frame_rows), 0) AS named_frame_rows,
-  COALESCE(SUM(has_rust_style), 0) AS rust_style_callsite_count,
+  COALESCE(SUM(has_rust_symbol), 0) AS rust_symbol_callsite_count,
   COALESCE(SUM(has_oxide_batch), 0) AS oxide_batch_callsite_count,
   COALESCE(SUM(has_workload), 0) AS workload_callsite_count,
   COALESCE(SUM(
     CASE
-      WHEN has_rust_style = 1 AND has_oxide_batch = 1 AND has_workload = 1
+      WHEN has_rust_symbol = 1 AND has_oxide_batch = 1 AND has_workload = 1
       THEN 1 ELSE 0
     END
   ), 0) AS cross_boundary_callsite_count
@@ -438,7 +465,7 @@ def supported_workload_attribution(
     positive_callsite_count: int,
     frame_rows: int,
     named_frame_rows: int,
-    rust_style_callsite_count: int,
+    rust_symbol_callsite_count: int,
     oxide_batch_callsite_count: int,
     workload_callsite_count: int,
     cross_boundary_callsite_count: int,
@@ -456,7 +483,7 @@ def supported_workload_attribution(
         and positive_callsite_count > 0
         and frame_rows > 0
         and named_frame_rows > 0
-        and rust_style_callsite_count > 0
+        and rust_symbol_callsite_count > 0
         and oxide_batch_callsite_count > 0
         and workload_callsite_count > 0
         and cross_boundary_callsite_count > 0
@@ -494,9 +521,9 @@ def build_summary(
         stack_row,
         "named_frame_rows",
     )
-    rust_style_callsite_count = perfetto_heap_probe.int_field(
+    rust_symbol_callsite_count = perfetto_heap_probe.int_field(
         stack_row,
-        "rust_style_callsite_count",
+        "rust_symbol_callsite_count",
     )
     oxide_batch_callsite_count = perfetto_heap_probe.int_field(
         stack_row,
@@ -526,7 +553,7 @@ def build_summary(
         positive_callsite_count=positive_callsite_count,
         frame_rows=frame_rows,
         named_frame_rows=named_frame_rows,
-        rust_style_callsite_count=rust_style_callsite_count,
+        rust_symbol_callsite_count=rust_symbol_callsite_count,
         oxide_batch_callsite_count=oxide_batch_callsite_count,
         workload_callsite_count=workload_callsite_count,
         cross_boundary_callsite_count=cross_boundary_callsite_count,
@@ -537,7 +564,7 @@ def build_summary(
         fail("Perfetto workload allocation-stack attribution did not pass fail-closed gates")
 
     return {
-        "schema": "oxide-batch-perfetto-heap-profile-summary/v2",
+        "schema": "oxide-batch-perfetto-heap-profile-summary/v3",
         "profiler_exit_status": profiler_exit_status,
         "raw_trace_bytes": raw_trace_bytes,
         "symbol_packets_bytes": symbol_packets_bytes,
@@ -548,14 +575,15 @@ def build_summary(
         "positive_allocation_callsite_count": positive_callsite_count,
         "frame_rows": frame_rows,
         "named_frame_rows": named_frame_rows,
-        "rust_style_callsite_count": rust_style_callsite_count,
+        "rust_symbol_callsite_count": rust_symbol_callsite_count,
         "oxide_batch_callsite_count": oxide_batch_callsite_count,
         "workload_callsite_count": workload_callsite_count,
         "cross_boundary_callsite_count": cross_boundary_callsite_count,
         "symbol_projection_rows": symbol_projection_rows,
         "heapprofd_error_count": heapprofd_error_count,
         "sampling": sampling_contract(),
-        "allocation_stack_attribution": "readable-rust-workload-to-oxide-batch",
+        "rust_symbol_classification": rust_symbol_contract(),
+        "allocation_stack_attribution": "symbolized-rust-workload-to-oxide-batch",
         "coverage_scope": "system-allocator-malloc-family-interposition",
         "timing_claim": "attribution-only",
         "supported": True,
@@ -570,7 +598,7 @@ def limitations() -> list[str]:
         "the profiled release build sets CARGO_PROFILE_RELEASE_DEBUG=1 for symbolization and is not the benchmark-lane binary",
         "the raw Perfetto trace is authoritative; pprof and SQL outputs are derived projections",
         "Perfetto heap_profile host mode does not propagate the child workload exit code; the independent postgres-postgres verifier digest is the authoritative workload-completion/correctness gate",
-        "workload attribution is accepted only when an allocation-reachable stack contains readable Rust-style frames from both postgres_postgres and oxide_batch",
+        "workload attribution is accepted only when one allocation-reachable stack contains a symbolized Rust frame (demangled :: form or Rust v0 _R form) plus postgres_postgres and oxide_batch crate identity markers",
         "positive allocation counts and bytes are sampled trace-attribution counters, not exact allocation-event totals, and are not generalized into stable-host absolute memory-performance claims",
         "hosted-runner evidence validates orchestration, correctness, and stack readability rather than stable-machine memory-performance truth",
         "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
@@ -873,7 +901,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
         verifier_path.write_text(verifier_stdout, encoding="utf-8")
 
         run_metadata = {
-            "schema": "oxide-batch-perfetto-heap-profile-run/v2",
+            "schema": "oxide-batch-perfetto-heap-profile-run/v3",
             "profiler": {
                 "name": "perfetto-heapprofd-host",
                 "release": perfetto_heap_probe.PERFETTO_RELEASE,
@@ -895,6 +923,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
             "profiled_binary_sha256": profile_smoke.sha256_file(binary),
             "profiler_exit_status": process_result["exit_status"],
             "profiler_process": process_result,
+            "rust_symbol_classification": rust_symbol_contract(),
             "timing_claim": "attribution-only",
             "coverage_scope": capability["allocator_boundary"]["coverage_scope"],
         }

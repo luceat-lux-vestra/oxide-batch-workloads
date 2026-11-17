@@ -224,12 +224,43 @@ class PerfettoHeapProfileTests(unittest.TestCase):
         self.assertNotIn("--rows 25000", workflow)
         self.assertNotIn("--chunk-size 1000", workflow)
         self.assertNotIn("--page-size 750", workflow)
+        self.assertIn("oxide-batch-perfetto-heap-profile-summary/v3", workflow)
+        self.assertIn("oxide-batch-perfetto-heap-profile-run/v3", workflow)
+        self.assertIn('"mode": "demangled-or-rust-v0"', workflow)
+        self.assertIn('"rust_v0_prefix": "_R"', workflow)
+
+    def test_rust_symbol_classification_accepts_retained_v0_and_demangled_forms(self) -> None:
+        retained_v0 = (
+            "_RNCNvMs8_NtNtCsiwTohZ3ZiY4_11oxide_batch10repository8postgres"
+            "NtB7_21PostgresJobRepository7connect0Cs6q1KHVFtCnK_17postgres_postgres"
+        )
+        self.assertTrue(perfetto_heap_profile.is_rust_symbol_name(retained_v0))
+        self.assertTrue(
+            perfetto_heap_profile.is_rust_symbol_name(
+                "oxide_batch::runtime::JobLauncher::launch"
+            )
+        )
+        self.assertFalse(perfetto_heap_profile.is_rust_symbol_name("__libc_malloc"))
+        self.assertFalse(perfetto_heap_profile.is_rust_symbol_name("malloc"))
+        self.assertEqual(
+            perfetto_heap_profile.rust_symbol_contract(),
+            {
+                "mode": "demangled-or-rust-v0",
+                "demangled_separator": "::",
+                "rust_v0_prefix": "_R",
+                "crate_identity_markers": ["postgres_postgres", "oxide_batch"],
+            },
+        )
 
     def test_stack_summary_requires_same_callsite_workload_and_oxide_frames(self) -> None:
         query = perfetto_heap_profile.stack_summary_query()
         self.assertIn("heap_profile_allocation", query)
         self.assertIn("stack_profile_callsite", query)
         self.assertIn("stack_profile_frame", query)
+        self.assertIn("instr(name, '::') > 0", query)
+        self.assertIn("substr(name, 1, 2) = '_R'", query)
+        self.assertIn("has_rust_symbol", query)
+        self.assertNotIn("has_rust_style", query)
         self.assertIn("postgres_postgres", query)
         self.assertIn("oxide_batch", query)
         self.assertIn("cross_boundary_callsite_count", query)
@@ -253,7 +284,7 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             positive_callsite_count=10,
             frame_rows=40,
             named_frame_rows=20,
-            rust_style_callsite_count=8,
+            rust_symbol_callsite_count=8,
             oxide_batch_callsite_count=4,
             workload_callsite_count=5,
             cross_boundary_callsite_count=2,
@@ -274,7 +305,7 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             ("positive_callsite_count", 0),
             ("frame_rows", 0),
             ("named_frame_rows", 0),
-            ("rust_style_callsite_count", 0),
+            ("rust_symbol_callsite_count", 0),
             ("oxide_batch_callsite_count", 0),
             ("workload_callsite_count", 0),
             ("cross_boundary_callsite_count", 0),
@@ -303,7 +334,7 @@ class PerfettoHeapProfileTests(unittest.TestCase):
             stack_row={
                 "frame_rows": "80",
                 "named_frame_rows": "60",
-                "rust_style_callsite_count": "10",
+                "rust_symbol_callsite_count": "10",
                 "oxide_batch_callsite_count": "6",
                 "workload_callsite_count": "7",
                 "cross_boundary_callsite_count": "4",
@@ -314,15 +345,19 @@ class PerfettoHeapProfileTests(unittest.TestCase):
         self.assertTrue(summary["supported"])
         self.assertEqual(
             summary["schema"],
-            "oxide-batch-perfetto-heap-profile-summary/v2",
+            "oxide-batch-perfetto-heap-profile-summary/v3",
         )
         self.assertEqual(
             summary["sampling"],
             perfetto_heap_profile.sampling_contract(),
         )
         self.assertEqual(
+            summary["rust_symbol_classification"],
+            perfetto_heap_profile.rust_symbol_contract(),
+        )
+        self.assertEqual(
             summary["allocation_stack_attribution"],
-            "readable-rust-workload-to-oxide-batch",
+            "symbolized-rust-workload-to-oxide-batch",
         )
         self.assertEqual(summary["cross_boundary_callsite_count"], 4)
         self.assertEqual(summary["timing_claim"], "attribution-only")
