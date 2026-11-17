@@ -194,6 +194,50 @@ producer; PR merge authority no longer polls or reuses its run. Registry
 tests and validation run locally within `discover` before CI/declared-MSRV
 fan-out and the single-runner supply-chain authority.
 
+## Cargo lock consistency authority
+
+Every canonical workload and fixture owns a committed `Cargo.lock`. Lockfile
+correctness is determined by Cargo's resolver, never by a Git diff heuristic and
+never by hand-editing package/dependency tables.
+
+The canonical authority is:
+
+```bash
+python3 .github/scripts/validate-cargo-locks.py check
+```
+
+For each registered workload/fixture it executes `cargo metadata` with
+`--locked --all-features --no-deps`. A manifest/feature/dependency change that
+would require Cargo to mutate the lockfile therefore fails immediately with an
+explicit stale-lock diagnostic before workload fan-out or supply-chain policy
+scanning.
+
+When a dependency or feature graph intentionally changes, refresh exactly one
+registered subject through Cargo itself:
+
+```bash
+python3 .github/scripts/validate-cargo-locks.py refresh --name postgres-postgres
+```
+
+The refresh path deliberately omits `--locked` for the first resolver pass so
+Cargo owns the complete lockfile mutation, then immediately reruns the same
+all-features metadata query with `--locked`. A refresh is successful only when
+that second reproducibility check passes.
+
+Do not edit `Cargo.lock` manually. Do not infer that a lockfile must or must
+not change merely because `Cargo.toml` changed: optional dependencies and
+feature edges are resolver semantics. Conversely, a legitimate lock-only update
+remains valid when Cargo accepts it under the registered manifest.
+
+`reserved_top_level_cargo_projects` are outside this authority until they
+become canonical validation subjects; they may intentionally lack a committed
+lockfile. Workloads and fixtures are never exempt.
+
+Central CI runs the authority test suite and the real repository-wide lock
+check in `discover` before supply-chain validation. This makes a stale lockfile
+a first-class dependency-metadata failure rather than an incidental later
+`cargo-deny --locked` failure.
+
 ## Repository-wide supply-chain policy
 
 Root [`deny.toml`](../deny.toml) is the canonical advisories/licenses/bans/source
