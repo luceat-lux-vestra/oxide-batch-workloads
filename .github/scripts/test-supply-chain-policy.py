@@ -40,6 +40,25 @@ class LinuxArchitectureGraphContractTests(unittest.TestCase):
         )
 
 
+class AdvisoryPolicyContractTests(unittest.TestCase):
+    """Canonical deny.toml stays strict and exception-free."""
+
+    def test_canonical_advisory_policy_remains_fail_closed(self) -> None:
+        policy = tomllib.loads(DENY_TOML.read_text(encoding="utf-8"))
+        advisories = policy["advisories"]
+
+        self.assertEqual(advisories["unmaintained"], "all")
+        self.assertEqual(advisories["unsound"], "all")
+        self.assertEqual(advisories["yanked"], "deny")
+        self.assertEqual(advisories["unused-ignored-advisory"], "deny")
+        self.assertEqual(
+            advisories["ignore"],
+            [],
+            "Canonical deny.toml must remain exception-free; workload-scoped "
+            "exceptions are materialized only by validate-supply-chain.py",
+        )
+
+
 @unittest.skipUnless(shutil.which("cargo-deny"), "cargo-deny is not installed in this environment")
 @unittest.skipUnless(shutil.which("cargo"), "cargo is not installed in this environment")
 class DisallowedLicenseFixtureTests(unittest.TestCase):

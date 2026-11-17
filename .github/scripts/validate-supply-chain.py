@@ -7,9 +7,13 @@ policy. The GitHub workflow remains a thin registry-driven caller.
 """
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import tomllib
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("validate-workload-registry.py")
@@ -24,6 +28,18 @@ SPEC.loader.exec_module(validator)
 DEFAULT_CARGO_DENY_BIN = "cargo-deny"
 POLICY_CLASSES = ("advisories", "licenses", "bans", "sources")
 ADDITIONAL_SUPPLY_CHAIN_HOOK = Path("ci/validate-supply-chain")
+ADVISORY_EXCEPTIONS_FILE = Path(".github/supply-chain-advisory-exceptions.json")
+RUSTSEC_ADVISORY_ID = re.compile(r"^RUSTSEC-\d{4}-\d{4}$")
+ALLOWED_ADVISORY_EXCEPTION_CLASSIFICATIONS = {"informational/unmaintained"}
+ADVISORY_EXCEPTION_FIELDS = {
+    "workload",
+    "advisory_id",
+    "package",
+    "classification",
+    "owner",
+    "reason",
+    "remove_when",
+}
 
 
 class SupplyChainError(ValueError):
@@ -60,6 +76,159 @@ def verify_locked_graph(root: Path, entry: dict) -> Path:
     if not lockfile.is_file():
         raise SupplyChainError(f"missing Cargo.lock for workload {entry['name']!r}: {lockfile}")
     return manifest
+
+
+def _nonempty_string(value: object, field: str, index: int) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SupplyChainError(
+            f"advisory exception {index} field {field!r} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def load_advisory_exceptions(root: Path) -> dict[str, list[dict[str, str]]]:
+    """Load and fail-closed validate workload-scoped informational exceptions."""
+    path = root / ADVISORY_EXCEPTIONS_FILE
+    if not path.exists():
+        return {}
+    if not path.is_file() or path.is_symlink():
+        raise SupplyChainError(f"advisory exception registry must be a regular file: {path}")
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SupplyChainError(f"invalid advisory exception registry: {exc}") from exc
+
+    if not isinstance(document, dict) or set(document) != {"schema_version", "exceptions"}:
+        raise SupplyChainError(
+            "advisory exception registry must contain only schema_version and exceptions"
+        )
+    if document["schema_version"] != 1:
+        raise SupplyChainError("advisory exception registry schema_version must be 1")
+    if not isinstance(document["exceptions"], list):
+        raise SupplyChainError("advisory exception registry exceptions must be an array")
+
+    try:
+        registry = validator.validate_repository(root)
+    except validator.RegistryError as exc:
+        raise SupplyChainError(f"registry validation failed: {exc}") from exc
+    workloads = {entry["name"]: entry for entry in registry["workloads"]}
+
+    grouped: dict[str, list[dict[str, str]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for index, raw in enumerate(document["exceptions"]):
+        if not isinstance(raw, dict) or set(raw) != ADVISORY_EXCEPTION_FIELDS:
+            raise SupplyChainError(
+                f"advisory exception {index} must contain exactly "
+                + ", ".join(sorted(ADVISORY_EXCEPTION_FIELDS))
+            )
+
+        entry = {
+            field: _nonempty_string(raw[field], field, index)
+            for field in ADVISORY_EXCEPTION_FIELDS
+        }
+        workload = entry["workload"]
+        advisory_id = entry["advisory_id"]
+        package = entry["package"]
+
+        if workload not in workloads:
+            raise SupplyChainError(
+                f"advisory exception {index} references unknown real workload {workload!r}"
+            )
+        if not RUSTSEC_ADVISORY_ID.fullmatch(advisory_id):
+            raise SupplyChainError(
+                f"advisory exception {index} has invalid RustSec ID {advisory_id!r}"
+            )
+        if entry["classification"] not in ALLOWED_ADVISORY_EXCEPTION_CLASSIFICATIONS:
+            raise SupplyChainError(
+                f"advisory exception {index} classification must be one of "
+                f"{sorted(ALLOWED_ADVISORY_EXCEPTION_CLASSIFICATIONS)!r}"
+            )
+        if not re.fullmatch(r"#\d+", entry["owner"]):
+            raise SupplyChainError(
+                f"advisory exception {index} owner must be a repository issue like '#297'"
+            )
+
+        key = (workload, advisory_id)
+        if key in seen:
+            raise SupplyChainError(
+                f"duplicate advisory exception for workload {workload!r}: {advisory_id}"
+            )
+        seen.add(key)
+
+        lockfile = root / workloads[workload]["path"] / "Cargo.lock"
+        try:
+            lock = tomllib.loads(lockfile.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise SupplyChainError(
+                f"cannot validate advisory exception package against {lockfile}: {exc}"
+            ) from exc
+        resolved_packages = {
+            item.get("name")
+            for item in lock.get("package", [])
+            if isinstance(item, dict)
+        }
+        if package not in resolved_packages:
+            raise SupplyChainError(
+                f"advisory exception {index} package {package!r} is not resolved by "
+                f"workload {workload!r}"
+            )
+
+        grouped.setdefault(workload, []).append(entry)
+
+    for entries in grouped.values():
+        entries.sort(key=lambda item: item["advisory_id"])
+    return grouped
+
+
+def materialize_effective_deny_config(
+    canonical_config: Path,
+    exceptions: list[dict[str, str]],
+    output: Path,
+) -> Path:
+    """Render one workload's exact advisory ignores without weakening the base policy."""
+    try:
+        source = canonical_config.read_text(encoding="utf-8")
+        parsed = tomllib.loads(source)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise SupplyChainError(f"invalid canonical supply-chain policy: {exc}") from exc
+
+    advisories = parsed.get("advisories")
+    if not isinstance(advisories, dict):
+        raise SupplyChainError("canonical supply-chain policy is missing [advisories]")
+    if advisories.get("ignore") != []:
+        raise SupplyChainError(
+            "canonical deny.toml must remain exception-free; workload exceptions belong "
+            f"in {ADVISORY_EXCEPTIONS_FILE}"
+        )
+    if advisories.get("unused-ignored-advisory") != "deny":
+        raise SupplyChainError(
+            "canonical deny.toml must keep unused-ignored-advisory = 'deny'"
+        )
+
+    advisory_ids = sorted({entry["advisory_id"] for entry in exceptions})
+    if not advisory_ids:
+        return canonical_config
+
+    pattern = re.compile(r"(?m)^ignore\s*=\s*\[\s*\]\s*$")
+    matches = list(pattern.finditer(source))
+    if len(matches) != 1:
+        raise SupplyChainError(
+            "canonical deny.toml must contain exactly one literal empty advisories ignore list"
+        )
+
+    rendered_ids = ", ".join(json.dumps(value) for value in advisory_ids)
+    rendered = pattern.sub(f"ignore = [{rendered_ids}]", source, count=1)
+    try:
+        rendered_policy = tomllib.loads(rendered)
+    except tomllib.TOMLDecodeError as exc:
+        raise SupplyChainError(f"generated workload policy is invalid TOML: {exc}") from exc
+    if rendered_policy["advisories"]["ignore"] != advisory_ids:
+        raise SupplyChainError("generated workload advisory ignore list does not match registry")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
+    return output
 
 
 def build_cargo_deny_command(cargo_deny_bin: str, deny_config: Path, manifest: Path) -> list[str]:
@@ -136,12 +305,28 @@ def run_supply_chain_scan(
     if not config.is_file():
         raise SupplyChainError(f"missing canonical supply-chain policy: {config}")
 
-    command = build_cargo_deny_command(cargo_deny_bin, config, manifest)
-    print(f"running: {' '.join(command)}")
-    cargo_result = subprocess.run(command)
+    exceptions = load_advisory_exceptions(root).get(name, [])
+    if exceptions:
+        rendered = ", ".join(entry["advisory_id"] for entry in exceptions)
+        print(f"workload-scoped advisory exceptions for {name}: {rendered}")
+
+    if exceptions:
+        with tempfile.TemporaryDirectory(prefix=f"cargo-deny-{name}-") as tempdir:
+            effective_config = materialize_effective_deny_config(
+                config,
+                exceptions,
+                Path(tempdir) / "deny.toml",
+            )
+            command = build_cargo_deny_command(cargo_deny_bin, effective_config, manifest)
+            print(f"running: {' '.join(command)}")
+            cargo_result = subprocess.run(command)
+    else:
+        command = build_cargo_deny_command(cargo_deny_bin, config, manifest)
+        print(f"running: {' '.join(command)}")
+        cargo_result = subprocess.run(command)
+
     if cargo_result.returncode != 0:
         return cargo_result.returncode
-
     return run_additional_hook(workload_dir, additional_hook)
 
 

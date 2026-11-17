@@ -208,8 +208,18 @@ The validator:
 - resolves workload names through the canonical registry;
 - accepts `workloads` entries only, never fixtures or arbitrary paths;
 - requires the workload Cargo manifest and lockfile;
-- invokes cargo-deny with `--locked --all-features` against the canonical root
-  policy;
+- keeps root `deny.toml` exception-free and loads the separate
+  `.github/supply-chain-advisory-exceptions.json` registry;
+- validates every advisory exception against an exact registered workload,
+  RustSec advisory ID, resolved package name, allowed
+  `informational/unmaintained` classification, repository issue owner,
+  non-empty reason, and removal condition;
+- materializes a temporary effective deny config only for a workload that has
+  declared exceptions; unaffected workloads use root `deny.toml` byte-for-byte;
+- preserves `unused-ignored-advisory = "deny"`, so an exception that stops
+  matching its declared workload fails closed and must be removed;
+- invokes cargo-deny with `--locked --all-features` against that workload's
+  effective policy;
 - detects nested Maven `pom.xml` manifests and fails closed unless that workload
   exposes an executable `ci/validate-supply-chain` hook;
 - invokes that workload-owned hook only after the Cargo policy succeeds; and
@@ -227,8 +237,27 @@ detection rule before relying on this hook rather than silently assuming it is c
 
 The source policy is fail-closed: only the approved crates.io source is trusted;
 unknown registries and unapproved git sources are denied. Policy exceptions are
-not workload-level opt-outs. Any future exception must be narrowly scoped in
-`deny.toml`, documented next to the exception, and reviewed as a policy change.
+not workload-level opt-outs and are never written directly into root
+`deny.toml`. A workload-scoped advisory exception is a separate reviewed
+policy record and must identify one exact workload, one exact RustSec advisory,
+the resolved affected package, an allowed informational classification, a
+repository issue owner, a concrete reason, and a removal condition.
+
+The active `RUSTSEC-2026-0543` records are deliberately limited to the two
+workloads whose committed lock graphs currently resolve `chrono`:
+`csv-postgres` and `postgres-postgres`. RustSec marks every `chrono`
+version affected and provides no patched version. The former uses `chrono`
+for date/time + SQLx integration; the latter resolves it through the qualified
+tcmalloc build-dependency path
+(`tcmalloc-better -> libtcmalloc-sys -> patch -> chrono`). Replacing those
+dependencies while the OxideBatch 0.6.0 / allocator evidence campaign is in
+flight would alter the validation subject rather than apply a safe patch.
+
+Issue #297 owns migration/removal. Each exception becomes invalid as soon as
+its named workload no longer resolves `chrono`; the validator and
+`unused-ignored-advisory = "deny"` jointly keep that lifecycle fail-closed.
+`unmaintained = "all"`, unsound/yanked policy, all non-declared
+informational advisories, and actual vulnerability advisories remain blocked.
 
 `supply-chain` and `dependency-review` intentionally coexist:
 
