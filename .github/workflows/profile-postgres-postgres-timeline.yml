@@ -1,0 +1,201 @@
+name: Profile PostgreSQL native timeline attribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      reader:
+        description: PostgreSQL reader mode to trace
+        required: true
+        default: paging
+        type: choice
+        options:
+          - paging
+          - cursor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-timeline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  timeline-profile:
+    name: postgres-postgres-timeline-profile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      PROFILE_READER: ${{ inputs.reader }}
+      EXPECTED_SHA: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate timeline producer contracts
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_timeline_profile.py
+
+      - name: Start PostgreSQL 18
+        id: postgres
+        continue-on-error: true
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run native timeline attribution producer
+        id: producer
+        if: steps.postgres.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/timeline_profile.py             --base-database-url "$DATABASE_URL"             --output "$RUNNER_TEMP/timeline-profile-artifacts"             --reader "$PROFILE_READER"             --rows 2000             --seed 266             --chunk-size 200             --fetch-size 128             --page-size 128
+
+      - name: Validate retained timeline evidence
+        id: evidence
+        if: steps.producer.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/profile_manifest.py "$RUNNER_TEMP/timeline-profile-artifacts/manifest.json" > /dev/null
+          python3 - "$RUNNER_TEMP/timeline-profile-artifacts" "$PROFILE_READER" "$EXPECTED_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          reader = sys.argv[2]
+          expected_sha = sys.argv[3]
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          assert manifest["campaign"] == 266
+          assert manifest["lane"] == "timeline"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["allocator"]["identity"] == "system"
+          assert manifest["workload"]["reader_mode"] == reader
+          assert manifest["workload"]["rows"] == 2000
+          assert manifest["workload"]["seed"] == 266
+          assert manifest["workload"]["chunk_size"] == 200
+          assert manifest["instrumentation"]["profiler_attached"] is False
+          assert manifest["instrumentation"]["tools"][0]["name"] == "oxide-batch-native-timeline-recorder"
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == artifact["sha256"], path
+
+          required = (
+              "timeline/events.jsonl",
+              "timeline/summary.json",
+              "timeline/run.json",
+              "timeline/workload.stdout.txt",
+              "timeline/workload.stderr.txt",
+              "correctness/verifier.json",
+              "binary/postgres-postgres-system",
+          )
+          for relative in required:
+              path = root / relative
+              assert path.is_file(), path
+          for relative in (
+              "timeline/events.jsonl",
+              "timeline/summary.json",
+              "timeline/run.json",
+              "correctness/verifier.json",
+              "binary/postgres-postgres-system",
+          ):
+              path = root / relative
+              assert path.stat().st_size > 0, path
+
+          summary = json.loads(
+              (root / "timeline/summary.json").read_text(encoding="utf-8")
+          )
+          assert summary["schema"] == "oxide-batch-workload-timeline-summary/v1"
+          assert summary["claim"] == "phase-boundary-attribution-only"
+          assert summary["dropped_records"] == 0
+          assert summary["observed_records"] == summary["retained_records"]
+
+          records = [
+              json.loads(line)
+              for line in (root / "timeline/events.jsonl")
+              .read_text(encoding="utf-8")
+              .splitlines()
+          ]
+          assert len(records) == summary["retained_records"]
+          assert [record["sequence"] for record in records] == list(range(len(records)))
+          assert all(
+              left["elapsed_ns"] <= right["elapsed_ns"]
+              for left, right in zip(records, records[1:])
+          )
+          phase_transitions = {
+              (record["phase"], record["transition"]) for record in records
+          }
+          for required_boundary in (
+              ("item.read", "before"),
+              ("item.read", "after"),
+              ("item.process", "before"),
+              ("item.process", "after"),
+              ("item.write", "before"),
+              ("item.write", "after"),
+              ("chunk.committed", "event"),
+          ):
+              assert required_boundary in phase_transitions
+
+          run = json.loads((root / "timeline/run.json").read_text(encoding="utf-8"))
+          assert run["schema"] == "oxide-batch-timeline-profile-run/v1"
+          assert run["claim"] == "phase-boundary-attribution-only"
+          assert run["timeline_dir_env"] == "OXIDE_BATCH_TIMELINE_DIR"
+          assert run["workload_exit_status"] == 0
+          assert run["dropped_records"] == 0
+          assert run["retained_records"] == len(records)
+
+          print(
+              "validated native timeline attribution evidence: "
+              f"reader={reader} sha={expected_sha} records={len(records)}"
+          )
+          PY
+
+      - name: Upload native timeline evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-timeline-system-${{ inputs.reader }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/timeline-profile-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if PostgreSQL, producer, or evidence validation failed
+        if: steps.postgres.outcome != 'success' || steps.producer.outcome != 'success' || steps.evidence.outcome != 'success'
+        run: |
+          echo "::error::native timeline qualification failed; inspect retained timeline evidence artifact"
+          exit 1
