@@ -673,6 +673,13 @@ run_allocator_variant_smoke() {
       exit 1
     fi
   done < <(python3 benchmark/allocator_registry.py --replacement-pairs-lines --target "$target")
+
+  echo "allocator native telemetry smoke: wired registry features execute their native snapshot API"
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" && -n "$feature" ]] || continue
+    cargo test --locked -q -p postgres-postgres --no-default-features --features "$feature" \
+      --lib allocator_telemetry::tests::selected_native_snapshot_is_structured
+  done < <(python3 benchmark/allocator_registry.py --telemetry-lines --target "$target")
 }
 
 run_ci_stage() {
@@ -766,6 +773,11 @@ run_msrv_stage() {
     [[ "$feature" == "-" ]] && continue
     cargo check --locked -p postgres-postgres --no-default-features --features "$feature"
   done < <(python3 benchmark/allocator_registry.py --active-lines --target "$target")
+
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" && -n "$feature" ]] || continue
+    cargo check --locked -p postgres-postgres --no-default-features --features "$feature"
+  done < <(python3 benchmark/allocator_registry.py --telemetry-lines --target "$target")
 }
 
 case "$stage" in

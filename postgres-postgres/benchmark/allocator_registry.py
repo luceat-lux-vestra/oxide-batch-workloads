@@ -54,6 +54,7 @@ def validate_registry(document: Any) -> dict[str, Any]:
 
     identities: set[str] = set()
     features: set[str] = set()
+    telemetry_features: set[str] = set()
     system_count = 0
 
     for index, raw_candidate in enumerate(candidates):
@@ -143,7 +144,8 @@ def validate_registry(document: Any) -> dict[str, Any]:
             )
 
         telemetry = require_dict(candidate.get("telemetry"), f"{field}.telemetry")
-        if telemetry.get("status") not in TELEMETRY_STATES:
+        telemetry_status = telemetry.get("status")
+        if telemetry_status not in TELEMETRY_STATES:
             fail(f"{field}.telemetry.status must be one of {sorted(TELEMETRY_STATES)}")
         capabilities = require_list(
             telemetry.get("capabilities"), f"{field}.telemetry.capabilities"
@@ -153,6 +155,21 @@ def validate_registry(document: Any) -> dict[str, Any]:
                 capability,
                 f"{field}.telemetry.capabilities[{capability_index}]",
             )
+
+        telemetry_feature = telemetry.get("cargo_feature")
+        if telemetry_status == "wired":
+            telemetry_feature = require_string(
+                telemetry_feature, f"{field}.telemetry.cargo_feature"
+            )
+            if not capabilities:
+                fail(f"{field}.telemetry.capabilities must not be empty when wired")
+            if telemetry_feature == feature:
+                fail(f"{field}.telemetry.cargo_feature must be separate from benchmark cargo_feature")
+            if telemetry_feature in telemetry_features:
+                fail(f"duplicate allocator telemetry cargo feature: {telemetry_feature}")
+            telemetry_features.add(telemetry_feature)
+        elif telemetry_feature is not None:
+            fail(f"{field}.telemetry.cargo_feature is valid only when telemetry is wired")
 
     if system_count != 1:
         fail("registry must contain exactly one system allocator")
@@ -208,11 +225,31 @@ def replacement_features(registry: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
+def wired_telemetry_candidates(
+    registry: dict[str, Any], target: str | None = None
+) -> tuple[dict[str, Any], ...]:
+    candidates = active_candidates(registry)
+    if target is not None:
+        candidates = qualified_active_candidates(registry, target)
+    return tuple(
+        candidate
+        for candidate in candidates
+        if candidate["telemetry"]["status"] == "wired"
+    )
+
+
+def telemetry_feature(candidate: dict[str, Any]) -> str | None:
+    if candidate["telemetry"]["status"] != "wired":
+        return None
+    return candidate["telemetry"]["cargo_feature"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--active-lines", action="store_true")
     mode.add_argument("--replacement-pairs-lines", action="store_true")
+    mode.add_argument("--telemetry-lines", action="store_true")
     parser.add_argument("--target")
     args = parser.parse_args()
 
@@ -237,6 +274,14 @@ def main() -> int:
         )
         for left, right in itertools.combinations(features, 2):
             print(f"{left}|{right}")
+        return 0
+
+    if args.telemetry_lines:
+        telemetry_candidates = wired_telemetry_candidates(registry, args.target)
+        if args.target and not telemetry_candidates:
+            fail(f"no wired allocator telemetry is qualified for target {args.target}")
+        for candidate in telemetry_candidates:
+            print(f"{candidate['identity']}|{telemetry_feature(candidate)}")
         return 0
 
     print(

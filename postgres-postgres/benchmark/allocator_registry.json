@@ -46,8 +46,16 @@
       },
       "build_prerequisites": [],
       "telemetry": {
-        "status": "not-wired",
-        "capabilities": []
+        "status": "wired",
+        "cargo_feature": "allocator-jemalloc-telemetry",
+        "capabilities": [
+          "stats.allocated",
+          "stats.active",
+          "stats.metadata",
+          "stats.resident",
+          "stats.mapped",
+          "stats.retained"
+        ]
       }
     },
     {
@@ -75,8 +83,11 @@
       },
       "build_prerequisites": [],
       "telemetry": {
-        "status": "not-wired",
-        "capabilities": []
+        "status": "wired",
+        "cargo_feature": "allocator-mimalloc-telemetry",
+        "capabilities": [
+          "mi_stats_get_json"
+        ]
       }
     },
     {
@@ -107,9 +118,11 @@
         "C++ compiler"
       ],
       "telemetry": {
-        "status": "available-not-wired",
+        "status": "wired",
+        "cargo_feature": "allocator-snmalloc-telemetry",
         "capabilities": [
-          "stats"
+          "current_memory_usage",
+          "peak_memory_usage"
         ]
       }
     },
@@ -141,10 +154,9 @@
         "C++ compiler"
       ],
       "telemetry": {
-        "status": "available-not-wired",
-        "capabilities": [
-          "extension API"
-        ]
+        "status": "not-wired",
+        "capabilities": [],
+        "reason": "tcmalloc-better 0.1.19 extension surface exposes allocator background-action lifecycle but no numeric allocator statistics"
       }
     },
     {
