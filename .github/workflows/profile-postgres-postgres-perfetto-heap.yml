@@ -524,7 +524,7 @@ jobs:
           summary = json.loads(
               (root / "heap/summary.json").read_text(encoding="utf-8")
           )
-          assert summary["schema"] == "oxide-batch-perfetto-heap-profile-summary/v2"
+          assert summary["schema"] == "oxide-batch-perfetto-heap-profile-summary/v3"
           assert summary["supported"] is True
           assert summary["profiler_exit_status"] == 0
           assert summary["raw_trace_bytes"] > 0
@@ -536,16 +536,23 @@ jobs:
           assert summary["positive_allocation_callsite_count"] > 0
           assert summary["frame_rows"] > 0
           assert summary["named_frame_rows"] > 0
-          assert summary["rust_style_callsite_count"] > 0
+          assert summary["rust_symbol_callsite_count"] > 0
           assert summary["oxide_batch_callsite_count"] > 0
           assert summary["workload_callsite_count"] > 0
           assert summary["cross_boundary_callsite_count"] > 0
           assert summary["symbol_projection_rows"] > 0
           assert summary["heapprofd_error_count"] == 0
           assert summary["sampling"] == context["sampling"]
+          expected_rust_symbols = {
+              "mode": "demangled-or-rust-v0",
+              "demangled_separator": "::",
+              "rust_v0_prefix": "_R",
+              "crate_identity_markers": ["postgres_postgres", "oxide_batch"],
+          }
+          assert summary["rust_symbol_classification"] == expected_rust_symbols
           assert (
               summary["allocation_stack_attribution"]
-              == "readable-rust-workload-to-oxide-batch"
+              == "symbolized-rust-workload-to-oxide-batch"
           )
           assert summary["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert summary["timing_claim"] == "attribution-only"
@@ -563,7 +570,7 @@ jobs:
           run = json.loads((root / "heap/run.json").read_text(encoding="utf-8"))
           binary = root / "binary/postgres-postgres-system"
           binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-          assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v2"
+          assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v3"
           assert run["allocator"] == "system"
           assert run["reader_mode"] == "paging"
           assert run["rows"] == 2000
@@ -573,6 +580,7 @@ jobs:
           assert run["profiler_exit_status"] == 0
           assert run["profiler_process"] == process
           assert run["profiler"]["sampling"] == context["sampling"]
+          assert run["rust_symbol_classification"] == expected_rust_symbols
           assert run["timing_claim"] == "attribution-only"
           assert run["coverage_scope"] == "system-allocator-malloc-family-interposition"
           assert run["profiler"]["llvm_symbolizer"]["sha256"] == symbolizer["sha256"]

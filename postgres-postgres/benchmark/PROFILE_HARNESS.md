@@ -837,16 +837,24 @@ The workload attribution gate is deliberately stronger than the C capability
 gate. A PASS requires at least one **single allocation callsite stack** that
 contains all of:
 
-- a readable Rust-style frame;
-- a `postgres_postgres` frame;
-- an `oxide_batch` frame.
+- a symbolized Rust frame, accepted only when the frame is either demangled
+  Rust form containing `::` or Rust v0 mangled form beginning with `_R`;
+- a `postgres_postgres` crate identity marker;
+- an `oxide_batch` crate identity marker.
+
+The Rust predicate intentionally does not treat arbitrary non-empty native
+symbols as Rust. The crate markers remain independent gates, so recognizing an
+`_R` symbol alone cannot establish workload-to-OxideBatch attribution.
 
 It also requires non-empty raw/symbolized/symbol/pprof evidence, positive
 allocation counters, zero heapprofd error counters, and correctness PASS.
 Merely producing a trace or some readable symbols is insufficient.
 
 The summary schema is
-`oxide-batch-perfetto-heap-profile-summary/v2`. Capability/run/summary
+`oxide-batch-perfetto-heap-profile-summary/v3`; workload run metadata is
+`oxide-batch-perfetto-heap-profile-run/v3`. Both retain the explicit
+`demangled-or-rust-v0` symbol-classification contract. Capability evidence
+remains v2 because host/tool capability did not change. Capability/run/summary
 evidence records the 4,096-byte Poisson-sampling contract, blocking-client
 policy, and that trace allocation counters are sampled attribution evidence,
 not exact allocation-event totals. The campaign profile manifest remains lane
@@ -953,6 +961,52 @@ impact. The claim-bearing real-workload contract therefore changes to:
 The C capability probe remains interval 1 because its tiny known-symbol program
 is specifically intended to prove maximum-fidelity host capability.
 
+### Third real OxideBatch Perfetto workload attempt: attribution reached, Rust symbol gate was stale
+
+Authoritative run `44055506205` on exact main
+`95eda2ecfccede12f9f1ee166859f5fa841a9f54` exercised the practical
+4,096-byte sampling contract. The profiler completed naturally with exit status
+0, did not hit the 600-second timeout, retained non-empty raw/symbolized/pprof
+evidence, and recorded zero heapprofd errors.
+
+The sampled attribution projection contained:
+
+- 1,121 positive sampled allocations;
+- 8,645,000 sampled positive allocation bytes;
+- 249 positive allocation callsites;
+- 6,414 allocation-reachable frame rows;
+- 5,383 named frame rows;
+- 239 callsites containing `postgres_postgres`;
+- 211 callsites containing `oxide_batch`.
+
+The producer still failed because the then-current Rust predicate accepted only
+symbols containing `::`. Independent inspection of the retained complete
+allocation-stack projection showed:
+
+- 0 of 249 allocation roots contained a `::` frame;
+- all 249 roots contained at least one symbol beginning with Rust v0 `_R`;
+- 211 roots contained both `postgres_postgres` and `oxide_batch`;
+- all 211 of those same cross-boundary roots also contained the observed
+  Rust v0 symbol form.
+
+One retained representative symbol is:
+
+`_RNCNvMs8_NtNtCsiwTohZ3ZiY4_11oxide_batch10repository8postgresNtB7_21PostgresJobRepository7connect0Cs6q1KHVFtCnK_17postgres_postgres`
+
+Therefore run 44055506205 is classified as a **fail-closed
+symbol-classification contract defect**, not a sampling, collection,
+symbolization, or attribution failure. The run cannot close lane C because the
+producer rejected the projection before the independent correctness verifier
+and final manifest were generated.
+
+The repaired contract accepts exactly two Rust symbol forms:
+
+- demangled Rust names containing `::`;
+- Rust v0 mangled names beginning with `_R`.
+
+It still requires `postgres_postgres` and `oxide_batch` in the same
+allocation-reachable root. Arbitrary C/native symbol names remain insufficient.
+
 ### Manual hosted ARM64 Perfetto workload workflow
 
 `.github/workflows/profile-postgres-postgres-perfetto-heap.yml` is the
@@ -1001,12 +1055,12 @@ exact protected-main SHA and independent inspection of the retained artifact.
 
 ## Next implementation boundary
 
-Review and merge the practical-sampling Perfetto workload contract first.
-The following separate unit may dispatch the manual workflow exactly once on
+Review and merge the Rust symbol-classification contract repair first. The
+following separate unit may dispatch the manual workflow exactly once on
 protected main. Do not poll after dispatch.
 
 A later classification unit must independently inspect the retained artifact
-and require correctness plus readable same-callsite
+and require correctness plus symbolized same-callsite
 `postgres_postgres -> oxide_batch` allocation attribution before the generic
 system-allocator portion of lane C can be closed. Replacement allocators remain
 Lane E; timeline/concurrency, soak/quiescence, and allocator-native telemetry
