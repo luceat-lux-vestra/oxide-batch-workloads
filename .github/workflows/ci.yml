@@ -737,6 +737,29 @@ jobs:
       - name: Validate payment-reference Compose model
         run: docker compose -f payment-reference/deploy/compose.yaml config --quiet
 
+      - name: Validate canonical Lima host config with Lima 2.3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          lima_version="2.3.0"
+          archive="lima-${lima_version}-Linux-aarch64.tar.gz"
+          expected_sha256="7e295d243d9b9439fa05628500daff4371a6861cc7e995ac4af4a0781f736cc6"
+          url="https://github.com/lima-vm/lima/releases/download/v${lima_version}/${archive}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          curl --fail --location --silent --show-error "$url" --output "$tmp_dir/$archive"
+          printf '%s  %s\n' "$expected_sha256" "$tmp_dir/$archive" | sha256sum --check --strict
+          tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
+
+          export LIMA_HOME="$tmp_dir/lima-home"
+          mkdir -p "$LIMA_HOME"
+
+          "$tmp_dir/bin/limactl" --version
+          "$tmp_dir/bin/limactl" --tty=false validate \
+            payment-reference/deploy/longrun/lima/lima.yaml
+
       - name: Run payment-reference runtime smoke
         env:
           PAYMENT_REFERENCE_RESULT_PATH: ${{ runner.temp }}/payment-reference-scenario-result.json
