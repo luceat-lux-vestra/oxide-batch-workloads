@@ -1146,15 +1146,72 @@ This workflow is orchestration only. Merging it does **not** establish real
 OxideBatch heap attribution; that claim requires a later manual dispatch on an
 exact protected-main SHA and independent inspection of the retained artifact.
 
+## Allocator-native telemetry retained-evidence producer
+
+`benchmark/allocator_telemetry_profile.py` is the Lane E retained-evidence
+producer for registry-wired allocator-native telemetry.
+
+The producer is deliberately separate from Lane A benchmark timing. It records
+no elapsed time, throughput, CPU, RSS, or synthetic cross-allocator
+fragmentation value. One invocation selects exactly one wired allocator
+(`jemalloc`, `mimalloc`, or `snmalloc`), builds its dedicated telemetry
+feature, clones a fresh seeded PostgreSQL database, executes the normal workload,
+captures the allocator's native post-success snapshot, runs the independent
+correctness verifier, and retains:
+
+- `allocator/snapshot.json` with the native allocator payload;
+- `allocator/run.json` with the exact telemetry feature, capabilities, native
+  API, command, binary digest, and snapshot digest;
+- workload stdout/stderr;
+- the independent verifier report;
+- the exact release binary;
+- the exact `Cargo.lock`;
+- the allocator registry and selected allocator record;
+- rustc/cargo/target build provenance;
+- a v2 campaign manifest hashing every retained artifact.
+
+The snapshot validator is allocator-specific only where the native contract is
+stable enough to validate honestly:
+
+- jemalloc requires the six retained `stats.*` counters as non-negative
+  native integers after epoch refresh;
+- mimalloc retains the wrapper's native JSON object without inventing a common
+  schema and requires the `mi_stats_get_json` API identity;
+- snmalloc requires non-negative current/peak OS reservation values and
+  `peak >= current`.
+
+`.github/workflows/profile-postgres-postgres-allocator-native.yml` is the
+manual hosted ARM64 wrapper. It has no user inputs and runs a fixed matrix over
+jemalloc, mimalloc, and snmalloc with the same bounded geometry:
+
+- runner: `ubuntu-24.04-arm`;
+- reader: paging;
+- rows: 2,000;
+- seed: 266;
+- chunk size: 200;
+- page size: 128;
+- exact repository SHA from the dispatched ref.
+
+Each matrix shard independently reruns producer contracts, starts PostgreSQL 18,
+runs the producer, revalidates the manifest and every retained SHA-256, checks
+the native snapshot/run metadata and provenance relationship, uploads evidence
+even on failure, and tears PostgreSQL down unconditionally.
+
+A merged workflow is orchestration capability only. It does **not** itself close
+Lane E. Claim-bearing Lane E evidence requires a later manual dispatch from an
+exact protected-main SHA and independent inspection of all three retained
+allocator artifacts. Hosted-runner evidence remains orchestration/native-API
+evidence rather than stable-host allocator-performance evidence.
+
 ## Next implementation boundary
 
-Review and merge the Rust symbol-classification contract repair first. The
-following separate unit may dispatch the manual workflow exactly once on
-protected main. Do not poll after dispatch.
+Review and merge the allocator-native retained-evidence producer/workflow first.
+The following separate unit may dispatch it exactly once from protected main;
+do not poll after dispatch.
 
-A later classification unit must independently inspect the retained artifact
-and require correctness plus symbolized same-callsite
-`postgres_postgres -> oxide_batch` allocation attribution before the generic
-system-allocator portion of lane C can be closed. Replacement allocators remain
-Lane E; timeline/concurrency, soak/quiescence, and allocator-native telemetry
-remain separate later units.
+A later classification unit must independently inspect jemalloc, mimalloc, and
+snmalloc artifacts and require exact-main provenance, native snapshot validity,
+manifest hash closure, and correctness PASS before Lane E can be closed.
+Long-running/quiescence memory observations remain a separate campaign
+completion obligation and must not be inferred from this point-in-time Lane E
+snapshot.
