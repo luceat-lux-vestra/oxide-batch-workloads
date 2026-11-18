@@ -20,6 +20,8 @@ assert 'sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e'
 assert 'usermod -aG docker "{{.User}}"' in YAML
 assert '/var/lib/oxide-batch-workloads' in YAML
 assert 'docker compose version' in YAML
+assert 'probes:\n- mode: readiness\n' in YAML
+assert 'probes:\n- mode: user\n' not in YAML
 
 assert 'LIMA_VERSION="2.3.0"' in PROVISION
 assert 'b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc' in PROVISION
