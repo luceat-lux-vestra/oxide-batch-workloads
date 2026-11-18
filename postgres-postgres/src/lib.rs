@@ -9,6 +9,7 @@
 //! CLI's stdout/logs.
 
 pub mod allocator;
+pub mod allocator_telemetry;
 pub mod endurance;
 pub mod failpoint;
 pub mod generator;
