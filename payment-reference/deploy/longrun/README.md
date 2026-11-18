@@ -116,30 +116,78 @@ python3 payment-reference/deploy/longrun/test-host-qualification.py
 It is also invoked by the normal payment-reference runtime smoke so contract
 drift fails before expensive runtime setup.
 
-## Build/runtime separation required before OCI activation
+## Immutable ARM64 image publication and OCI pull-only runtime
 
-The current development/CI Compose path contains repository-owned image builds
-for the Kill Bill plugin image, Gateway, Merchant, fault proxy, Kill Bill
-database image, and payment-sandbox wrapper.
+The development/CI Compose path remains build-based and continues to validate
+the repository-owned Dockerfiles.
 
-That is acceptable for CI and development but is **not** the canonical
-2-OCPU shared-host long-run path.
+The canonical OCI campaign path is separate:
 
-Before actual OCI qualification starts, a separate bounded work unit must:
+- `.github/workflows/payment-reference-images.yml` runs only on protected
+  `main` push or explicit workflow dispatch;
+- seven ARM64 runtime images are published to GHCR:
+  - Kill Bill database image;
+  - PostgreSQL 18.6 Bookworm mirror used by Gateway/Merchant databases;
+  - payment-sandbox;
+  - deterministic fault proxy;
+  - Kill Bill + repository-owned plugin;
+  - Gateway;
+  - Merchant;
+- every publication tag is unique to source SHA + workflow run + attempt;
+- OCI never deploys a tag. The workflow resolves each pushed image to its
+  registry `@sha256:` identity and emits one verified
+  `image-manifest.json`;
+- the bundle artifact is named
+  `payment-reference-arm64-images-<source-sha>` and is retained for 90 days;
+- the OCI Compose model requires those digest references and contains no
+  `build:` keys.
 
-1. build the repository-owned ARM64 runtime images in CI;
-2. publish or otherwise retain them by immutable content identity;
-3. add a pull-only long-run Compose overlay/path;
-4. preserve the existing build-based CI smoke as a separate validation path;
-5. prove that the OCI campaign path performs no Maven/Rust image compilation.
+The PostgreSQL runtime is mirrored into the same GHCR bundle so a mutable
+Docker Hub tag is never resolved by the constrained OCI host. The source
+`postgres:18.6-bookworm` digest observed by the publication runner is retained
+in the per-image manifest entry.
 
-Host qualification must not start by forcing a full Maven/Rust Docker build
-onto the constrained shared OCI host.
+GHCR visibility is not part of the deployment artifact. If the packages are
+not public, authenticate Docker on the OCI host with a read-only registry
+credential before running the deployment entrypoint. No registry credential is
+stored in this repository or in `images.env`.
+
+The OCI deployment entrypoint is:
+
+```bash
+bash payment-reference/deploy/longrun/deploy-oci.sh \
+  --manifest /path/to/image-manifest.json \
+  --data-path /srv/oxide-batch-workloads
+```
+
+It fail-closes unless:
+
+- the manifest source SHA equals the exact clean repository checkout;
+- all seven image references are GHCR digest references;
+- the resolved OCI Compose model contains zero `build` configuration;
+- every service image ends in an exact `@sha256:<64-hex>`;
+- the shared-host admission gate passes before image pull;
+- the admission gate still passes after the image pull.
+
+The final process start is exactly a no-build/no-pull operation:
+
+```text
+docker compose ... up -d --no-build --pull never
+```
+
+The manifest and generated digest-only `images.env` are retained
+immutably under:
+
+```text
+<durable-data-root>/payment-reference-runtime/
+  image-manifest.json
+  images.env
+```
 
 ## Qualification sequence
 
-Use an exact clean repository revision. Qualification is run on the selected
-shared OCI ARM64 Linux host.
+Use the exact clean repository revision named by the selected image manifest.
+Qualification is run on the selected shared OCI ARM64 Linux host.
 
 1. Inspect the existing host without mutation:
    - architecture and CPU count;
@@ -152,35 +200,66 @@ shared OCI ARM64 Linux host.
    the 120 GiB total / 40 GiB free floors.
 3. Enter campaign mode by stopping only explicitly best-effort services.
    Essential/public services remain online.
-4. Run `check-admission.py`. A non-ALLOW result blocks activation.
-5. Use the pull-only immutable ARM64 campaign image path described above.
-   Do not compile repository-owned runtime images on the OCI host.
-6. Run:
-   ```bash
-   docker compose -f payment-reference/deploy/compose.yaml config --quiet
-   ```
-   together with the selected long-run image overlay once that overlay exists.
+4. Download the `payment-reference-arm64-images-<source-sha>` bundle for the
+   exact selected protected-main revision.
+5. Authenticate to GHCR when the package visibility requires it.
+6. Run `deploy-oci.sh`. It performs admission -> digest-pinned pull ->
+   admission -> no-build start.
 7. Run the full runtime smoke three consecutive times against the same running
-   Compose project and persistent volumes. Use a unique safe business namespace
-   per run. The campaign deployment path must reuse the already-pulled immutable
-   images rather than rebuilding them.
-8. Capture immutable provenance:
+   Compose project and persistent volumes. Use the retained OCI Compose/env
+   pair and unique safe business namespace per run:
+
    ```bash
+   runtime=/srv/oxide-batch-workloads/payment-reference-runtime
+
+   export PAYMENT_REFERENCE_COMPOSE_FILE="$PWD/payment-reference/deploy/longrun/compose.oci.yaml"
+   export PAYMENT_REFERENCE_COMPOSE_ENV_FILE="$runtime/images.env"
+   export PAYMENT_REFERENCE_SKIP_BUILD=true
+   export KILLBILL_API_KEY='hostq-318'
+   export KILLBILL_API_SECRET='hostq-318-local-only'
+
+   for run in 1 2 3; do
+     if [ "$run" = 1 ]; then
+       export PAYMENT_REFERENCE_REUSE_TENANT=false
+     else
+       export PAYMENT_REFERENCE_REUSE_TENANT=true
+     fi
+     PAYMENT_REFERENCE_SMOKE_NAMESPACE="-hostq-$run" \
+       PAYMENT_REFERENCE_RESULT_PATH="$runtime/smoke-$run.json" \
+       bash payment-reference/deploy/smoke.sh
+   done
+   ```
+
+   With `PAYMENT_REFERENCE_SKIP_BUILD=true`, the smoke uses
+   `up -d --no-build --pull never`; it cannot compile or fetch an alternative
+   image.
+8. Capture immutable provenance using the OCI Compose model and its digest env:
+
+   ```bash
+   set -a
+   . /srv/oxide-batch-workloads/payment-reference-runtime/images.env
+   set +a
+
    python3 payment-reference/deploy/longrun/capture-provenance.py \
+     --compose-file payment-reference/deploy/longrun/compose.oci.yaml \
      --evidence-dir /srv/oxide-batch-workloads/evidence/payment-reference-host-qualification \
      --host-sleep-disabled-attested
    ```
+
    For OCI, the attestation means the VM is intentionally kept running for the
    qualification/campaign window; it does not assert control of Oracle's
    physical host.
 9. Run the disk guard against the durable data/evidence filesystem:
+
    ```bash
    python3 payment-reference/deploy/longrun/disk-guard.py \
      --path /srv/oxide-batch-workloads
    ```
+
 10. Stop and restart the **payment-reference stack only**, without deleting
-    volumes. Run one additional persistence smoke. Whole-VM reboot is not a v1
-    qualification requirement for the shared public host.
+    volumes, then run one additional persistence smoke with the same OCI
+    Compose/env pair and `PAYMENT_REFERENCE_REUSE_TENANT=true`. Whole-VM
+    reboot is not a v1 qualification requirement for the shared public host.
 11. With the complete payment-reference topology running and no business
     mutation/batch work, retain at least 30 minutes of quiescent host/container
     observations.
@@ -276,13 +355,13 @@ Two host-qualification flags currently exist:
 
 - `PAYMENT_REFERENCE_REUSE_TENANT=true` skips tenant creation and relies on
   explicitly reused Kill Bill tenant credentials;
-- `PAYMENT_REFERENCE_SKIP_BUILD=true` uses `docker compose up -d` instead
-  of `up -d --build`.
+- `PAYMENT_REFERENCE_SKIP_BUILD=true` uses
+  `docker compose up -d --no-build --pull never` instead of
+  `up -d --build`;
+- `PAYMENT_REFERENCE_COMPOSE_FILE` selects a non-default Compose model;
+- `PAYMENT_REFERENCE_COMPOSE_ENV_FILE` supplies the digest-only environment
+  generated from the verified image manifest.
 
-Both default to `false`, so ordinary CI retains the original strict build +
-HTTP-201 tenant-bootstrap semantics.
-
-For the OCI campaign path, `SKIP_BUILD=true` alone is not sufficient until
-the separate pull-only immutable-image overlay is implemented; otherwise the
-required images still have to exist locally somehow. That image publication
-work is the next infrastructure unit after this contract correction.
+All remain opt-in, so ordinary CI keeps the historical build-based Compose
+path and strict HTTP-201 tenant-bootstrap semantics. The OCI qualification path
+sets all three explicitly and therefore cannot build or pull during a smoke.
