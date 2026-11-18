@@ -47,6 +47,53 @@ python3 payment-reference/deploy/longrun/test-host-qualification.py
 It is also invoked by the normal payment-reference runtime smoke so contract
 drift fails before expensive runtime setup.
 
+## Canonical macOS provisioning path
+
+For the M1 Max host, #318 uses Lima **v2.3.0** with Apple's VZ backend. The
+repository-owned config is under `longrun/lima/` and deliberately creates a
+new VM instead of reusing an existing development/container VM.
+
+Pinned inputs:
+
+- Lima: `v2.3.0`
+- Darwin arm64 archive SHA-256:
+  `b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc`
+- Ubuntu: 24.04 LTS Noble ARM64 release `20261017`
+- Ubuntu image SHA-256:
+  `50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e`
+- VM driver: `vz`
+- VM resources: 8 vCPU / 24 GiB / 120 GiB
+- no host filesystem mount;
+- Rosetta disabled;
+- guest access to macOS host loopback disabled;
+- payment-reference guest-loopback ports are not forwarded onto macOS.
+
+The provisioning script installs its pinned Lima binary into
+`~/.local/opt/lima-2.3.0`; it does not replace Homebrew or another Lima
+installation.
+
+After this PR is merged, create the VM from the repository checkout with the
+exact selected main revision:
+
+```bash
+bash payment-reference/deploy/longrun/lima/provision-macos.sh \
+  --repo-sha <exact-40-hex-main-sha>
+```
+
+Provisioning performs these checks before creation:
+
+- macOS / Apple Silicon only;
+- host RAM >=32 GiB and logical CPU count >=8;
+- exact Lima release archive checksum;
+- refuses an existing instance named `oxide-payment-longrun`;
+- clones the repository **inside VM-local storage**;
+- checks out the requested commit detached and requires a clean tree;
+- verifies guest architecture/resources and Docker/Compose availability.
+
+Provisioning success is not qualification evidence. Host sleep remains an
+explicit operator responsibility, and the normal qualification sequence below
+must still pass in full.
+
 ## Qualification sequence
 
 Use an exact clean repository revision. The canonical first campaign currently
