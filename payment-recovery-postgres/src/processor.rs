@@ -130,10 +130,7 @@ impl RecoveryProcessor {
         let replay = self
             .merchant
             .execute(&candidate, &self.crash)
-            .await
-            .inspect_err(|_| {
-                eprintln!("payment-recovery processor failure stage=merchant-replay");
-            })?;
+            .await?;
 
         let (attempt_state, merchant_http_status, outcome_kind, canonical, provider, decision) =
             match replay {
@@ -306,11 +303,6 @@ impl RecoveryProcessor {
                     Some(_) => ProviderVisibility::Unavailable,
                 };
                 let response: ProviderPaymentResponse = serde_json::from_slice(&response.body)
-                    .inspect_err(|_| {
-                        eprintln!(
-                            "payment-recovery processor failure stage=provider-response-decode"
-                        );
-                    })
                     .context("decode provider payment response")?;
                 Ok(ProviderObservation {
                     visibility,
@@ -350,15 +342,12 @@ impl ItemProcessor<RecoverySourceRow, RecoveryWrite> for RecoveryProcessor {
         if item.attempt_no <= 0 {
             return Err(ProcessorError::with_category(FailureCategory::Invariant));
         }
-        self.candidate(item).map_err(|_| {
-            eprintln!("payment-recovery processor failure stage=candidate-validation");
-            ProcessorError::with_category(FailureCategory::Invariant)
-        })?;
+        self.candidate(item)
+            .map_err(|_| ProcessorError::with_category(FailureCategory::Invariant))?;
         self.process_one(item)
             .await
             .map(ProcessOutcome::Item)
             .map_err(|_| {
-                eprintln!("payment-recovery processor failure stage=item-execution");
                 ProcessorError::with_category(FailureCategory::TransientInfrastructure)
             })
     }
