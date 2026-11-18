@@ -1,11 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
@@ -107,10 +103,7 @@ pub(super) async fn close_settlement(
         .map_err(internal)?;
 
         tx.commit().await.map_err(internal)?;
-        return Ok((
-            StatusCode::CREATED,
-            Json(view_from_request(request, false)),
-        ));
+        return Ok((StatusCode::CREATED, Json(view_from_request(request, false))));
     }
 
     let rows = sqlx::query(
@@ -176,8 +169,7 @@ fn stored_close_matches(
     request: &SettlementCloseRequest,
 ) -> Result<bool, ApiError> {
     Ok(
-        row.try_get::<String, _>("statement_id").map_err(internal)?
-            == request.statement_id
+        row.try_get::<String, _>("statement_id").map_err(internal)? == request.statement_id
             && row
                 .try_get::<String, _>("statement_digest")
                 .map_err(internal)?
@@ -190,10 +182,8 @@ fn stored_close_matches(
                 .try_get::<String, _>("settlement_date")
                 .map_err(internal)?
                 == request.settlement_date
-            && row.try_get::<String, _>("currency").map_err(internal)?
-                == request.currency
-            && row.try_get::<i64, _>("line_count").map_err(internal)?
-                == request.line_count
+            && row.try_get::<String, _>("currency").map_err(internal)? == request.currency
+            && row.try_get::<i64, _>("line_count").map_err(internal)? == request.line_count
             && row
                 .try_get::<i64, _>("captured_total_minor")
                 .map_err(internal)?
@@ -209,10 +199,7 @@ fn stored_close_matches(
     )
 }
 
-fn view_from_request(
-    request: SettlementCloseRequest,
-    replayed: bool,
-) -> SettlementCloseView {
+fn view_from_request(request: SettlementCloseRequest, replayed: bool) -> SettlementCloseView {
     SettlementCloseView {
         statement_id: request.statement_id,
         statement_digest: request.statement_digest,
@@ -259,9 +246,7 @@ fn validate_request(request: &SettlementCloseRequest) -> Result<(), ApiError> {
         ));
     }
     if request.line_count <= 0 {
-        return Err(ApiError::BadRequest(
-            "line_count must be positive".into(),
-        ));
+        return Err(ApiError::BadRequest("line_count must be positive".into()));
     }
     if request.captured_total_minor < 0
         || request.refunded_total_minor < 0
@@ -295,22 +280,17 @@ fn validate_request(request: &SettlementCloseRequest) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn deterministic_statement_id(
-    request: &SettlementCloseRequest,
-) -> Result<String, ApiError> {
+fn deterministic_statement_id(request: &SettlementCloseRequest) -> Result<String, ApiError> {
     let mut identity = BTreeMap::new();
     identity.insert("currency", request.currency.clone());
-    identity.insert(
-        "provider_account_id",
-        request.provider_account_id.clone(),
-    );
+    identity.insert("provider_account_id", request.provider_account_id.clone());
     identity.insert("settlement_date", request.settlement_date.clone());
     identity.insert(
         "statement_contract_version",
         STATEMENT_CONTRACT_VERSION.to_owned(),
     );
-    let canonical = serde_json::to_vec(&identity)
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let canonical =
+        serde_json::to_vec(&identity).map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(format!("statement-{}", sha256_hex(&canonical)))
 }
 
@@ -318,21 +298,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(64);
     for byte in digest {
-        write!(&mut output, "{byte:02x}")
-            .expect("writing a SHA-256 digest to String cannot fail");
+        write!(&mut output, "{byte:02x}").expect("writing a SHA-256 digest to String cannot fail");
     }
     output
 }
 
 fn has_prefixed_lower_hex(value: &str, prefix: &str, digits: usize) -> bool {
-    value
-        .strip_prefix(prefix)
-        .is_some_and(|suffix| {
-            suffix.len() == digits
-                && suffix.bytes().all(|byte| {
-                    byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
-                })
-        })
+    value.strip_prefix(prefix).is_some_and(|suffix| {
+        suffix.len() == digits
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
 }
 
 fn is_iso_date(value: &str) -> bool {
@@ -343,9 +320,7 @@ fn is_iso_date(value: &str) -> bool {
         || bytes
             .iter()
             .enumerate()
-            .any(|(index, byte)| {
-                index != 4 && index != 7 && !byte.is_ascii_digit()
-            })
+            .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
     {
         return false;
     }
@@ -372,4 +347,3 @@ fn is_iso_date(value: &str) -> bool {
 fn is_leap_year(year: u32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
-
