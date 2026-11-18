@@ -1,0 +1,168 @@
+name: Profile PostgreSQL OS/process telemetry
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-os-process-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  os-process-profile:
+    name: os-process-system
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      EXPECTED_SHA: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate OS/process producer contracts
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_os_process_profile.py
+
+      - name: Start PostgreSQL 18
+        id: postgres
+        continue-on-error: true
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run OS/process telemetry producer
+        id: producer
+        if: steps.postgres.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/os_process_profile.py             --base-database-url "$DATABASE_URL"             --output "$RUNNER_TEMP/os-process-artifacts"             --sample-interval-ms 50
+
+      - name: Validate retained OS/process evidence
+        id: evidence
+        if: steps.producer.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/os-process-artifacts"
+          python3 benchmark/profile_manifest.py "$root/manifest.json" >/dev/null
+          python3 - "$root" "$EXPECTED_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          expected_sha = sys.argv[2]
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          assert manifest["schema"] == "oxide-batch-profile-manifest/v2"
+          assert manifest["campaign"] == 266
+          assert manifest["lane"] == "os-process"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["allocator"]["identity"] == "system"
+          assert manifest["subject"]["build_profile"] == "release"
+          assert manifest["workload"]["reader_mode"] == "paging"
+          assert manifest["workload"]["rows"] == 200000
+          assert manifest["workload"]["seed"] == 20260904
+          assert manifest["workload"]["chunk_size"] == 1000
+          assert manifest["workload"]["page_size"] == 750
+          assert manifest["instrumentation"]["profiler_attached"] is False
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"], path
+
+          summaries = list((root / "memory/endurance").glob("*/samples.jsonl"))
+          assert len(summaries) == 1, summaries
+          samples_path = summaries[0]
+          assert samples_path.stat().st_size > 0
+          campaign_root = samples_path.parent
+          for relative in ("campaign.json", "events.jsonl", "iterations/000002.json"):
+              path = campaign_root / relative
+              assert path.is_file() and path.stat().st_size > 0, path
+
+          projection = json.loads(
+              (root / "memory/projection/summary.json").read_text(encoding="utf-8")
+          )
+          assert projection["schema"] == "oxide-batch-os-process-summary/v1"
+          assert projection["claim"] == "bounded-resource-timeline-projection-only"
+          assert projection["sample_count"] > 0
+          assert projection["process_sample_count"] > 0
+          assert projection["roles"]
+
+          run = json.loads(
+              (root / "memory/projection/run.json").read_text(encoding="utf-8")
+          )
+          assert run["schema"] == "oxide-batch-os-process-profile-run/v1"
+          assert run["claim"] == "bounded-resource-timeline-only"
+          assert run["sequence"] == 2
+          assert run["sample_count"] == projection["sample_count"]
+
+          verifier = json.loads(
+              (root / "correctness/verifier.json").read_text(encoding="utf-8")
+          )
+          assert verifier["source_rows"] == 200000
+          assert verifier["destination_rows"] == 200000
+          assert verifier["row_counts_match"] is True
+          assert verifier["digests_match"] is True
+          assert verifier["total_mismatches"] == 0
+
+          lock_sha = hashlib.sha256(
+              (root / "provenance/Cargo.lock").read_bytes()
+          ).hexdigest()
+          assert lock_sha == manifest["subject"]["cargo_lock_sha256"]
+
+          print(
+              "validated OS/process retained evidence: "
+              f"samples={projection['sample_count']} sha={expected_sha}"
+          )
+          PY
+
+      - name: Upload OS/process evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-os-process-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/os-process-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if PostgreSQL, producer, or evidence validation failed
+        if: steps.postgres.outcome != 'success' || steps.producer.outcome != 'success' || steps.evidence.outcome != 'success'
+        run: |
+          echo "::error::OS/process telemetry qualification failed; inspect retained artifact"
+          exit 1

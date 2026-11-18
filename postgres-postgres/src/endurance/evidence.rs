@@ -57,7 +57,7 @@ pub enum FailureClass {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", content = "result", rename_all = "kebab-case")]
 pub enum RecordedExecutionResult {
-    Clean(CleanIterationResult),
+    Clean(Box<CleanIterationResult>),
     Crash(Box<CrashIterationResult>),
 }
 
@@ -371,7 +371,7 @@ async fn execute_recorded_execution(
             observer,
         )
         .await
-        .map(RecordedExecutionResult::Clean),
+        .map(|result| RecordedExecutionResult::Clean(Box::new(result))),
         EnduranceFailure::BeforeCommit | EnduranceFailure::AfterCommit => {
             execute_crash_iteration_observed(
                 workload_binary,
@@ -577,4 +577,62 @@ pub(crate) fn now_unix_nanos() -> Result<u64> {
         .context("system clock is before UNIX epoch")?
         .as_nanos();
     u64::try_from(nanos).context("current UNIX nanosecond timestamp does not fit u64")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecordedExecutionResult;
+    use crate::endurance::{ChildProcessResult, CleanIterationResult, EnduranceReader};
+
+    #[test]
+    fn boxed_clean_execution_preserves_tagged_json_contract() -> anyhow::Result<()> {
+        let verification_report = crate::verify::parse_successful_report(
+            br#"{
+                "import_name":"endurance_fixture_000002_paging",
+                "source_digest":"source-fixture",
+                "source_rows":200000,
+                "destination_rows":200000,
+                "row_counts_match":true,
+                "expected_digest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "actual_digest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "digests_match":true,
+                "total_mismatches":0,
+                "mismatches":[],
+                "mismatches_truncated":false
+            }"#,
+        )?;
+
+        let child = ChildProcessResult {
+            pid: 123,
+            success: true,
+            code: Some(0),
+            status: "exit status: 0".to_owned(),
+        };
+        let execution = RecordedExecutionResult::Clean(Box::new(CleanIterationResult {
+            campaign_id: "fixture".to_owned(),
+            sequence: 2,
+            reader: EnduranceReader::Paging,
+            import_name: "endurance_fixture_000002_paging".to_owned(),
+            chunk_size: 1_000,
+            fetch_size: None,
+            page_size: Some(750),
+            run: child.clone(),
+            verification: child,
+            verification_report,
+            cleanup_deleted_rows: 200_000,
+        }));
+
+        let value = serde_json::to_value(execution)?;
+        assert_eq!(value["kind"], "clean");
+        assert_eq!(value["result"]["reader"], "paging");
+        assert_eq!(
+            value["result"]["verification_report"]["source_rows"],
+            200_000
+        );
+        assert_eq!(
+            value["result"]["verification_report"]["expected_digest_sha256"],
+            value["result"]["verification_report"]["actual_digest_sha256"]
+        );
+        Ok(())
+    }
 }
