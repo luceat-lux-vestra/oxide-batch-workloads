@@ -98,7 +98,7 @@ def classify(pr: object, pages: object, *, repo: str, base: str, head: str, head
     if pr.get("head", {}).get("repo", {}).get("full_name") != head_repo:
         reject("live pull request head repository drifted")
     expected = pr.get("changed_files")
-    if not isinstance(expected, int) or expected <= 0 or expected > 3000:
+    if not isinstance(expected, int) or isinstance(expected, bool) or expected < 0 or expected > 3000:
         reject("live pull request changed_files is outside the supported bound")
     records = _flatten_pages(pages)
     if len(records) != expected:
@@ -282,6 +282,17 @@ def self_test() -> None:
     assert classify(pr(), [[{"status": "modified", "filename": ".github/workflows/ci.yml"}]], repo=repo, base=base, head=head, head_repo=head_repo)
     assert classify(pr(), [[{"status": "modified", "filename": ".github/scripts/test_aggregate_verdict.py"}]], repo=repo, base=base, head=head, head_repo=head_repo)
     assert not classify(pr(), [[{"status": "modified", "filename": "README.md"}]], repo=repo, base=base, head=head, head_repo=head_repo)
+    # A zero-diff PR is a complete, valid enumeration when GitHub reports
+    # changed_files=0 and the fetched changed-file pages flatten to zero records.
+    # It is non-runtime-relevant, but negative/oversized counts still fail closed.
+    assert not classify(pr(0), [[]], repo=repo, base=base, head=head, head_repo=head_repo)
+    for count in (-1, 3001):
+        try:
+            classify(pr(count), [[]], repo=repo, base=base, head=head, head_repo=head_repo)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsupported changed_files bound accepted: {count}")
     allowed_patch = "\n".join([
         "@@ -1,2 +1,2 @@",
         "-        uses: github/codeql-action/init@" + "1" * 40 + " # old",
