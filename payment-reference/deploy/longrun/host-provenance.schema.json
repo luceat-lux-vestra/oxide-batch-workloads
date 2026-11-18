@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oxide-batch.dev/payment-reference/longrun/host-provenance-v1.schema.json",
+  "title": "Payment Reference Long-running Host Provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "repository_sha",
+    "architecture",
+    "kernel_release",
+    "os_release",
+    "vcpu",
+    "memory_total_bytes",
+    "swap_total_bytes",
+    "filesystem",
+    "host_sleep_disabled_attested",
+    "qualification_contract_sha256"
+  ],
+  "properties": {
+    "schema": { "const": "oxide-batch-workloads.payment-reference-host-provenance" },
+    "schema_version": { "const": 1 },
+    "repository_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "architecture": { "enum": ["aarch64", "arm64"] },
+    "kernel_release": { "type": "string", "minLength": 1 },
+    "os_release": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "vcpu": { "type": "integer", "minimum": 1 },
+    "memory_total_bytes": { "type": "integer", "minimum": 1 },
+    "swap_total_bytes": { "type": "integer", "minimum": 0 },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "total_bytes", "free_bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "total_bytes": { "type": "integer", "minimum": 1 },
+        "free_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "host_sleep_disabled_attested": { "const": true },
+    "qualification_contract_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

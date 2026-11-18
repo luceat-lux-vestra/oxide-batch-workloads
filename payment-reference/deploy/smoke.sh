@@ -19,6 +19,52 @@ source_revision="${PAYMENT_REFERENCE_SOURCE_REVISION:-${GITHUB_SHA:-local}}"
 scenario_version=1
 scenario_seed=256
 logical_business_date="2026-11-13"
+smoke_namespace="${PAYMENT_REFERENCE_SMOKE_NAMESPACE:-}"
+reuse_tenant="${PAYMENT_REFERENCE_REUSE_TENANT:-false}"
+skip_build="${PAYMENT_REFERENCE_SKIP_BUILD:-false}"
+case "$smoke_namespace" in
+  "" ) ;;
+  *[!A-Za-z0-9._-]* )
+    echo "PAYMENT_REFERENCE_SMOKE_NAMESPACE must contain only [A-Za-z0-9._-]" >&2
+    exit 64
+    ;;
+esac
+[ "${#smoke_namespace}" -le 32 ] || {
+  echo "PAYMENT_REFERENCE_SMOKE_NAMESPACE must be at most 32 characters" >&2
+  exit 64
+}
+case "$reuse_tenant" in
+  true|false) ;;
+  *) echo "PAYMENT_REFERENCE_REUSE_TENANT must be true or false" >&2; exit 64 ;;
+esac
+case "$skip_build" in
+  true|false) ;;
+  *) echo "PAYMENT_REFERENCE_SKIP_BUILD must be true or false" >&2; exit 64 ;;
+esac
+
+qualified_id() {
+  printf '%s%s' "$1" "$smoke_namespace"
+}
+
+namespace_request() {
+  jq -c --arg suffix "$smoke_namespace" '
+    with_entries(
+      if (
+        (.key == "merchantId"
+         or .key == "merchantOrderId"
+         or .key == "merchantPaymentId"
+         or .key == "operationId"
+         or .key == "customerId"
+         or .key == "paymentMethodToken"
+         or .key == "idempotencyKey")
+        and (.value | type) == "string"
+      )
+      then .value = (.value + $suffix)
+      else .
+      end
+    )
+  ' <<<"$1"
+}
 
 export KILLBILL_USERNAME="${KILLBILL_USERNAME:-admin}"
 export KILLBILL_PASSWORD="${KILLBILL_PASSWORD:-password}"
@@ -189,7 +235,13 @@ provider_payment() {
 
 python3 ../scenarios/v1/test_provider_settlement_statement.py
 
-"${compose[@]}" up -d --build
+python3 longrun/test-host-qualification.py
+
+if [ "$skip_build" = "true" ]; then
+  "${compose[@]}" up -d
+else
+  "${compose[@]}" up -d --build
+fi
 
 wait_for_url "${killbill_base}/1.0/healthcheck"
 
@@ -202,33 +254,37 @@ printf '%s' "$nodes" | grep -q 'killbill-payment-sandbox'
 
 wait_for_url "${fault_proxy_base}/health/ready"
 
-tenant_body="$(
-  jq -nc \
-    --arg api_key "$KILLBILL_API_KEY" \
-    --arg api_secret "$KILLBILL_API_SECRET" \
-    '{apiKey:$api_key,apiSecret:$api_secret}'
-)"
-tenant_status="$(
-  curl --silent --show-error \
-    --output /tmp/payment-reference-tenant.json \
-    --write-out '%{http_code}' \
-    --request POST \
-    -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
-    --header 'Content-Type: application/json' \
-    --header 'X-Killbill-CreatedBy: payment-reference-smoke' \
-    --data "$tenant_body" \
-    "${killbill_base}/1.0/kb/tenants"
-)"
-if [ "$tenant_status" != "201" ]; then
-  cat /tmp/payment-reference-tenant.json >&2 || true
-  fail "tenant bootstrap expected HTTP 201, observed ${tenant_status}"
+if [ "$reuse_tenant" = "false" ]; then
+  tenant_body="$(
+    jq -nc \
+      --arg api_key "$KILLBILL_API_KEY" \
+      --arg api_secret "$KILLBILL_API_SECRET" \
+      '{apiKey:$api_key,apiSecret:$api_secret}'
+  )"
+  tenant_status="$(
+    curl --silent --show-error \
+      --output /tmp/payment-reference-tenant.json \
+      --write-out '%{http_code}' \
+      --request POST \
+      -u "${KILLBILL_USERNAME}:${KILLBILL_PASSWORD}" \
+      --header 'Content-Type: application/json' \
+      --header 'X-Killbill-CreatedBy: payment-reference-smoke' \
+      --data "$tenant_body" \
+      "${killbill_base}/1.0/kb/tenants"
+  )"
+  if [ "$tenant_status" != "201" ]; then
+    cat /tmp/payment-reference-tenant.json >&2 || true
+    fail "tenant bootstrap expected HTTP 201, observed ${tenant_status}"
+  fi
+else
+  printf 'Kill Bill tenant bootstrap: reusing operator-provided credentials\n'
 fi
 
 wait_for_url "${gateway_base}/health"
 wait_for_url "${merchant_base}/health"
 
 # Settlement activation gate 5: Merchant authoritative close semantics.
-settlement_account="payment-sandbox-default"
+settlement_account="$(qualified_id payment-sandbox-default)"
 settlement_date="2026-11-18"
 settlement_currency="USD"
 settlement_statement_id="$(
@@ -323,7 +379,7 @@ settlement_stored_digest="$(
 [ "$settlement_stored_digest" = "$settlement_digest" ] ||
   fail "settlement conflict replaced the authoritative digest"
 
-held_account="payment-sandbox-held"
+held_account="$(qualified_id payment-sandbox-held)"
 held_date="2026-11-19"
 held_statement_id="$(
   settlement_statement_id "$held_account" "$held_date" "$settlement_currency"
@@ -403,30 +459,30 @@ curl --fail --silent --show-error \
 
 # Happy path A: AUTHORIZE -> partial CAPTURE -> full CAPTURE
 #               -> partial REFUND -> full REFUND.
-lifecycle_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}'
+lifecycle_authorize="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}')"
 post_gateway "/payments/authorize" "$lifecycle_authorize" 200 /tmp/pr-auth.json
 assert_view /tmp/pr-auth.json AUTHORIZED SUCCEEDED
 
 lifecycle_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth.json)"
 lifecycle_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-auth.json)"
 
-capture_600='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-600","amountMinor":600,"currency":"USD","idempotencyKey":"idem-capture-600"}'
-post_gateway "/payments/payment-lifecycle/capture" "$capture_600" 200 /tmp/pr-capture-600.json
+capture_600="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-600","amountMinor":600,"currency":"USD","idempotencyKey":"idem-capture-600"}')"
+post_gateway "/payments/$(qualified_id payment-lifecycle)/capture" "$capture_600" 200 /tmp/pr-capture-600.json
 assert_view /tmp/pr-capture-600.json PARTIALLY_CAPTURED SUCCEEDED
 
-capture_400='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-400","amountMinor":400,"currency":"USD","idempotencyKey":"idem-capture-400"}'
-post_gateway "/payments/payment-lifecycle/capture" "$capture_400" 200 /tmp/pr-capture-400.json
+capture_400="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-capture-400","amountMinor":400,"currency":"USD","idempotencyKey":"idem-capture-400"}')"
+post_gateway "/payments/$(qualified_id payment-lifecycle)/capture" "$capture_400" 200 /tmp/pr-capture-400.json
 assert_view /tmp/pr-capture-400.json PAID SUCCEEDED
 
-refund_250='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-250","amountMinor":250,"currency":"USD","idempotencyKey":"idem-refund-250"}'
-post_gateway "/payments/payment-lifecycle/refund" "$refund_250" 200 /tmp/pr-refund-250.json
+refund_250="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-250","amountMinor":250,"currency":"USD","idempotencyKey":"idem-refund-250"}')"
+post_gateway "/payments/$(qualified_id payment-lifecycle)/refund" "$refund_250" 200 /tmp/pr-refund-250.json
 assert_view /tmp/pr-refund-250.json PARTIALLY_REFUNDED SUCCEEDED
 
-refund_750='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-750","amountMinor":750,"currency":"USD","idempotencyKey":"idem-refund-750"}'
-post_gateway "/payments/payment-lifecycle/refund" "$refund_750" 200 /tmp/pr-refund-750.json
+refund_750="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-refund-750","amountMinor":750,"currency":"USD","idempotencyKey":"idem-refund-750"}')"
+post_gateway "/payments/$(qualified_id payment-lifecycle)/refund" "$refund_750" 200 /tmp/pr-refund-750.json
 assert_view /tmp/pr-refund-750.json REFUNDED SUCCEEDED
 
-get_gateway payment-lifecycle /tmp/pr-lifecycle-get.json
+get_gateway "$(qualified_id payment-lifecycle)" /tmp/pr-lifecycle-get.json
 assert_view /tmp/pr-lifecycle-get.json REFUNDED SUCCEEDED
 
 provider_payment "$lifecycle_provider_id" /tmp/pr-provider-lifecycle.json
@@ -454,10 +510,10 @@ jq -e \
   '.mapping.killbillTransactionId == $transaction_id' \
   /tmp/pr-auth-replay.json >/dev/null
 
-conflicting_replay='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1100,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}'
+conflicting_replay="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1100,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-001"}')"
 post_gateway "/payments/authorize" "$conflicting_replay" 409 /tmp/pr-auth-conflict.json
 
-operation_id_conflict='{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-new-key"}'
+operation_id_conflict="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-lifecycle","merchantPaymentId":"payment-lifecycle","operationId":"op-auth-001","amountMinor":1000,"currency":"USD","paymentMethodToken":"tok-lifecycle","idempotencyKey":"idem-auth-new-key"}')"
 post_gateway "/payments/authorize" "$operation_id_conflict" 409 /tmp/pr-operation-conflict.json
 
 killbill_payment "$lifecycle_kb_id" /tmp/pr-kb-lifecycle-after-replays.json
@@ -466,7 +522,7 @@ after_replay_count="$(jq -er '.transactions | length' /tmp/pr-kb-lifecycle-after
   fail "idempotency replay/conflict created a new Kill Bill transaction"
 
 # Happy path B: AUTH_CAPTURE -> PURCHASE semantics.
-purchase='{"merchantId":"merchant-smoke","merchantOrderId":"order-purchase","merchantPaymentId":"payment-purchase","operationId":"op-purchase-001","amountMinor":500,"currency":"USD","paymentMethodToken":"tok-purchase","idempotencyKey":"idem-purchase-001"}'
+purchase="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-purchase","merchantPaymentId":"payment-purchase","operationId":"op-purchase-001","amountMinor":500,"currency":"USD","paymentMethodToken":"tok-purchase","idempotencyKey":"idem-purchase-001"}')"
 post_gateway "/payments/auth-capture" "$purchase" 200 /tmp/pr-purchase.json
 assert_view /tmp/pr-purchase.json PAID SUCCEEDED
 
@@ -479,12 +535,12 @@ jq -e '
 ' /tmp/pr-provider-purchase.json >/dev/null
 
 # Happy path C: AUTHORIZE -> CANCEL / VOID.
-cancel_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-auth","amountMinor":700,"currency":"USD","paymentMethodToken":"tok-cancel","idempotencyKey":"idem-cancel-auth"}'
+cancel_authorize="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-auth","amountMinor":700,"currency":"USD","paymentMethodToken":"tok-cancel","idempotencyKey":"idem-cancel-auth"}')"
 post_gateway "/payments/authorize" "$cancel_authorize" 200 /tmp/pr-cancel-auth.json
 assert_view /tmp/pr-cancel-auth.json AUTHORIZED SUCCEEDED
 
-cancel_mutation='{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-void","amountMinor":700,"currency":"USD","idempotencyKey":"idem-cancel-void"}'
-post_gateway "/payments/payment-cancel/cancel" "$cancel_mutation" 200 /tmp/pr-cancel.json
+cancel_mutation="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-void","amountMinor":700,"currency":"USD","idempotencyKey":"idem-cancel-void"}')"
+post_gateway "/payments/$(qualified_id payment-cancel)/cancel" "$cancel_mutation" 200 /tmp/pr-cancel.json
 assert_view /tmp/pr-cancel.json CANCELLED SUCCEEDED
 
 cancel_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-cancel.json)"
@@ -539,7 +595,7 @@ curl --fail --silent --show-error \
   --data '{"method":"POST","path_suffix":"/authorize"}' \
   "${fault_proxy_base}/__fault/drop-next" >/dev/null
 
-ambiguous_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}'
+ambiguous_authorize="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}')"
 post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous.json
 assert_view /tmp/pr-ambiguous.json PAYMENT_UNKNOWN UNKNOWN
 curl --fail --silent --show-error \
@@ -586,7 +642,7 @@ jq -e '
   ) == 1
 ' /tmp/pr-fault-stats-after-replay.json >/dev/null
 
-get_gateway payment-ambiguous /tmp/pr-ambiguous-get.json
+get_gateway "$(qualified_id payment-ambiguous)" /tmp/pr-ambiguous-get.json
 assert_view /tmp/pr-ambiguous-get.json AUTHORIZED SUCCEEDED
 
 provider_payment "$ambiguous_provider_id" /tmp/pr-provider-ambiguous-after-replay.json
@@ -600,20 +656,23 @@ jq -e '
 # side effect. The one-shot synthetic response is consumed before the proxy
 # opens an upstream connection, so payment-sandbox must observe no create.
 # ---------------------------------------------------------------------------
-post_merchant "/merchants"   '{"merchantId":"merchant-provider-503","displayName":"Provider 503 merchant"}'   201 /tmp/pr-merchant-503-merchant.json
-post_merchant "/customers"   '{"customerId":"customer-provider-503","displayName":"Provider 503 customer"}'   201 /tmp/pr-merchant-503-customer.json
-post_merchant "/orders"   '{"merchantOrderId":"order-provider-503","merchantId":"merchant-provider-503","customerId":"customer-provider-503","amountMinor":503,"currency":"USD"}'   201 /tmp/pr-merchant-503-order.json
-post_merchant "/orders/order-provider-503/payments"   '{"merchantPaymentId":"payment-provider-503","amountMinor":503,"currency":"USD","paymentMethodToken":"tok-provider-503"}'   201 /tmp/pr-merchant-503-payment.json
+post_merchant "/merchants"   "$(namespace_request '{"merchantId":"merchant-provider-503","displayName":"Provider 503 merchant"}')"   201 /tmp/pr-merchant-503-merchant.json
+post_merchant "/customers"   "$(namespace_request '{"customerId":"customer-provider-503","displayName":"Provider 503 customer"}')"   201 /tmp/pr-merchant-503-customer.json
+post_merchant "/orders"   "$(namespace_request '{"merchantOrderId":"order-provider-503","merchantId":"merchant-provider-503","customerId":"customer-provider-503","amountMinor":503,"currency":"USD"}')"   201 /tmp/pr-merchant-503-order.json
+post_merchant "/orders/$(qualified_id order-provider-503)/payments"   "$(namespace_request '{"merchantPaymentId":"payment-provider-503","amountMinor":503,"currency":"USD","paymentMethodToken":"tok-provider-503"}')"   201 /tmp/pr-merchant-503-payment.json
 
 curl --fail --silent --show-error   --request POST   "${fault_proxy_base}/__fault/reset" >/dev/null
 curl --fail --silent --show-error   --request POST   --header 'Content-Type: application/json'   --data '{"method":"POST","path_suffix":"/payments","status":503,"error_code":"provider_unavailable","message":"synthetic provider unavailable before side effect"}'   "${fault_proxy_base}/__fault/respond-next" >/dev/null
 
-merchant_503_authorize='{"operationId":"op-provider-503","amountMinor":503,"idempotencyKey":"idem-provider-503"}'
-post_merchant   "/payments/payment-provider-503/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503.json
+merchant_503_authorize="$(namespace_request '{"operationId":"op-provider-503","amountMinor":503,"idempotencyKey":"idem-provider-503"}')"
+post_merchant   "/payments/$(qualified_id payment-provider-503)/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503.json
 
-jq -e '
-  .merchantPaymentId == "payment-provider-503"
-  and .operationId == "op-provider-503"
+jq -e \
+  --arg merchant_payment_id "$(qualified_id payment-provider-503)" \
+  --arg operation_id "$(qualified_id op-provider-503)" \
+  '
+  .merchantPaymentId == $merchant_payment_id
+  and .operationId == $operation_id
   and .paymentState == "PAYMENT_PENDING"
   and .operationState == "RETRY_PENDING"
   and ((.mapping.killbillPaymentId | type) == "string")
@@ -641,7 +700,7 @@ provider_503_status="$(provider_payment_status "$provider_503_id")"
 
 # Exact Merchant replay must retain the same retryable canonical operation and
 # still must not forward a provider create.
-post_merchant   "/payments/payment-provider-503/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503-replay.json
+post_merchant   "/payments/$(qualified_id payment-provider-503)/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503-replay.json
 jq -e   --arg kb_payment_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503.json)"   --arg kb_transaction_id "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503.json)"   '
     .paymentState == "PAYMENT_PENDING"
     and .operationState == "RETRY_PENDING"
@@ -660,7 +719,8 @@ jq -e '
 # proxy runtime. This writes compact evidence consumed by the retained suite
 # artifact below; it does not create a second evidence format.
 fault_matrix_path="/tmp/payment-reference-fault-matrix.json"
-bash ./fault-matrix-smoke.sh "$fault_proxy_base" "$fault_matrix_path"
+PAYMENT_REFERENCE_SMOKE_NAMESPACE="$smoke_namespace" \
+  bash ./fault-matrix-smoke.sh "$fault_proxy_base" "$fault_matrix_path"
 
 # Retain one machine-readable result artifact for the bounded online-path suite.
 # Every value below is sourced from assertions that have already passed above;
@@ -681,7 +741,7 @@ ambiguous_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous.json)"
 provider_503_kb_id="$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503.json)"
 provider_503_tx="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503.json)"
 
-jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$scenario_version"   --argjson seed "$scenario_seed"   --arg logical_business_date "$logical_business_date"   --arg lifecycle_kb_id "$lifecycle_kb_id"   --arg lifecycle_provider_id "$lifecycle_provider_id"   --arg lifecycle_auth_tx "$lifecycle_auth_tx"   --arg lifecycle_capture_600_tx "$lifecycle_capture_600_tx"   --arg lifecycle_capture_400_tx "$lifecycle_capture_400_tx"   --arg lifecycle_refund_250_tx "$lifecycle_refund_250_tx"   --arg lifecycle_refund_750_tx "$lifecycle_refund_750_tx"   --arg lifecycle_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth-replay.json)"   --arg lifecycle_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth-replay.json)"   --arg purchase_kb_id "$purchase_kb_id"   --arg purchase_provider_id "$purchase_provider_id"   --arg purchase_tx "$purchase_tx"   --arg cancel_kb_id "$cancel_kb_id"   --arg cancel_provider_id "$cancel_provider_id"   --arg cancel_auth_tx "$cancel_auth_tx"   --arg cancel_void_tx "$cancel_void_tx"   --arg ambiguous_kb_id "$ambiguous_kb_id"   --arg ambiguous_provider_id "$ambiguous_provider_id"   --arg ambiguous_tx "$ambiguous_transaction_id"   --arg ambiguous_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous-replay.json)"   --arg ambiguous_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous-replay.json)"   --arg provider_503_kb_id "$provider_503_kb_id"   --arg provider_503_provider_id "$provider_503_id"   --arg provider_503_tx "$provider_503_tx"   --arg provider_503_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503-replay.json)"   --arg provider_503_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503-replay.json)"   --slurpfile lifecycle_provider /tmp/pr-provider-lifecycle.json   --slurpfile purchase_provider /tmp/pr-provider-purchase.json   --slurpfile cancel_provider /tmp/pr-provider-cancel.json   --slurpfile ambiguous_provider /tmp/pr-provider-ambiguous-after-replay.json   --slurpfile fault_matrix "$fault_matrix_path"   '
+jq -n   --arg smoke_namespace "$smoke_namespace"   --arg source_revision "$source_revision"   --argjson scenario_version "$scenario_version"   --argjson seed "$scenario_seed"   --arg logical_business_date "$logical_business_date"   --arg lifecycle_kb_id "$lifecycle_kb_id"   --arg lifecycle_provider_id "$lifecycle_provider_id"   --arg lifecycle_auth_tx "$lifecycle_auth_tx"   --arg lifecycle_capture_600_tx "$lifecycle_capture_600_tx"   --arg lifecycle_capture_400_tx "$lifecycle_capture_400_tx"   --arg lifecycle_refund_250_tx "$lifecycle_refund_250_tx"   --arg lifecycle_refund_750_tx "$lifecycle_refund_750_tx"   --arg lifecycle_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-auth-replay.json)"   --arg lifecycle_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-auth-replay.json)"   --arg purchase_kb_id "$purchase_kb_id"   --arg purchase_provider_id "$purchase_provider_id"   --arg purchase_tx "$purchase_tx"   --arg cancel_kb_id "$cancel_kb_id"   --arg cancel_provider_id "$cancel_provider_id"   --arg cancel_auth_tx "$cancel_auth_tx"   --arg cancel_void_tx "$cancel_void_tx"   --arg ambiguous_kb_id "$ambiguous_kb_id"   --arg ambiguous_provider_id "$ambiguous_provider_id"   --arg ambiguous_tx "$ambiguous_transaction_id"   --arg ambiguous_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-ambiguous-replay.json)"   --arg ambiguous_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous-replay.json)"   --arg provider_503_kb_id "$provider_503_kb_id"   --arg provider_503_provider_id "$provider_503_id"   --arg provider_503_tx "$provider_503_tx"   --arg provider_503_replay_kb_id "$(jq -er '.mapping.killbillPaymentId' /tmp/pr-merchant-provider-503-replay.json)"   --arg provider_503_replay_tx "$(jq -er '.mapping.killbillTransactionId' /tmp/pr-merchant-provider-503-replay.json)"   --slurpfile lifecycle_provider /tmp/pr-provider-lifecycle.json   --slurpfile purchase_provider /tmp/pr-provider-purchase.json   --slurpfile cancel_provider /tmp/pr-provider-cancel.json   --slurpfile ambiguous_provider /tmp/pr-provider-ambiguous-after-replay.json   --slurpfile fault_matrix "$fault_matrix_path"   '
   def identity($case; $expected):
     {
       scenario_version: $scenario_version,
@@ -714,15 +774,15 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           "REFUNDED/SUCCEEDED with exact replay and conflicts creating no extra effect"
         ),
         system_ids: {
-          merchant_id: "merchant-smoke",
-          merchant_order_id: "order-lifecycle",
-          merchant_payment_id: "payment-lifecycle",
+          merchant_id: ("merchant-smoke" + $smoke_namespace),
+          merchant_order_id: ("order-lifecycle" + $smoke_namespace),
+          merchant_payment_id: ("payment-lifecycle" + $smoke_namespace),
           operation_ids: [
-            "op-auth-001",
-            "op-capture-600",
-            "op-capture-400",
-            "op-refund-250",
-            "op-refund-750"
+            ("op-auth-001" + $smoke_namespace),
+            ("op-capture-600" + $smoke_namespace),
+            ("op-capture-400" + $smoke_namespace),
+            ("op-refund-250" + $smoke_namespace),
+            ("op-refund-750" + $smoke_namespace)
           ],
           killbill_payment_id: $lifecycle_kb_id,
           killbill_transaction_ids: [
@@ -754,10 +814,10 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           "PAID/SUCCEEDED and provider captured"
         ),
         system_ids: {
-          merchant_id: "merchant-smoke",
-          merchant_order_id: "order-purchase",
-          merchant_payment_id: "payment-purchase",
-          operation_ids: ["op-purchase-001"],
+          merchant_id: ("merchant-smoke" + $smoke_namespace),
+          merchant_order_id: ("order-purchase" + $smoke_namespace),
+          merchant_payment_id: ("payment-purchase" + $smoke_namespace),
+          operation_ids: [("op-purchase-001" + $smoke_namespace)],
           killbill_payment_id: $purchase_kb_id,
           killbill_transaction_ids: [$purchase_tx],
           provider_payment_id: $purchase_provider_id
@@ -782,10 +842,10 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           "CANCELLED/SUCCEEDED and provider cancelled"
         ),
         system_ids: {
-          merchant_id: "merchant-smoke",
-          merchant_order_id: "order-cancel",
-          merchant_payment_id: "payment-cancel",
-          operation_ids: ["op-cancel-auth", "op-cancel-void"],
+          merchant_id: ("merchant-smoke" + $smoke_namespace),
+          merchant_order_id: ("order-cancel" + $smoke_namespace),
+          merchant_payment_id: ("payment-cancel" + $smoke_namespace),
+          operation_ids: [("op-cancel-auth" + $smoke_namespace), ("op-cancel-void" + $smoke_namespace)],
           killbill_payment_id: $cancel_kb_id,
           killbill_transaction_ids: [$cancel_auth_tx, $cancel_void_tx],
           provider_payment_id: $cancel_provider_id
@@ -810,10 +870,10 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           "AUTHORIZED/SUCCEEDED after provider-read convergence with one provider authorize"
         ),
         system_ids: {
-          merchant_id: "merchant-smoke",
-          merchant_order_id: "order-ambiguous",
-          merchant_payment_id: "payment-ambiguous",
-          operation_ids: ["op-ambiguous-auth"],
+          merchant_id: ("merchant-smoke" + $smoke_namespace),
+          merchant_order_id: ("order-ambiguous" + $smoke_namespace),
+          merchant_payment_id: ("payment-ambiguous" + $smoke_namespace),
+          operation_ids: [("op-ambiguous-auth" + $smoke_namespace)],
           killbill_payment_id: $ambiguous_kb_id,
           killbill_transaction_ids: [$ambiguous_tx],
           provider_payment_id: $ambiguous_provider_id
@@ -838,10 +898,10 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           "PAYMENT_PENDING/RETRY_PENDING with provider payment absent"
         ),
         system_ids: {
-          merchant_id: "merchant-provider-503",
-          merchant_order_id: "order-provider-503",
-          merchant_payment_id: "payment-provider-503",
-          operation_ids: ["op-provider-503"],
+          merchant_id: ("merchant-provider-503" + $smoke_namespace),
+          merchant_order_id: ("order-provider-503" + $smoke_namespace),
+          merchant_payment_id: ("payment-provider-503" + $smoke_namespace),
+          operation_ids: [("op-provider-503" + $smoke_namespace)],
           killbill_payment_id: $provider_503_kb_id,
           killbill_transaction_ids: [$provider_503_tx],
           provider_payment_id: $provider_503_provider_id
