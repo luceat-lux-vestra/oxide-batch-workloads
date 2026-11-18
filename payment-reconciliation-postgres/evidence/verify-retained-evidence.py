@@ -2,7 +2,7 @@
 import argparse, copy, hashlib, json
 from pathlib import Path
 
-CLASSIFICATION = "supplemental exact-artifact v0.6.0 business/reference-system evidence"
+CLASSIFICATION = "supplemental exact-artifact v0.7.0 business/reference-system evidence"
 
 def add(v, ok, msg):
     if not ok:
