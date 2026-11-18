@@ -170,6 +170,45 @@ resident, mapped, retained, and relevant arena/bin/tcache state. Do not invent a
 single normalized fragmentation metric across allocators with incompatible
 semantics.
 
+Lane E native telemetry is compiled separately from Lane A allocator builds.
+The ordinary `allocator-*` features remain the benchmark identities; telemetry
+uses registry-owned `allocator-*-telemetry` features so enabling statistics
+cannot silently alter a benchmark-lane binary.
+
+The first native snapshot plumbing supports:
+
+- jemalloc: `mallctl` after an explicit epoch refresh, retaining the native
+  `stats.allocated`, `stats.active`, `stats.metadata`,
+  `stats.resident`, `stats.mapped`, and `stats.retained` counters;
+- mimalloc 0.1.52: the wrapper's `MiMalloc::stats_json()` /
+  `mi_stats_get_json` payload, retained as mimalloc's native JSON schema
+  without cross-allocator field normalization;
+- snmalloc 0.7.6 with its dedicated `stats` feature:
+  `SnMalloc::memory_stats()` current/peak OS-level reservation values.
+
+Setting `OXIDE_BATCH_ALLOCATOR_TELEMETRY_DIR=<directory>` on a successful
+`postgres-postgres run` writes `snapshot.json` only after the workload launch
+returns. Without the environment variable, no native snapshot is requested.
+A snapshot failure fails the profiling command but cannot rewrite the already
+committed workload transaction.
+
+The snmalloc values are range-level slab/chunk reservation statistics, not live
+application allocation bytes. Mimalloc's native JSON may include allocator
+semantics that do not map directly to jemalloc or snmalloc. Jemalloc's counters
+are refreshed via its native epoch contract and still include allocator/cache
+semantics. These payloads therefore remain allocator-specific evidence.
+
+`tcmalloc-better 0.1.19` is deliberately not marked wired: its exposed
+`extension` surface in the pinned wrapper provides background-action lifecycle
+methods but no numeric allocator-statistics API. Lane E must not relabel that
+lifecycle hook as telemetry. The system allocator likewise has no allocator-
+native snapshot contract in this harness.
+
+This plumbing does not close Lane E. A later producer/workflow unit must run
+each registry-wired telemetry build on the same correctness-complete workload,
+retain exact subject/environment provenance plus the native snapshot, and
+independently validate the artifact.
+
 ### OS/process lane
 
 Purpose: process-level resource observation.

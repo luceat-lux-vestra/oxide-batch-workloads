@@ -171,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
             failure_mode,
             pause_for_kill,
         } => {
-            job::run(
+            let result = job::run(
                 &database_url,
                 &import_name,
                 chunk_size,
@@ -182,7 +182,11 @@ async fn main() -> anyhow::Result<()> {
                 failure_mode,
                 pause_for_kill,
             )
-            .await
+            .await;
+            if result.is_ok() {
+                postgres_postgres::allocator_telemetry::capture_from_env()?;
+            }
+            result
         }
         Command::Recover {
             database_url,
