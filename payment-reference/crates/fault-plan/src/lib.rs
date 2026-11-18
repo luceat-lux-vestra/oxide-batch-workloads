@@ -481,7 +481,10 @@ impl fmt::Display for FaultPlanError {
                 "request_match requires exactly one path_suffix, or path_prefix for STATUS_INQUIRY"
             ),
             Self::InvalidRequestPath(path) => {
-                write!(f, "request_match path selector must begin with '/': {path:?}")
+                write!(
+                    f,
+                    "request_match path selector must begin with '/': {path:?}"
+                )
             }
             Self::IncompatibleAction {
                 step_id,
