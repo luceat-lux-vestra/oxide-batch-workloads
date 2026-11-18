@@ -3,13 +3,18 @@
 Issue owner: #148.
 
 This top-level Cargo project is the first real OxideBatch business workload built
-against the payment-reference system. It is classified as milestone-null
-supplemental validation of the exact published OxideBatch 0.6.0 artifact.
+against the payment-reference system. The current executable compatibility target
+is the exact published OxideBatch 0.7.0 artifact.
+
+The committed `validation/*` artifacts remain historical supplemental evidence
+for exact published OxideBatch 0.6.0. This qualification does not relabel or
+rewrite that retained evidence; a future 0.7.0 evidence production run must create
+a new canonical evidence set explicitly.
 
 ## Validation subject
 
 ```text
-oxide-batch = { version = "=0.6.0", features = ["postgres"] }
+oxide-batch = { version = "=0.7.0", features = ["postgres"] }
 rust-version = "1.95"
 ```
 

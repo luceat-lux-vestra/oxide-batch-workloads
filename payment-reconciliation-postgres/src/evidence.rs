@@ -93,7 +93,7 @@ pub async fn verify(database_url: &str, snapshot_id: &str) -> Result<ProducerEvi
     Ok(ProducerEvidence {
         schema_version: 1,
         campaign_issue: 148,
-        classification: "supplemental exact-artifact v0.6.0 business/reference-system evidence",
+        classification: "supplemental exact-artifact v0.7.0 business/reference-system evidence",
         snapshot: RetainedSnapshot {
             metadata: bundle.metadata,
             internal: bundle.internal,

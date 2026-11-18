@@ -838,9 +838,9 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "oxide-batch"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b"
+checksum = "cb884d99629b92fc6740a187a2ebb65350f8924a57f0c8103bad26192f17652e"
 dependencies = [
  "csv",
  "csv-core",
@@ -856,9 +856,9 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-core"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b63311721adf30b20ef5293a2ee9fe1759211464a833295e6d490fda8d0c631"
+checksum = "5b5a1cbc6eba9c2f304c6a6090f329b5d8bb8c77ce0d032d6c44f78ffcdb6c18"
 dependencies = [
  "serde_json",
  "sha2 0.11.1",
@@ -866,9 +866,9 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-plan"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cbeeac623fdc091dd12ee81d1d2a5bb6b1edba3522f5cade85960179ebf1c49"
+checksum = "b43f6f77afaff930ccb808f33dcfd0413da81a91980f6a914b2338ddceb8853d"
 dependencies = [
  "oxide-batch-core",
  "serde_json",
@@ -876,9 +876,9 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-repository"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb2e0f79a4387331f7a78a4a3d9ebfcd0e7eb02856ea3df4e7a11ae9d62dbe79"
+checksum = "82be47a498e8b04e9eb22571114628e9ea2abece1b083a54c860a9801862bf7f"
 dependencies = [
  "oxide-batch-core",
  "sha2 0.11.1",
