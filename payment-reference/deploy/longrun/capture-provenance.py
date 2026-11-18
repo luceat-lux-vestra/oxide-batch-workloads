@@ -94,19 +94,21 @@ def load_contract(path: Path) -> dict[str, Any]:
         "schema_version",
         "campaign_contract",
         "campaign_issue",
+        "host_profile",
         "allowed_guest_architectures",
         "minimum_vcpu",
         "minimum_memory_bytes",
         "minimum_disk_total_bytes",
         "minimum_disk_free_bytes",
+        "campaign_admission",
         "disk_guard",
         "qualification",
         "required_provenance_files",
     }
     if set(contract) != required:
         raise QualificationError("host qualification contract keys do not match v1")
-    if contract["schema_version"] != 1:
-        raise QualificationError("host qualification contract schema_version must be 1")
+    if contract["schema_version"] != 2:
+        raise QualificationError("host qualification contract schema_version must be 2")
     return contract
 
 
@@ -426,6 +428,7 @@ def capture(
         "schema": HOST_SCHEMA,
         "schema_version": SCHEMA_VERSION,
         "repository_sha": repository_sha,
+        "host_profile": contract["host_profile"],
         "architecture": architecture,
         "kernel_release": platform.release(),
         "os_release": parse_os_release(),
