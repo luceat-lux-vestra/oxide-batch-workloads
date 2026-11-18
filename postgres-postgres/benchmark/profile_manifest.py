@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate campaign #266 profile-artifact manifests."""
+"""Validate historical #266 and current #323 profile-artifact manifests."""
 
 from __future__ import annotations
 
@@ -16,8 +16,12 @@ SCHEMA_V1 = "oxide-batch-profile-manifest/v1"
 SCHEMA_V2 = "oxide-batch-profile-manifest/v2"
 SCHEMA = SCHEMA_V2
 SUPPORTED_SCHEMAS = {SCHEMA_V1, SCHEMA_V2}
-CAMPAIGN = 266
+CAMPAIGN = 323
 OXIDE_BATCH_VERSION = "0.7.0"
+CAMPAIGN_OXIDE_BATCH_VERSIONS = {
+    266: "0.6.0",
+    CAMPAIGN: OXIDE_BATCH_VERSION,
+}
 CRATES_IO_SOURCES = {
     "registry+https://github.com/rust-lang/crates.io-index",
     "sparse+https://index.crates.io/",
@@ -72,7 +76,11 @@ def require_sha(value: Any, field: str, pattern: re.Pattern[str]) -> str:
     return text
 
 
-def validate_subject(subject: dict[str, Any], schema: str) -> None:
+def validate_subject(
+    subject: dict[str, Any],
+    schema: str,
+    expected_oxide_batch_version: str,
+) -> None:
     require_sha(subject.get("workload_sha"), "subject.workload_sha", SHA40)
     require_sha(subject.get("cargo_lock_sha256"), "subject.cargo_lock_sha256", SHA64)
     require_string(subject.get("rustc"), "subject.rustc")
@@ -85,8 +93,11 @@ def validate_subject(subject: dict[str, Any], schema: str) -> None:
     oxide = require_dict(subject.get("oxide_batch"), "subject.oxide_batch")
     if oxide.get("name") != "oxide-batch":
         fail("subject.oxide_batch.name must be 'oxide-batch'")
-    if oxide.get("version") != OXIDE_BATCH_VERSION:
-        fail(f"subject.oxide_batch.version must be '{OXIDE_BATCH_VERSION}'")
+    if oxide.get("version") != expected_oxide_batch_version:
+        fail(
+            "subject.oxide_batch.version must match campaign "
+            f"({expected_oxide_batch_version})"
+        )
     source = require_string(oxide.get("source"), "subject.oxide_batch.source")
     if source not in CRATES_IO_SOURCES:
         fail("subject.oxide_batch.source must identify canonical crates.io provenance")
@@ -262,8 +273,13 @@ def validate_manifest(document: Any) -> None:
     schema = manifest.get("schema")
     if schema not in SUPPORTED_SCHEMAS:
         fail(f"schema must be one of {sorted(SUPPORTED_SCHEMAS)}")
-    if manifest.get("campaign") != CAMPAIGN:
-        fail(f"campaign must be {CAMPAIGN}")
+    campaign = manifest.get("campaign")
+    if campaign not in CAMPAIGN_OXIDE_BATCH_VERSIONS:
+        fail(
+            "campaign must be one of "
+            f"{sorted(CAMPAIGN_OXIDE_BATCH_VERSIONS)}"
+        )
+    expected_oxide_batch_version = CAMPAIGN_OXIDE_BATCH_VERSIONS[campaign]
 
     lane = manifest.get("lane")
     if lane not in LANES:
@@ -274,7 +290,7 @@ def validate_manifest(document: Any) -> None:
     require_positive_int(run.get("repetition"), "run.repetition")
 
     subject = require_dict(manifest.get("subject"), "subject")
-    validate_subject(subject, schema)
+    validate_subject(subject, schema, expected_oxide_batch_version)
     validate_allocator(
         require_dict(manifest.get("allocator"), "allocator"),
         require_string(subject.get("target"), "subject.target"),

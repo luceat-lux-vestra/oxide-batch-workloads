@@ -122,6 +122,35 @@ class ProfileManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(profile_manifest.ManifestError, "schema must be one of"):
             profile_manifest.validate_manifest(document)
 
+    def test_current_campaign_is_323_on_exact_0_7(self) -> None:
+        document = valid_manifest()
+        self.assertEqual(document["campaign"], 323)
+        self.assertEqual(document["subject"]["oxide_batch"]["version"], "0.7.0")
+        profile_manifest.validate_manifest(document)
+
+    def test_historical_266_manifest_remains_revalidatable_on_exact_0_6(self) -> None:
+        document = valid_manifest()
+        document["campaign"] = 266
+        document["subject"]["oxide_batch"]["version"] = "0.6.0"
+        profile_manifest.validate_manifest(document)
+
+    def test_rejects_cross_campaign_version_relabel(self) -> None:
+        current_as_old = valid_manifest()
+        current_as_old["campaign"] = 266
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError,
+            "version must match campaign",
+        ):
+            profile_manifest.validate_manifest(current_as_old)
+
+        old_as_current = valid_manifest()
+        old_as_current["subject"]["oxide_batch"]["version"] = "0.6.0"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError,
+            "version must match campaign",
+        ):
+            profile_manifest.validate_manifest(old_as_current)
+
     def test_valid_benchmark_system_manifest(self) -> None:
         profile_manifest.validate_manifest(valid_manifest())
 
@@ -226,7 +255,10 @@ class ProfileManifestTests(unittest.TestCase):
     def test_rejects_non_published_oxide_batch_subject(self) -> None:
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
-        with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.7.0'"):
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError,
+            r"version must match campaign \(0\.7\.0\)",
+        ):
             profile_manifest.validate_manifest(document)
 
     def test_rejects_allocator_on_unqualified_target(self) -> None:
