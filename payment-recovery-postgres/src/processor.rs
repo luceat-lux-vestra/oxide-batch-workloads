@@ -127,10 +127,7 @@ impl RecoveryProcessor {
                 &candidate.candidate_id,
             )
             .await;
-        let replay = self
-            .merchant
-            .execute(&candidate, &self.crash)
-            .await?;
+        let replay = self.merchant.execute(&candidate, &self.crash).await?;
 
         let (attempt_state, merchant_http_status, outcome_kind, canonical, provider, decision) =
             match replay {
@@ -347,9 +344,7 @@ impl ItemProcessor<RecoverySourceRow, RecoveryWrite> for RecoveryProcessor {
         self.process_one(item)
             .await
             .map(ProcessOutcome::Item)
-            .map_err(|_| {
-                ProcessorError::with_category(FailureCategory::TransientInfrastructure)
-            })
+            .map_err(|_| ProcessorError::with_category(FailureCategory::TransientInfrastructure))
     }
 }
 
