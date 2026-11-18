@@ -60,8 +60,10 @@ Merchant, Gateway and Kill Bill are published only on host loopback for the
 development and CI harness. Merchant/Gateway/Kill Bill communicate over the
 internal Compose network.
 
-For the #148 reconciliation workload only, two additional loopback-only
-diagnostic/read paths are exposed without changing the online-payment topology:
+For business-workload verification, two additional loopback-only
+diagnostic/read paths are exposed without changing the online-payment topology.
+Reconciliation uses the Merchant read path and provider truth read; recovery
+also uses the direct provider truth surface:
 
 - `MERCHANT_DB_PORT` (default `15435`) -> `merchant-db:5432`, used to freeze
   the Merchant-owned internal representation under a read-only transaction;
@@ -109,10 +111,10 @@ repository-owned plugin -> payment-sandbox lifecycle for AUTHORIZE, partial/fina
 CAPTURE, partial/final REFUND, AUTH_CAPTURE/PURCHASE, CANCEL/VOID and
 side-effect-free GET.
 
-The current #256 candidate additionally places the Reference Merchant service
-and its PostgreSQL truth in the Compose path. Its bounded integrated negative
-scenario prepares Merchant state, calls Merchant AUTHORIZE, and traverses
-Merchant -> Gateway -> Kill Bill -> plugin -> fault proxy.
+The merged v1 runtime also places the Reference Merchant service and its
+PostgreSQL truth in the Compose path. Its bounded integrated negative scenario
+prepares Merchant state, calls Merchant AUTHORIZE, and traverses Merchant ->
+Gateway -> Kill Bill -> plugin -> fault proxy.
 
 It also proves negative idempotency behavior by checking that exact replay,
 conflicting idempotency-key reuse and operation-id conflict do not increase the
@@ -125,7 +127,7 @@ response loss.
 
 For the bounded 503-before-side-effect scenario, the same proxy can instead
 consume a one-shot synthetic HTTP response **before opening any upstream
-connection**. The candidate smoke arms HTTP 503 on the provider's initial
+connection**. The smoke arms HTTP 503 on the provider's initial
 `POST /payments`, requires the Merchant result to remain
 `PAYMENT_PENDING / RETRY_PENDING`, requires the proxy upstream-forward count
 for that provider create to remain zero, and requires direct provider lookup to
@@ -154,6 +156,10 @@ mutation.
 The result also records `source_revision` from the executing environment
 (`GITHUB_SHA` in GitHub Actions, otherwise `local`). It is evidence for the
 exact executed runtime, not a replacement for the smoke assertions themselves.
+
+The broader deterministic failure/async-outcome matrix merged via PR #264 and is
+exercised by `fault-matrix-smoke.sh`; `smoke.sh` invokes that matrix and folds
+its compact result into the retained runtime evidence.
 
 Hyperswitch remains intentionally deferred. Reintroducing it later requires a
 specific interoperability claim and executable proof that the additional

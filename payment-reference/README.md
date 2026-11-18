@@ -1,12 +1,12 @@
 # Payment reference system
 
-Issue owner: `#256` under coordination Epic `#253`.
+Coordination owner: `#253`.
 
-This directory hosts a realistic payment-system reference environment used to
-create business state that later OxideBatch workloads can reconcile. It is not
-itself an OxideBatch validation workload yet and therefore must not be
-registered under `workloads` until an exact published OxideBatch consumer is
-introduced.
+The online-path foundation (`#256`) and deterministic failure/async engine
+(`#263`) are complete. This directory is the realistic payment-system
+reference environment consumed by top-level OxideBatch business workloads; it
+remains reference-system substrate and is intentionally not registered as a
+workload itself.
 
 ## v1 topology
 
@@ -27,17 +27,24 @@ interoperability lane and is not a v1 runtime dependency.
 
 ## Current implementation boundary
 
-Gateway -> Kill Bill -> repository-owned payment plugin -> payment-sandbox is
-implemented and authoritatively validated.
+The merged v1 runtime is a real multi-process payment path:
 
-The validated PR head
-`31ecd4573c50e4fc0d6ed153fa0472a64dbd8093` passed GitHub Actions CI run
-`43364373618` (#572), including Reserved Cargo Projects, the full
-payment-reference runtime smoke, workload aggregates, and Merge Gate. It was
-squash-merged as
-`bb8fa6b0b8a110a033330a2a13ede75ecc7d5039`.
+```text
+Deterministic Customer Scenario
+  -> Reference Merchant + PostgreSQL
+  -> Thin Gateway / UPP + PostgreSQL
+  -> Kill Bill 0.24.22 + PostgreSQL
+  -> repository-owned PaymentPluginApi
+  -> deterministic fault proxy
+  -> payment-sandbox v1.5.4 durable provider truth
+```
 
-The runtime smoke proves:
+The canonical Merchant online path completed via PR #261
+(`main@9884a20e049edf3f64a91146f80443c3ee944f43`). The deterministic external
+failure/async-outcome engine completed via PR #264
+(`main@b095c2ed495b7e7f8e91238fa5b8e8ca3330e940`).
+
+The runtime proves:
 
 - AUTHORIZE;
 - partial and final CAPTURE;
@@ -45,46 +52,38 @@ The runtime smoke proves:
 - AUTH_CAPTURE / Kill Bill PURCHASE;
 - AUTHORIZE -> CANCEL / Kill Bill VOID;
 - side-effect-free canonical GET;
-- exact replay without a second Kill Bill transaction;
+- exact replay without a second financial side effect;
 - conflicting idempotency and operation identity rejection;
-- provider commit followed by response loss without blind duplicate mutation.
+- provider commit followed by response loss without blind duplicate mutation;
+- deterministic pre-side-effect failure, stale/not-found visibility, async
+  outcome and webhook scheduling through the qualified fault engine.
 
-The implementation boundary is intentionally narrower than the complete #256
-owner:
+Ownership remains separated:
 
-- Reference Merchant is a real HTTP/PostgreSQL process and owns
-  customer/order/payment business truth. On the current #256 candidate it also
-  persists canonical operation identity before calling the Gateway and writes
-  canonical outcomes back into Merchant state.
-- Gateway is a real HTTP/PostgreSQL process and owns canonical request
-  validation, durable idempotency, deterministic Kill Bill identities,
-  payment-scoped serialization, inquiry-before-retry, and canonical state
-  recovery.
-- `adapters/killbill-payment-sandbox` owns deterministic Kill Bill/provider
-  identity translation, mutation-scoped provider idempotency identities,
-  payment-sandbox HTTP calls, provider-status mapping, ambiguous transport
-  classification, the actual Kill Bill `PaymentPluginApi`, OSGi registration,
-  and its transaction journal.
-- Ambiguous provider mutation transport failures become Kill Bill
-  `PaymentPluginStatus.UNDEFINED`, not a false business failure.
-- Successful provider cancellation is reported as a successfully processed Kill
-  Bill VOID; `PaymentPluginStatus.CANCELED` is not used to represent a
-  successful provider-side cancellation.
-- Kill Bill payment/transaction UUIDs, provider identities, and canonical
-  Merchant/Gateway identities remain separate.
+- Reference Merchant owns customer/order/payment/business truth and persists
+  canonical operation identity before calling the Gateway.
+- Gateway owns provider-neutral validation, durable idempotency, deterministic
+  Kill Bill identities, payment-scoped serialization and inquiry-before-retry.
+- Kill Bill owns Billing payment-transaction truth.
+- `adapters/killbill-payment-sandbox` owns Kill Bill/provider translation,
+  mutation-scoped provider idempotency, provider-status mapping and the actual
+  Kill Bill `PaymentPluginApi`.
+- payment-sandbox owns independent provider/PG truth.
+- Kill Bill, provider and canonical Merchant/Gateway identities remain distinct.
 
-The Reference Merchant -> Gateway boundary is now implemented on the current
-#256 candidate branch. Merchant payment operations are persisted before the
-outbound call, canonical Gateway outcomes are written back into Merchant payment
-and operation state, and Gateway/Kill Bill/provider identities are retained in
-Merchant mappings/events.
+The reference system is already consumed by two real OxideBatch business
+workloads:
 
-This candidate has **not yet received authoritative PR/CI validation**, so the
-last merged and validated runtime remains #260. The candidate runtime harness
-contains the deterministic provider-503-before-side-effect scenario and now
-materializes one machine-readable v1 scenario-result JSON after all bounded
-runtime assertions pass. Broader deterministic failure/async-outcome coverage
-remains deferred until the later owner.
+- `payment-reconciliation-postgres` — #148 / PR #270, retained supplemental
+  OxideBatch 0.6.0 reconciliation/publication evidence;
+- `payment-recovery-postgres` — #271 / PR #306, exact OxideBatch 0.7.0
+  stale/unknown recovery and duplicate-side-effect safety.
+
+At `main@2f1c57e0bf79f2dd78a9bd4ce5efb8f0bc211a24`, both workloads and the
+reference runtime are merged. The next program boundary is the periodized
+provider-settlement-statement / Merchant-settlement-close substrate described in
+#253, followed by a business-shaped long-running campaign after release and
+target-host qualification.
 
 Runtime configuration:
 
@@ -133,16 +132,37 @@ or rotate tenants.
   implementation.
 - `scenarios/v1/` — deterministic scenario identity contract plus the
   machine-readable v1 result schema.
-- `deploy/` — pinned third-party inputs and the bounded Gateway -> Kill Bill ->
-  payment-sandbox runtime qualification harness.
+- `deploy/` — pinned third-party inputs plus the bounded Merchant -> Gateway ->
+  Kill Bill -> payment-sandbox runtime and deterministic fault qualification
+  harness.
 - `adapters/killbill-payment-sandbox/` — Java 11 Kill Bill OSGi payment plugin,
   transaction journal DAO, payment-sandbox translation core, and focused
   HTTP/identity/idempotency/binding tests.
 
-## Deferred from the current #256 checkpoint
+## Current program boundary
 
-- authoritative PR/CI/runtime validation of the Merchant -> Gateway,
-  provider-503-before-side-effect, and retained result-artifact candidates;
-- broader deterministic fault and async/webhook matrix;
-- Hyperswitch interoperability lane;
-- OxideBatch business workloads and release-evidence campaigns.
+The next bounded reference-system addition is the settlement-statement substrate
+owned by #253: deterministic provider roster, immutable provider settlement
+statement, and an idempotent Merchant settlement-close surface.
+
+The first business-shaped long-running campaign follows after:
+
+- the settlement boundary is executable and independently verifiable;
+- all OxideBatch workloads contributing to the campaign claim are aligned to one
+  exact published OxideBatch release (the current reconciliation workload is
+  still 0.6.0 while recovery is 0.7.0);
+- the target host is qualified for the full multi-module topology. The current
+  runtime is container-oriented; using the Galaxy S10 requires a separately
+  proven native/Termux deployment, otherwise a container-capable successor host
+  is required.
+
+The long-running controller should reuse the durable campaign/evidence model
+already proven by #203 where applicable instead of inventing a second
+incompatible endurance format.
+
+Later enrichments, not first-long-run blockers:
+
+- dispute/chargeback and payout flows;
+- FX and richer settlement correction/reversal;
+- Hyperswitch interoperability;
+- Vault activation.
