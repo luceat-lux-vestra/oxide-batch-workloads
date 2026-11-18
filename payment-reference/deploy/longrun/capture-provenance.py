@@ -106,7 +106,7 @@ def load_contract(path: Path) -> dict[str, Any]:
         "required_provenance_files",
     }
     if set(contract) != required:
-        raise QualificationError("host qualification contract keys do not match v1")
+        raise QualificationError("host qualification contract keys do not match v2")
     if contract["schema_version"] != 2:
         raise QualificationError("host qualification contract schema_version must be 2")
     return contract
