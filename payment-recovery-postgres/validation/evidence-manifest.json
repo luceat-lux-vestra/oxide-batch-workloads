@@ -34,17 +34,17 @@
         "name": "github-actions-run",
         "source": "producer workflow metadata",
         "trust": "recorded-metadata",
-        "value": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43701765632"
+        "value": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/44263908598"
       }
     ]
   },
   "external_artifacts": [],
   "producer": {
-    "base_revision": "571ad243f689d49707a0253dc234598738592ba6",
+    "base_revision": "38227b16a9d5737a30d0f8275a4b043597bb6436",
     "revision_role": "producer-checkout",
     "run": {
       "binding": "recorded-metadata",
-      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43701765632",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/44263908598",
       "kind": "github-actions-branch-evidence-producer"
     }
   },
@@ -52,14 +52,14 @@
     {
       "artifact": {
         "path": "validation/async-failure-convergence.json",
-        "sha256": "e0265e901ed78a5d9c25b8d7285be4e064aecbb4ad5f8970d2409c69008b7c5b",
+        "sha256": "6e18cadb63f66d54a8bd12097ef090efcff2a3c7e70dd305f5fcb6531f700a24",
         "size_bytes": 5999
       },
       "failure_point": null,
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "987c92309aa39f0f8296924913d8be293518fefaff9d70287858682bd9857298"
+          "sha256": "217a869ad0f68e7fa8ca8cbabb7989e8f5f0dcb8b949786c1ca9278a92b1ef82"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -78,7 +78,7 @@
     {
       "artifact": {
         "path": "validation/crash-after-external-convergence.json",
-        "sha256": "cfb6af10769c8933609dbf0eb926c0a1a07932f86166eb98c3834f6a847287e1",
+        "sha256": "aeefcd12d531cfe9aebac11012f4444288eb1f453d9ec7d70e51f8fc458cd0c0",
         "size_bytes": 4512
       },
       "failure_point": {
@@ -88,7 +88,7 @@
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "93944ef506a48b66b690cc27ab5a1cca79c5995e0bc2dc3017b7f76dce3ba6f7"
+          "sha256": "500e5d57f5e1d53cabdf6a880f4085f0a7d0c5151bd20251d5b4d1d59a6f8326"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -107,7 +107,7 @@
     {
       "artifact": {
         "path": "validation/crash-after-local-write.json",
-        "sha256": "9c0d8c06c71f7b76c34456901dbe51c9dd7c289f535e0f1ec5a63f4f5cd9ee39",
+        "sha256": "8ac6849a617e3aefbdb1673ba0cce0e19c78a9b71b7b4f1da9b4bcf7de3ecec0",
         "size_bytes": 4499
       },
       "failure_point": {
@@ -117,7 +117,7 @@
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "dbbaea28eb76753082ad3850f71ff0bc94348099e3c8c91ce7f6e6d9563aa643"
+          "sha256": "6c0c578e69ebe074968fcd3c641131569397e9250b87361e7d80c2f71b443d54"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -136,7 +136,7 @@
     {
       "artifact": {
         "path": "validation/crash-before-replay.json",
-        "sha256": "4642d03f8b2cb0c617b7463ccc6075a65b875f15aa826dd1cd6e928c8915b931",
+        "sha256": "ab8c688766f4f3dcc331621b95850056042ed9532a871b63f238a3f623f2c826",
         "size_bytes": 4487
       },
       "failure_point": {
@@ -146,7 +146,7 @@
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "c9325ee368cf708e072a50471926b2fa98fe9eeb3e18c9af5bfb70f3e17ba46c"
+          "sha256": "5470228d598879552128ad9765e91f8fdf9b829ad8dca5ccaa8d4268325d8fa1"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -165,7 +165,7 @@
     {
       "artifact": {
         "path": "validation/crash-request-outcome-unknown.json",
-        "sha256": "b17b8b14b5f1b8229753732c85489ab6a80485ac9edc19507363b02deb109232",
+        "sha256": "a9e637945fee3968356e87944d3ad9941c5cab1a1aaa768b2b005d9b4212d311",
         "size_bytes": 4491
       },
       "failure_point": {
@@ -175,7 +175,7 @@
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "a05d8861381cc32fc22a31fce07e24964923026711365753f26190ba0d338f32"
+          "sha256": "d1adb5d0cf51dc0ea54408ee771e94e18089b8974a1bc61ae0bb8b5412482ca8"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -194,14 +194,14 @@
     {
       "artifact": {
         "path": "validation/identity-conflict-hold.json",
-        "sha256": "53d1e280952e445989e95aea3b3195f82f9a6000c37d4b3cf610b5301f335122",
-        "size_bytes": 4346
+        "sha256": "15bfe1ed8d6c09ad47715543ac5684df5412e95971581601e5900922ce0c19c7",
+        "size_bytes": 4345
       },
       "failure_point": null,
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "5f60ada352e1cd965de27dd8e139a8c02bc136f4fde137762e6179ab99f6defd"
+          "sha256": "9a2f38e389422798d5529c48c7cd05d24f19c19dfbca9e0fb2fef8a657dc3d27"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -220,14 +220,14 @@
     {
       "artifact": {
         "path": "validation/not-found-visibility-convergence.json",
-        "sha256": "b5d6eea0d41c55ea3fb777837dac9e0d5cb9e6eaff8a173bd709033d71ef8a10",
+        "sha256": "186f24f43e041d168fa520028160414ab1ecc682f626cc2bff77bfe56c81d7f4",
         "size_bytes": 5898
       },
       "failure_point": null,
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "6201a9455a2fd6d2832bfec93380264c3b6ba5d0354bd28db8a25a90b899f480"
+          "sha256": "b168c15de3ef76fc0fb09f61331b6533f3b11415441e2bc633a14d994f6938f7"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -246,14 +246,14 @@
     {
       "artifact": {
         "path": "validation/pre-side-effect-transient.json",
-        "sha256": "73345f3efcad5a4fab57ad2420148071b6ae9b92f2198716ab31e820b52edf02",
+        "sha256": "87902d1245f230e46244052b91e0b284296233d364402e63d0bc6505fc8956af",
         "size_bytes": 5186
       },
       "failure_point": null,
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "305bb79e15504b456770927d32bdfbea9a4c69714ef51fc30a6efb150627ef6d"
+          "sha256": "a97e721c305eb5b85e1aaefd89ba3f3d1e915fdc743959ce1ad246b6a5330b93"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -272,14 +272,14 @@
     {
       "artifact": {
         "path": "validation/stale-visibility-convergence.json",
-        "sha256": "502c7e0cdd9d36d2ec1bb783896f53dcac7912fdac3266a70efa7f8dc5c28fa1",
-        "size_bytes": 5892
+        "sha256": "00af212449d08800ac254e98b345bd05ff2c3d34b68991086f063480846c1bf6",
+        "size_bytes": 5891
       },
       "failure_point": null,
       "input": {
         "identity": {
           "kind": "payment-reference-live-recovery-candidate",
-          "sha256": "c30b91bcc3b070e64a703a44b5e6daf19c6c2927cb76be78fde19d9accda91b9"
+          "sha256": "6fa8d98aa8d4b3c689733ee5d060d5f0a1df573767d17ea6fd1c9a33017d15d7"
         },
         "reproduction": {
           "contract_version": "payment-recovery-v1",
@@ -308,7 +308,7 @@
   "schema_version": 2,
   "semantic_closure": {
     "algorithm": "sha256-git-tree-entries-v1",
-    "digest_sha256": "9f926ae03666d4509e768a24a4f15a329cf59ed15c6d605ad090f036479ef7f4",
+    "digest_sha256": "4391514f8140a30c0d5f15445ca0a2d95973a91d111905cc48f2560bf9fb0618",
     "entries": [
       {
         "git_blob_oid": "cd90f9414fe8b27f39b86ff78c6a766a0a9e6d5e",
@@ -421,7 +421,7 @@
         "path": "src/oracle.rs"
       },
       {
-        "git_blob_oid": "fe04a07c0527f8bcd04ee5d463c2d65423ec88f2",
+        "git_blob_oid": "fa3629b9f805e369cc0ee8a3568c9f8e969ab194",
         "mode": "100644",
         "path": "src/processor.rs"
       },
@@ -431,7 +431,7 @@
         "path": "src/replay.rs"
       },
       {
-        "git_blob_oid": "57e0e973b10ab4f558af9532af658a0838f18c7c",
+        "git_blob_oid": "80561cae313fcc163151d7b553eb9d26c18f7269",
         "mode": "100644",
         "path": "src/writer.rs"
       }
