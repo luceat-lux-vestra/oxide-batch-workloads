@@ -107,7 +107,8 @@ public final class PaymentSandboxPaymentPluginApi implements PaymentPluginApi {
             List<PaymentSandboxTransactionRecord> records = dao.findByPayment(kbPaymentId, context.getTenantId());
             List<PaymentTransactionInfoPlugin> result = new ArrayList<>(records.size());
             for (PaymentSandboxTransactionRecord record : records) {
-                result.add(toPluginInfo(record));
+                PaymentSandboxTransactionRecord observed = refreshAmbiguousInitialRecord(record);
+                result.add(toPluginInfo(observed));
             }
             return result;
         } catch (SQLException e) {
@@ -264,6 +265,81 @@ public final class PaymentSandboxPaymentPluginApi implements PaymentPluginApi {
                     "payment-sandbox adapter invariant failure",
                     e);
         }
+    }
+
+    private PaymentSandboxTransactionRecord refreshAmbiguousInitialRecord(
+            PaymentSandboxTransactionRecord record) throws PaymentPluginApiException, SQLException {
+        if (record.getPluginStatus() != PaymentPluginStatus.UNDEFINED
+                || (record.getTransactionType() != TransactionType.AUTHORIZE
+                && record.getTransactionType() != TransactionType.PURCHASE)) {
+            return record;
+        }
+
+        final KillBillPaymentResult observation;
+        try {
+            observation = adapter.getPayment(record.getKbPaymentId());
+        } catch (PaymentSandboxException e) {
+            // Read-side absence or a transient provider read does not prove the
+            // original financial mutation failed. Keep Kill Bill UNKNOWN.
+            return record;
+        }
+
+        if (!record.getProviderPaymentId().equals(observation.getProviderPaymentId())) {
+            throw new PaymentPluginApiException(
+                    "PROVIDER_IDENTITY_CONFLICT",
+                    "Provider payment identity changed while reconciling an ambiguous transaction");
+        }
+        if (record.getAmount() == null || record.getCurrency() == null
+                || minor(record.getAmount(), record.getCurrency()) != observation.getAmountMinor()
+                || !record.getCurrency().name().equals(observation.getCurrency())) {
+            throw new PaymentPluginApiException(
+                    "PROVIDER_IDENTITY_CONFLICT",
+                    "Provider payment money changed while reconciling an ambiguous transaction");
+        }
+
+        PaymentPluginStatus terminalStatus = terminalInitialStatus(
+                record.getTransactionType(), observation.getProviderStatus());
+        if (terminalStatus == null) {
+            return record;
+        }
+
+        PaymentSandboxTransactionRecord resolved = new PaymentSandboxTransactionRecord(
+                record.getKbAccountId(),
+                record.getKbPaymentId(),
+                record.getKbTransactionId(),
+                record.getTransactionType(),
+                record.getAmount(),
+                record.getCurrency(),
+                terminalStatus,
+                observation.getProviderPaymentId(),
+                record.getProviderCreateIdempotencyKey(),
+                record.getProviderIdempotencyKey(),
+                record.getProviderSecondaryIdempotencyKey(),
+                observation.getProviderStatus(),
+                observation.getProviderVersion(),
+                null,
+                null,
+                false,
+                false,
+                record.getCreatedDate(),
+                now.get(),
+                record.getKbTenantId());
+        dao.save(resolved);
+        return resolved;
+    }
+
+    private static PaymentPluginStatus terminalInitialStatus(TransactionType transactionType,
+                                                             String providerStatus) {
+        if ("failed".equals(providerStatus)) {
+            return PaymentPluginStatus.ERROR;
+        }
+        if (transactionType == TransactionType.AUTHORIZE && "authorized".equals(providerStatus)) {
+            return PaymentPluginStatus.PROCESSED;
+        }
+        if (transactionType == TransactionType.PURCHASE && "captured".equals(providerStatus)) {
+            return PaymentPluginStatus.PROCESSED;
+        }
+        return null;
     }
 
     private PaymentSandboxTransactionRecord successRecord(UUID kbAccountId,

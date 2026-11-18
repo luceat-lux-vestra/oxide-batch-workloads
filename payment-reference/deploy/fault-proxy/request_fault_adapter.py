@@ -303,7 +303,12 @@ def _normalize_step(raw):
     _exact_keys(raw, allowed, f"fault step {raw.get('step_id', '<unknown>')}")
 
     request_match = (
-        _normalize_request_match(raw.get("request_match")) if selector_point else None
+        _normalize_request_match(
+            raw.get("request_match"),
+            allow_prefix=point == STATUS_INQUIRY,
+        )
+        if selector_point
+        else None
     )
 
     return {
@@ -315,19 +320,44 @@ def _normalize_step(raw):
         "action": _normalize_action(point, raw["action"]),
     }
 
-def _normalize_request_match(raw):
+def _normalize_request_match(raw, allow_prefix=False):
     if not isinstance(raw, dict):
         raise FaultPlanValidationError("request fault step requires request_match")
-    _exact_keys(raw, {"method", "path_suffix"}, "request_match")
+    # Mutation matching stays suffix-only; STATUS_INQUIRY may use a prefix.
+    selectors = {"path_suffix", "path_prefix"} & set(raw)
+    if len(selectors) != 1:
+        raise FaultPlanValidationError(
+            "request_match requires exactly one path_suffix or path_prefix"
+        )
+    if not allow_prefix and "path_prefix" in selectors:
+        raise FaultPlanValidationError(
+            "request_match.path_prefix is only allowed for STATUS_INQUIRY"
+        )
+    _exact_keys(raw, {"method"} | selectors, "request_match")
     method = _non_blank(raw["method"], "request_match.method")
     if not method.isascii() or not method.isalpha() or method != method.upper():
         raise FaultPlanValidationError(
             f"request_match.method must be uppercase ASCII letters: {method!r}"
         )
-    path_suffix = _non_blank(raw["path_suffix"], "request_match.path_suffix")
-    if not path_suffix.startswith("/"):
-        raise FaultPlanValidationError("request_match.path_suffix must begin with /")
-    return {"method": method, "path_suffix": path_suffix}
+
+    path_suffix = raw.get("path_suffix")
+    path_prefix = raw.get("path_prefix") if allow_prefix else None
+    if (path_suffix is None) == (path_prefix is None):
+        label = "path_suffix or path_prefix" if allow_prefix else "path_suffix"
+        raise FaultPlanValidationError(
+            f"request_match requires exactly one {label}"
+        )
+
+    if path_suffix is not None:
+        path_suffix = _non_blank(path_suffix, "request_match.path_suffix")
+        if not path_suffix.startswith("/"):
+            raise FaultPlanValidationError("request_match.path_suffix must begin with /")
+        return {"method": method, "path_suffix": path_suffix}
+
+    path_prefix = _non_blank(path_prefix, "request_match.path_prefix")
+    if not path_prefix.startswith("/"):
+        raise FaultPlanValidationError("request_match.path_prefix must begin with /")
+    return {"method": method, "path_prefix": path_prefix}
 
 
 def _normalize_action(point, raw):

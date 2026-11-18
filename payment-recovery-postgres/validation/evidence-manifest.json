@@ -1,0 +1,486 @@
+{
+  "environment": {
+    "limitations": [
+      "Producer run identity is recorded metadata, not an externally attested trusted-producer binding.",
+      "Provider mutation cardinality is independently retained from the deterministic payment-reference fault proxy; it is not inferred from OxideBatch completion.",
+      "The stale and identity-conflict cases use a workload-owned observation proxy to inject read-only provider observation faults without mutating provider financial state."
+    ],
+    "observations": [
+      {
+        "name": "declared-rust-msrv",
+        "source": "producer Cargo.toml in semantic closure",
+        "trust": "recorded-metadata",
+        "value": "1.95"
+      },
+      {
+        "name": "rustc-version",
+        "source": "producer workflow",
+        "trust": "recorded-metadata",
+        "value": "rustc 1.100.0 (0ef1bc386 2026-11-09)"
+      },
+      {
+        "name": "cargo-version",
+        "source": "producer workflow",
+        "trust": "recorded-metadata",
+        "value": "cargo 1.100.0 (3acc79c0c 2026-11-05)"
+      },
+      {
+        "name": "postgres-version",
+        "source": "workload PostgreSQL container",
+        "trust": "recorded-metadata",
+        "value": "postgres (PostgreSQL) 18.7 (Debian 18.7-1.pgdg13+2)"
+      },
+      {
+        "name": "github-actions-run",
+        "source": "producer workflow metadata",
+        "trust": "recorded-metadata",
+        "value": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43701765632"
+      }
+    ]
+  },
+  "external_artifacts": [],
+  "producer": {
+    "base_revision": "571ad243f689d49707a0253dc234598738592ba6",
+    "revision_role": "producer-checkout",
+    "run": {
+      "binding": "recorded-metadata",
+      "identity": "https://github.com/luceat-lux-vestra/oxide-batch-workloads/actions/runs/43701765632",
+      "kind": "github-actions-branch-evidence-producer"
+    }
+  },
+  "records": [
+    {
+      "artifact": {
+        "path": "validation/async-failure-convergence.json",
+        "sha256": "e0265e901ed78a5d9c25b8d7285be4e064aecbb4ad5f8970d2409c69008b7c5b",
+        "size_bytes": 5999
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "987c92309aa39f0f8296924913d8be293518fefaff9d70287858682bd9857298"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-async-failure",
+          "scenario_kind": "deterministic-provider-failure"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_FAILED",
+        "provider_mutation_forward_count": 0,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "async-failure-convergence"
+    },
+    {
+      "artifact": {
+        "path": "validation/crash-after-external-convergence.json",
+        "sha256": "cfb6af10769c8933609dbf0eb926c0a1a07932f86166eb98c3834f6a847287e1",
+        "size_bytes": 4512
+      },
+      "failure_point": {
+        "boundary": "after-external-convergence-before-local-commit",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "93944ef506a48b66b690cc27ab5a1cca79c5995e0bc2dc3017b7f76dce3ba6f7"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-crash-3",
+          "scenario_kind": "hard-crash-new-process"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "crash-after-external-convergence"
+    },
+    {
+      "artifact": {
+        "path": "validation/crash-after-local-write.json",
+        "sha256": "9c0d8c06c71f7b76c34456901dbe51c9dd7c289f535e0f1ec5a63f4f5cd9ee39",
+        "size_bytes": 4499
+      },
+      "failure_point": {
+        "boundary": "after-local-write-before-checkpoint-commit",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "dbbaea28eb76753082ad3850f71ff0bc94348099e3c8c91ce7f6e6d9563aa643"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-crash-4",
+          "scenario_kind": "hard-crash-new-process"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "crash-after-local-write"
+    },
+    {
+      "artifact": {
+        "path": "validation/crash-before-replay.json",
+        "sha256": "4642d03f8b2cb0c617b7463ccc6075a65b875f15aa826dd1cd6e928c8915b931",
+        "size_bytes": 4487
+      },
+      "failure_point": {
+        "boundary": "after-candidate-read-before-replay",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "c9325ee368cf708e072a50471926b2fa98fe9eeb3e18c9af5bfb70f3e17ba46c"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-crash-1",
+          "scenario_kind": "hard-crash-new-process"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "crash-before-replay"
+    },
+    {
+      "artifact": {
+        "path": "validation/crash-request-outcome-unknown.json",
+        "sha256": "b17b8b14b5f1b8229753732c85489ab6a80485ac9edc19507363b02deb109232",
+        "size_bytes": 4491
+      },
+      "failure_point": {
+        "boundary": "while-replay-outcome-unknown",
+        "signal": 9
+      },
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "a05d8861381cc32fc22a31fce07e24964923026711365753f26190ba0d338f32"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-crash-2",
+          "scenario_kind": "hard-crash-new-process"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "crash-request-outcome-unknown"
+    },
+    {
+      "artifact": {
+        "path": "validation/identity-conflict-hold.json",
+        "sha256": "53d1e280952e445989e95aea3b3195f82f9a6000c37d4b3cf610b5301f335122",
+        "size_bytes": 4346
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "5f60ada352e1cd965de27dd8e139a8c02bc136f4fde137762e6179ab99f6defd"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-identity-conflict",
+          "scenario_kind": "read-only-provider-identity-conflict"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "HOLD_MANUAL",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "identity-conflict-hold"
+    },
+    {
+      "artifact": {
+        "path": "validation/not-found-visibility-convergence.json",
+        "sha256": "b5d6eea0d41c55ea3fb777837dac9e0d5cb9e6eaff8a173bd709033d71ef8a10",
+        "size_bytes": 5898
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "6201a9455a2fd6d2832bfec93380264c3b6ba5d0354bd28db8a25a90b899f480"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-visibility-2",
+          "scenario_kind": "provider-visibility-convergence"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "not-found-visibility-convergence"
+    },
+    {
+      "artifact": {
+        "path": "validation/pre-side-effect-transient.json",
+        "sha256": "73345f3efcad5a4fab57ad2420148071b6ae9b92f2198716ab31e820b52edf02",
+        "size_bytes": 5186
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "305bb79e15504b456770927d32bdfbea9a4c69714ef51fc30a6efb150627ef6d"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-retry-later",
+          "scenario_kind": "retryable-pre-side-effect-failure"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RETRY_LATER",
+        "provider_mutation_forward_count": 0,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "pre-side-effect-transient"
+    },
+    {
+      "artifact": {
+        "path": "validation/stale-visibility-convergence.json",
+        "sha256": "502c7e0cdd9d36d2ec1bb783896f53dcac7912fdac3266a70efa7f8dc5c28fa1",
+        "size_bytes": 5892
+      },
+      "failure_point": null,
+      "input": {
+        "identity": {
+          "kind": "payment-reference-live-recovery-candidate",
+          "sha256": "c30b91bcc3b070e64a703a44b5e6daf19c6c2927cb76be78fde19d9accda91b9"
+        },
+        "reproduction": {
+          "contract_version": "payment-recovery-v1",
+          "run_id": "run-visibility-1",
+          "scenario_kind": "provider-visibility-convergence"
+        }
+      },
+      "parameters": {
+        "campaign_issue": 271,
+        "expected_classification": "RESOLVED_SUCCEEDED",
+        "provider_mutation_forward_count": 1,
+        "validation_subject": "oxide-batch 0.7.0"
+      },
+      "scenario": "stale-visibility-convergence"
+    }
+  ],
+  "retention": {
+    "committed_artifacts": {
+      "directory": "validation",
+      "max_count": 9,
+      "max_total_bytes": 393216,
+      "supersession": "One canonical #271 OxideBatch 0.7.0 payment-recovery evidence set; replacement requires an atomic manifest, verifier and artifact update."
+    },
+    "wall_clock_freshness_merge_gate": false
+  },
+  "schema_version": 2,
+  "semantic_closure": {
+    "algorithm": "sha256-git-tree-entries-v1",
+    "digest_sha256": "9f926ae03666d4509e768a24a4f15a329cf59ed15c6d605ad090f036479ef7f4",
+    "entries": [
+      {
+        "git_blob_oid": "cd90f9414fe8b27f39b86ff78c6a766a0a9e6d5e",
+        "mode": "100644",
+        "path": "Cargo.lock"
+      },
+      {
+        "git_blob_oid": "75cebb0fff709fa126fa9c0de31c397caeda349a",
+        "mode": "100644",
+        "path": "Cargo.toml"
+      },
+      {
+        "git_blob_oid": "a696d778d2b5a6e6c3caa66012a8bd96ac906d74",
+        "mode": "100644",
+        "path": "ci/recovery-matrix.sh"
+      },
+      {
+        "git_blob_oid": "122a921ebc3076387a7587e460ef4e2946f2aacd",
+        "mode": "100644",
+        "path": "ci/recovery-matrix/lib-evidence.sh"
+      },
+      {
+        "git_blob_oid": "7262c095abc36f32249b32e1dfcc162b2b512502",
+        "mode": "100755",
+        "path": "ci/recovery-matrix/lib-runtime.sh"
+      },
+      {
+        "git_blob_oid": "32d8c647623a6d5ecc84926fdf8184936e5598be",
+        "mode": "100644",
+        "path": "ci/recovery-matrix/scenarios-convergence.sh"
+      },
+      {
+        "git_blob_oid": "101aafae760af4cb655b97c6f307389596f029b9",
+        "mode": "100644",
+        "path": "ci/recovery-matrix/scenarios-recovery.sh"
+      },
+      {
+        "git_blob_oid": "2a25440e9690a5eaa898c4da7b638e64cd166bdb",
+        "mode": "100755",
+        "path": "ci/validate"
+      },
+      {
+        "git_blob_oid": "406bfd5601c45b2825603cfa20cb91f28a4e978a",
+        "mode": "100644",
+        "path": "docker-compose.yml"
+      },
+      {
+        "git_blob_oid": "b8dd1579a85aa5f37d248e29f97ac5d7f8ae6d91",
+        "mode": "100755",
+        "path": "evidence/build-manifest.py"
+      },
+      {
+        "git_blob_oid": "4430793ad015349e527393678b96178fdafd34a6",
+        "mode": "100755",
+        "path": "evidence/produce.sh"
+      },
+      {
+        "git_blob_oid": "87aed6bb2e2033d6414a8540ee80a6d222a8932a",
+        "mode": "100755",
+        "path": "evidence/provider-observation-proxy.py"
+      },
+      {
+        "git_blob_oid": "1a7df36a4a44c360e12e2c77e8a9a9827029d4d0",
+        "mode": "100755",
+        "path": "evidence/test_verify_retained_evidence.py"
+      },
+      {
+        "git_blob_oid": "9219a0c59c45560418ec1cf7b184fec74e418592",
+        "mode": "100755",
+        "path": "evidence/verify-retained-evidence.py"
+      },
+      {
+        "git_blob_oid": "aa60c57b852d140c141b475adf04262a165addd7",
+        "mode": "100644",
+        "path": "migrations/0001_init.sql"
+      },
+      {
+        "git_blob_oid": "46e66d74aa6e87fb25b3dc1866f6c8b641cb5753",
+        "mode": "100644",
+        "path": "src/candidate.rs"
+      },
+      {
+        "git_blob_oid": "5471e285945844aa310f659c7117a9702d589a59",
+        "mode": "100644",
+        "path": "src/crash.rs"
+      },
+      {
+        "git_blob_oid": "3dc80072ea66708f6ebe479158af95caa8778898",
+        "mode": "100644",
+        "path": "src/http.rs"
+      },
+      {
+        "git_blob_oid": "a0a2d8a7e08a4c20b0bbd19627c660e6006fdb9d",
+        "mode": "100644",
+        "path": "src/job.rs"
+      },
+      {
+        "git_blob_oid": "19f2a7836114c9e932ed53e257f079f7e68f27dc",
+        "mode": "100644",
+        "path": "src/lib.rs"
+      },
+      {
+        "git_blob_oid": "4f5352cee77bde68e0a459750b57a229f4ffe26f",
+        "mode": "100644",
+        "path": "src/main.rs"
+      },
+      {
+        "git_blob_oid": "2efc572f869d536c797206c1e0554034322be96c",
+        "mode": "100644",
+        "path": "src/oracle.rs"
+      },
+      {
+        "git_blob_oid": "fe04a07c0527f8bcd04ee5d463c2d65423ec88f2",
+        "mode": "100644",
+        "path": "src/processor.rs"
+      },
+      {
+        "git_blob_oid": "683182b183df4ae491ba93177db05773d3808b22",
+        "mode": "100644",
+        "path": "src/replay.rs"
+      },
+      {
+        "git_blob_oid": "57e0e973b10ab4f558af9532af658a0838f18c7c",
+        "mode": "100644",
+        "path": "src/writer.rs"
+      }
+    ],
+    "excluded_generated_paths": [
+      "validation/async-failure-convergence.json",
+      "validation/crash-after-external-convergence.json",
+      "validation/crash-after-local-write.json",
+      "validation/crash-before-replay.json",
+      "validation/crash-request-outcome-unknown.json",
+      "validation/identity-conflict-hold.json",
+      "validation/not-found-visibility-convergence.json",
+      "validation/pre-side-effect-transient.json",
+      "validation/stale-visibility-convergence.json"
+    ],
+    "includes": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "src",
+      "migrations",
+      "docker-compose.yml",
+      "ci",
+      "evidence"
+    ]
+  },
+  "validation_subject": {
+    "crates": [
+      {
+        "checksum": "cb884d99629b92fc6740a187a2ebb65350f8924a57f0c8103bad26192f17652e",
+        "name": "oxide-batch",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.7.0"
+      }
+    ],
+    "lockfile": {
+      "git_blob_oid": "cd90f9414fe8b27f39b86ff78c6a766a0a9e6d5e",
+      "path": "Cargo.lock"
+    }
+  },
+  "verifier": {
+    "canonical": {
+      "path": "validation/verify-retained-evidence.py",
+      "result_model": "violations-v1",
+      "sha256": "4ba4181edc09fb9309d8ea1402c829bf3e133a70f88dfcd41f96b6fdb780bfa9"
+    },
+    "producer": {
+      "git_blob_oid": "9219a0c59c45560418ec1cf7b184fec74e418592",
+      "path": "evidence/verify-retained-evidence.py"
+    }
+  },
+  "workload": "payment-recovery-postgres"
+}

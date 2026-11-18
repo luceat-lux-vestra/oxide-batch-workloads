@@ -290,11 +290,47 @@ provider_payment "$cancel_provider_id" /tmp/pr-provider-cancel.json
 jq -e '.status == "cancelled"' /tmp/pr-provider-cancel.json >/dev/null
 
 # Negative ambiguity: provider AUTHORIZE commits, but its HTTP response is
-# dropped once. The plugin must expose UNKNOWN and Gateway replay must not
-# blindly authorize again.
+# dropped once. The plugin first exposes UNKNOWN; the next withPluginInfo read
+# must reconcile terminal provider truth through Kill Bill's on-the-fly Janitor
+# without blindly authorizing again.
 curl --fail --silent --show-error \
   --request POST \
   "${fault_proxy_base}/__fault/reset" >/dev/null
+ambiguous_visibility_plan="$(jq -nc '{
+  fault_plan_version:1,
+  scenario_version:1,
+  seed:25601,
+  logical_business_time:"2026-11-15T00:00:00Z",
+  scenario_case:"payment-reference-ambiguous-read-convergence",
+  expected_provider_truth:"AUTHORIZED",
+  expected_canonical_outcome:"PAYMENT_UNKNOWN/UNKNOWN_THEN_AUTHORIZED/SUCCEEDED",
+  steps:[
+    {
+      step_id:"hide-initial-provider-status",
+      sequence:1,
+      offset_ms:0,
+      point:"STATUS_INQUIRY",
+      request_match:{method:"GET",path_prefix:"/payments/"},
+      action:{kind:"STATUS_VISIBILITY",visibility:"NOT_FOUND"}
+    },
+    {
+      step_id:"reveal-provider-status",
+      sequence:2,
+      offset_ms:1,
+      point:"STATUS_INQUIRY",
+      request_match:{method:"GET",path_prefix:"/payments/"},
+      action:{kind:"STATUS_VISIBILITY",visibility:"IMMEDIATE"}
+    }
+  ]
+}')"
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data "$ambiguous_visibility_plan" \
+  "${fault_proxy_base}/__fault/load-plan" >/dev/null
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data '{"offset_ms":0}' \
+  "${fault_proxy_base}/__fault/advance" >/dev/null
 curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/json' \
@@ -304,6 +340,10 @@ curl --fail --silent --show-error \
 ambiguous_authorize='{"merchantId":"merchant-smoke","merchantOrderId":"order-ambiguous","merchantPaymentId":"payment-ambiguous","operationId":"op-ambiguous-auth","amountMinor":777,"currency":"USD","paymentMethodToken":"tok-ambiguous","idempotencyKey":"idem-ambiguous-auth"}'
 post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous.json
 assert_view /tmp/pr-ambiguous.json PAYMENT_UNKNOWN UNKNOWN
+curl --fail --silent --show-error \
+  --request POST --header 'Content-Type: application/json' \
+  --data '{"offset_ms":1}' \
+  "${fault_proxy_base}/__fault/advance" >/dev/null
 
 ambiguous_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-ambiguous.json)"
 ambiguous_transaction_id="$(jq -er '.mapping.killbillTransactionId' /tmp/pr-ambiguous.json)"
@@ -326,8 +366,8 @@ jq -e '
   ) == 1
 ' /tmp/pr-fault-stats-before-replay.json >/dev/null
 
-post_gateway "/payments/authorize" "$ambiguous_authorize" 202 /tmp/pr-ambiguous-replay.json
-assert_view /tmp/pr-ambiguous-replay.json PAYMENT_UNKNOWN UNKNOWN
+post_gateway "/payments/authorize" "$ambiguous_authorize" 200 /tmp/pr-ambiguous-replay.json
+assert_view /tmp/pr-ambiguous-replay.json AUTHORIZED SUCCEEDED
 jq -e \
   --arg transaction_id "$ambiguous_transaction_id" \
   '.mapping.killbillTransactionId == $transaction_id' \
@@ -345,7 +385,7 @@ jq -e '
 ' /tmp/pr-fault-stats-after-replay.json >/dev/null
 
 get_gateway payment-ambiguous /tmp/pr-ambiguous-get.json
-assert_view /tmp/pr-ambiguous-get.json PAYMENT_UNKNOWN UNKNOWN
+assert_view /tmp/pr-ambiguous-get.json AUTHORIZED SUCCEEDED
 
 provider_payment "$ambiguous_provider_id" /tmp/pr-provider-ambiguous-after-replay.json
 jq -e '
@@ -565,7 +605,7 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
       {
         identity: identity(
           "provider-commit-response-loss";
-          "PAYMENT_UNKNOWN/UNKNOWN with one provider authorize and no blind replay"
+          "AUTHORIZED/SUCCEEDED after provider-read convergence with one provider authorize"
         ),
         system_ids: {
           merchant_id: "merchant-smoke",
@@ -577,8 +617,8 @@ jq -n   --arg source_revision "$source_revision"   --argjson scenario_version "$
           provider_payment_id: $ambiguous_provider_id
         },
         final_canonical_state: {
-          payment_state: "PAYMENT_UNKNOWN",
-          operation_state: "UNKNOWN"
+          payment_state: "AUTHORIZED",
+          operation_state: "SUCCEEDED"
         },
         provider_state: provider($ambiguous_provider[0]),
         replay: {

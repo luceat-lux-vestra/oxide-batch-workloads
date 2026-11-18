@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "campaign_issue": 271,
+  "contract_version": "payment-recovery-v1",
+  "validation_subject": "oxide-batch 0.7.0",
+  "scenario": "not-found-visibility-convergence",
+  "scenario_kind": "provider-visibility-convergence",
+  "failure_point": null,
+  "candidate": {
+    "candidate_id": "candidate-c2970b372e2460b05423adecadb30eed30d427ae72e411a73f79d27894b0b740",
+    "merchant_id": "merchant-visibility-2",
+    "merchant_order_id": "order-visibility-2",
+    "merchant_payment_id": "payment-visibility-2",
+    "operation_id": "op-visibility-2",
+    "operation_kind": "AUTHORIZE",
+    "payment_state": "PAYMENT_UNKNOWN",
+    "operation_state": "UNKNOWN",
+    "amount_minor": 812,
+    "currency": "USD",
+    "idempotency_key_digest": "53947863a1ed5851c6f88ab688946865ca602b36ffc57c8e86f8d0318f310ea6",
+    "payment_method_token_digest": "bf929af6368767ef2032525d80b0432489d548bb43811a486fa0adb575e652a5",
+    "provider_payment_id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+    "gateway_operation_id": "op-visibility-2",
+    "source_updated_at": "2026-11-15 10:03:16.484081+00"
+  },
+  "observations": {
+    "run": {
+      "run_id": "run-visibility-2",
+      "contract_version": "payment-recovery-v1",
+      "oxide_batch_version": "0.7.0",
+      "business_date": "2026-11-15",
+      "eligibility_cutoff": "2099-01-01 00:00:00+00",
+      "scenario_set_id": "run-visibility-2",
+      "policy_version": "payment-recovery-policy-v1",
+      "candidate_set_digest": "62e2ba6ec837c803bc3182aed5d904b4551f611c289022df88b2bf336f42f515",
+      "processing_generation": 2,
+      "run_state": "PROCESSED"
+    },
+    "attempts": [
+      {
+        "attempt_no": 1,
+        "processing_generation": 1,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "AUTHORIZED",
+        "canonical_operation_state": "SUCCEEDED",
+        "canonical_provider_payment_id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+        "canonical_gateway_operation_id": "op-visibility-2",
+        "provider_visibility": "NOT_FOUND",
+        "provider_payment_id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+        "provider_currency": null,
+        "provider_status": null,
+        "provider_authorized_amount_minor": null,
+        "provider_captured_amount_minor": null,
+        "provider_refunded_amount_minor": null,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      },
+      {
+        "attempt_no": 2,
+        "processing_generation": 2,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "AUTHORIZED",
+        "canonical_operation_state": "SUCCEEDED",
+        "canonical_provider_payment_id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+        "canonical_gateway_operation_id": "op-visibility-2",
+        "provider_visibility": "IMMEDIATE",
+        "provider_payment_id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+        "provider_currency": "USD",
+        "provider_status": "authorized",
+        "provider_authorized_amount_minor": 812,
+        "provider_captured_amount_minor": 0,
+        "provider_refunded_amount_minor": 0,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      }
+    ],
+    "result": {
+      "classification": "RESOLVED_SUCCEEDED",
+      "duplicate_provider_mutation_count": 0,
+      "final_canonical_payment_state": "AUTHORIZED",
+      "final_canonical_operation_state": "SUCCEEDED",
+      "final_provider_status": "authorized",
+      "result_digest": "f901cae38abe96a7c417a01a742d10748ac03dd3fa6698fe28d33ffe5d7ef5e8",
+      "oracle_violations": []
+    },
+    "provider_truth": {
+      "http_status": 200,
+      "exists": true,
+      "id": "kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30",
+      "currency": "USD",
+      "status": "authorized",
+      "authorized_amount": 812,
+      "captured_amount": 0,
+      "refunded_amount": 0
+    },
+    "fault": {
+      "dropped": 1,
+      "responded": 0,
+      "forwarded_by_path": {
+        "GET /payments/kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30": 1,
+        "POST /payments": 1,
+        "POST /payments/kb-5713fbec-2fc5-4fc3-8c56-11ab54904d30/authorize": 1
+      },
+      "responded_by_path": {},
+      "transition_history": [],
+      "plan": {
+        "identity": {
+          "expected_canonical_outcome": "PAYMENT_UNKNOWN/UNKNOWN",
+          "expected_provider_truth": "AUTHORIZED",
+          "fault_plan_version": 1,
+          "logical_business_time": "2026-11-15T00:00:00Z",
+          "scenario_case": "issue-271-unknown-seed-visibility-2",
+          "scenario_version": 1,
+          "seed": 27101
+        },
+        "consumed_request_steps": [],
+        "dispatched_timeline_steps": [
+          "hide-initial-provider-status",
+          "reveal-provider-status"
+        ]
+      }
+    }
+  },
+  "side_effects": {
+    "provider_mutation_forward_count": 1,
+    "duplicate_provider_mutation_count": 0
+  },
+  "phases": [
+    {
+      "name": "generation-1",
+      "processing_generation": 1,
+      "launched": true,
+      "result": {
+        "classification": "RETRY_LATER",
+        "duplicate_provider_mutation_count": 0,
+        "final_canonical_payment_state": "AUTHORIZED",
+        "final_canonical_operation_state": "SUCCEEDED",
+        "final_provider_status": null,
+        "result_digest": "8a66ba8fbd47cd7ae3439060a34236e729be894d8db4ca6c77879709b1f3e2a8",
+        "oracle_violations": []
+      }
+    },
+    {
+      "name": "generation-2",
+      "processing_generation": 2,
+      "launched": true,
+      "result": {
+        "classification": "RESOLVED_SUCCEEDED",
+        "duplicate_provider_mutation_count": 0,
+        "final_canonical_payment_state": "AUTHORIZED",
+        "final_canonical_operation_state": "SUCCEEDED",
+        "final_provider_status": "authorized",
+        "result_digest": "f901cae38abe96a7c417a01a742d10748ac03dd3fa6698fe28d33ffe5d7ef5e8",
+        "oracle_violations": []
+      }
+    }
+  ]
+}

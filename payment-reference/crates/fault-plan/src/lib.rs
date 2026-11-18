@@ -129,18 +129,31 @@ pub struct FaultStep {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestMatch {
     pub method: String,
-    pub path_suffix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_suffix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<String>,
 }
 
 impl RequestMatch {
-    fn validate(&self) -> Result<(), FaultPlanError> {
+    fn validate(&self, allow_prefix: bool) -> Result<(), FaultPlanError> {
         require_non_blank("request_match.method", &self.method)?;
-        require_non_blank("request_match.path_suffix", &self.path_suffix)?;
         if !self.method.bytes().all(|byte| byte.is_ascii_uppercase()) {
             return Err(FaultPlanError::InvalidRequestMethod(self.method.clone()));
         }
-        if !self.path_suffix.starts_with('/') {
-            return Err(FaultPlanError::InvalidRequestPath(self.path_suffix.clone()));
+        let path = match (&self.path_suffix, &self.path_prefix) {
+            (Some(path), None) => {
+                require_non_blank("request_match.path_suffix", path)?;
+                path
+            }
+            (None, Some(path)) if allow_prefix => {
+                require_non_blank("request_match.path_prefix", path)?;
+                path
+            }
+            _ => return Err(FaultPlanError::InvalidRequestSelector),
+        };
+        if !path.starts_with('/') {
+            return Err(FaultPlanError::InvalidRequestPath(path.clone()));
         }
         Ok(())
     }
@@ -157,7 +170,9 @@ impl FaultStep {
                 | FaultPoint::StatusInquiry
         );
         match (selected_point, self.request_match.as_ref()) {
-            (true, Some(request_match)) => request_match.validate()?,
+            (true, Some(request_match)) => {
+                request_match.validate(self.point == FaultPoint::StatusInquiry)?;
+            }
             (true, None) => {
                 return Err(FaultPlanError::MissingRequestMatch(self.step_id.clone()));
             }
@@ -396,6 +411,7 @@ pub enum FaultPlanError {
     MissingRequestMatch(String),
     UnexpectedRequestMatch(String),
     InvalidRequestMethod(String),
+    InvalidRequestSelector,
     InvalidRequestPath(String),
     IncompatibleAction {
         step_id: String,
@@ -460,8 +476,15 @@ impl fmt::Display for FaultPlanError {
                     "request_match.method must be uppercase ASCII: {method:?}"
                 )
             }
+            Self::InvalidRequestSelector => write!(
+                f,
+                "request_match requires exactly one path_suffix, or path_prefix for STATUS_INQUIRY"
+            ),
             Self::InvalidRequestPath(path) => {
-                write!(f, "request_match.path_suffix must begin with '/': {path:?}")
+                write!(
+                    f,
+                    "request_match path selector must begin with '/': {path:?}"
+                )
             }
             Self::IncompatibleAction {
                 step_id,
@@ -529,11 +552,13 @@ mod tests {
             FaultPoint::RequestBeforeProviderSideEffect
             | FaultPoint::RequestAfterProviderCommit => Some(RequestMatch {
                 method: "POST".into(),
-                path_suffix: "/payments".into(),
+                path_suffix: Some("/payments".into()),
+                path_prefix: None,
             }),
             FaultPoint::StatusInquiry => Some(RequestMatch {
                 method: "GET".into(),
-                path_suffix: "/payments".into(),
+                path_suffix: Some("/payments".into()),
+                path_prefix: None,
             }),
             FaultPoint::ProviderTransition | FaultPoint::WebhookDelivery => None,
         };
@@ -546,6 +571,42 @@ mod tests {
             request_match,
             action,
         }
+    }
+
+    #[test]
+    fn only_status_inquiry_accepts_a_path_prefix() {
+        let mut inquiry = step(
+            "status-prefix",
+            1,
+            0,
+            FaultPoint::StatusInquiry,
+            FaultAction::StatusVisibility {
+                visibility: StatusVisibility::NotFound,
+            },
+        );
+        inquiry.request_match = Some(RequestMatch {
+            method: "GET".into(),
+            path_suffix: None,
+            path_prefix: Some("/payments/".into()),
+        });
+        assert_eq!(plan(vec![inquiry.clone()]).validate(), Ok(()));
+
+        inquiry.point = FaultPoint::RequestBeforeProviderSideEffect;
+        inquiry.action = FaultAction::HttpFailure { status: 503 };
+        assert_eq!(
+            plan(vec![inquiry.clone()]).validate(),
+            Err(FaultPlanError::InvalidRequestSelector)
+        );
+
+        inquiry.point = FaultPoint::StatusInquiry;
+        inquiry.action = FaultAction::StatusVisibility {
+            visibility: StatusVisibility::NotFound,
+        };
+        inquiry.request_match.as_mut().unwrap().path_suffix = Some("/payments".into());
+        assert_eq!(
+            plan(vec![inquiry]).validate(),
+            Err(FaultPlanError::InvalidRequestSelector)
+        );
     }
 
     #[test]

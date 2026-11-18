@@ -112,6 +112,11 @@
                     ]
                   }
                 }
+              },
+              "request_match": {
+                "required": [
+                  "path_suffix"
+                ]
               }
             },
             "required": [
@@ -135,6 +140,11 @@
                     "const": "COMMIT_THEN_DROP_RESPONSE"
                   }
                 }
+              },
+              "request_match": {
+                "required": [
+                  "path_suffix"
+                ]
               }
             },
             "required": [
@@ -402,8 +412,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "method",
-        "path_suffix"
+        "method"
       ],
       "properties": {
         "method": {
@@ -413,8 +422,24 @@
         "path_suffix": {
           "type": "string",
           "pattern": "^/"
+        },
+        "path_prefix": {
+          "type": "string",
+          "pattern": "^/"
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "path_suffix"
+          ]
+        },
+        {
+          "required": [
+            "path_prefix"
+          ]
+        }
+      ]
     }
   }
 }

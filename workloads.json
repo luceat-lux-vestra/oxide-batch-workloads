@@ -16,6 +16,13 @@
       }
     },
     {
+      "name": "payment-recovery-postgres",
+      "path": "payment-recovery-postgres",
+      "msrv": {
+        "declared": true
+      }
+    },
+    {
       "name": "postgres-local-partition",
       "path": "postgres-local-partition",
       "msrv": {

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "campaign_issue": 271,
+  "contract_version": "payment-recovery-v1",
+  "validation_subject": "oxide-batch 0.7.0",
+  "scenario": "identity-conflict-hold",
+  "scenario_kind": "read-only-provider-identity-conflict",
+  "failure_point": null,
+  "candidate": {
+    "candidate_id": "candidate-f3f2f3c8b87ad5d27a06b83d6f8f26e556aec8838cb30dfe9d5936a5274dfc2c",
+    "merchant_id": "merchant-identity-conflict",
+    "merchant_order_id": "order-identity-conflict",
+    "merchant_payment_id": "payment-identity-conflict",
+    "operation_id": "op-identity-conflict",
+    "operation_kind": "AUTHORIZE",
+    "payment_state": "PAYMENT_UNKNOWN",
+    "operation_state": "UNKNOWN",
+    "amount_minor": 901,
+    "currency": "USD",
+    "idempotency_key_digest": "358f2896fd92e76726de70c477e1d90f7273815e07211de2d5c6c3bf0de0a363",
+    "payment_method_token_digest": "17b5061f4235d323ddda4bc2080f65d7caa6abd39816df2eb02c0d081505c482",
+    "provider_payment_id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+    "gateway_operation_id": "op-identity-conflict",
+    "source_updated_at": "2026-11-15 10:03:35.866291+00"
+  },
+  "observations": {
+    "run": {
+      "run_id": "run-identity-conflict",
+      "contract_version": "payment-recovery-v1",
+      "oxide_batch_version": "0.7.0",
+      "business_date": "2026-11-15",
+      "eligibility_cutoff": "2099-01-01 00:00:00+00",
+      "scenario_set_id": "run-identity-conflict",
+      "policy_version": "payment-recovery-policy-v1",
+      "candidate_set_digest": "ae57372a22ff944a4227f7fd0fb9f724feeb5021ae1c99876753fc25956b1163",
+      "processing_generation": 1,
+      "run_state": "PROCESSED"
+    },
+    "attempts": [
+      {
+        "attempt_no": 1,
+        "processing_generation": 1,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "AUTHORIZED",
+        "canonical_operation_state": "SUCCEEDED",
+        "canonical_provider_payment_id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+        "canonical_gateway_operation_id": "op-identity-conflict",
+        "provider_visibility": "IMMEDIATE",
+        "provider_payment_id": "conflicting-kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+        "provider_currency": "USD",
+        "provider_status": "authorized",
+        "provider_authorized_amount_minor": 901,
+        "provider_captured_amount_minor": 0,
+        "provider_refunded_amount_minor": 0,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      }
+    ],
+    "result": {
+      "classification": "HOLD_MANUAL",
+      "duplicate_provider_mutation_count": 0,
+      "final_canonical_payment_state": "AUTHORIZED",
+      "final_canonical_operation_state": "SUCCEEDED",
+      "final_provider_status": "authorized",
+      "result_digest": "978c6de39c4e602ebb8146d921a583645d433a95f6fd9b00638ef080559048a7",
+      "oracle_violations": [
+        "provider GET identity mismatch"
+      ]
+    },
+    "provider_truth": {
+      "http_status": 200,
+      "exists": true,
+      "id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+      "currency": "USD",
+      "status": "authorized",
+      "authorized_amount": 901,
+      "captured_amount": 0,
+      "refunded_amount": 0
+    },
+    "fault": {
+      "dropped": 1,
+      "responded": 0,
+      "forwarded_by_path": {
+        "GET /payments/kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58": 1,
+        "POST /payments": 1,
+        "POST /payments/kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58/authorize": 1
+      },
+      "responded_by_path": {},
+      "transition_history": [],
+      "plan": {
+        "identity": {
+          "expected_canonical_outcome": "PAYMENT_UNKNOWN/UNKNOWN",
+          "expected_provider_truth": "AUTHORIZED",
+          "fault_plan_version": 1,
+          "logical_business_time": "2026-11-15T00:00:00Z",
+          "scenario_case": "issue-271-unknown-seed-identity-conflict",
+          "scenario_version": 1,
+          "seed": 27101
+        },
+        "consumed_request_steps": [],
+        "dispatched_timeline_steps": [
+          "hide-initial-provider-status",
+          "reveal-provider-status"
+        ]
+      }
+    }
+  },
+  "side_effects": {
+    "provider_mutation_forward_count": 1,
+    "duplicate_provider_mutation_count": 0
+  },
+  "phases": [
+    {
+      "name": "terminal-replay",
+      "processing_generation": 1,
+      "launched": false,
+      "retry_later_count": 0
+    }
+  ]
+}

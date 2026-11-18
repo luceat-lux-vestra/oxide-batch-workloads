@@ -41,6 +41,10 @@ deferred.
 - transport failure on a mutation is classified **ambiguous**, not business
   failure, because the provider may have committed before the response was lost;
 - the adapter never blindly retries an ambiguous financial mutation;
+- `getPaymentInfo` performs a provider GET for ambiguous initial AUTHORIZE/PURCHASE
+  records and only promotes them when terminal provider truth is compatible with
+  the original immutable money/payment identity; this lets Kill Bill's on-the-fly
+  Janitor converge UNKNOWN without another provider mutation;
 - provider identity mismatch fails closed.
 
 ## Provider status mapping

@@ -63,11 +63,12 @@ class FaultState:
                 "path_suffix": path_suffix,
             }
 
-    def arm_response(self, method, path_suffix, status, error_code, message):
+    def arm_response(self, method, path_suffix, path_prefix, status, error_code, message):
         with self.lock:
             self.response_rule = {
                 "method": method.upper(),
                 "path_suffix": path_suffix,
+                "path_prefix": path_prefix,
                 "status": status,
                 "error_code": error_code,
                 "message": message,
@@ -84,7 +85,10 @@ class FaultState:
             if (
                 rule is not None
                 and method.upper() == rule["method"]
-                and path.endswith(rule["path_suffix"])
+                and (
+                    (rule.get("path_suffix") is not None and path.endswith(rule["path_suffix"]))
+                    or (rule.get("path_prefix") is not None and path.startswith(rule["path_prefix"]))
+                )
             ):
                 self.response_rule = None
                 self.responded += 1
@@ -177,7 +181,11 @@ class FaultState:
 
     def apply_status_visibility(self, step):
         request_match = step["request_match"]
-        key = (request_match["method"], request_match["path_suffix"])
+        key = (
+            request_match["method"],
+            request_match.get("path_suffix"),
+            request_match.get("path_prefix"),
+        )
         visibility = step["action"]["visibility"]
         with self.lock:
             if visibility == "IMMEDIATE":
@@ -197,14 +205,27 @@ class FaultState:
                     "snapshots": snapshots if visibility == "STALE" else {},
                 }
 
+    @staticmethod
+    def _request_match_applies(request_match, method, path):
+        if method.upper() != request_match["method"]:
+            return False
+        path_suffix = request_match.get("path_suffix")
+        path_prefix = request_match.get("path_prefix")
+        return (
+            path_suffix is not None
+            and path.endswith(path_suffix)
+        ) or (
+            path_prefix is not None
+            and path.startswith(path_prefix)
+        )
+
     def visibility_for(self, method, path):
         method = method.upper()
         with self.lock:
             matches = [
                 rule
                 for rule in self.status_visibility.values()
-                if method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                if self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return None
@@ -217,8 +238,7 @@ class FaultState:
                 rule
                 for rule in self.status_visibility.values()
                 if rule["visibility"] == "STALE"
-                and method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                and self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return None
@@ -233,8 +253,7 @@ class FaultState:
                 rule
                 for rule in self.status_visibility.values()
                 if rule["visibility"] == "STALE"
-                and method == rule["request_match"]["method"]
-                and path.endswith(rule["request_match"]["path_suffix"])
+                and self._request_match_applies(rule["request_match"], method, path)
             ]
             if not matches:
                 return
@@ -378,20 +397,28 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = json.loads(body.decode("utf-8") or "{}")
                 method = str(payload.get("method", "POST")).upper()
-                path_suffix = str(payload["path_suffix"])
+                path_suffix = payload.get("path_suffix")
+                path_prefix = payload.get("path_prefix")
+                if (path_suffix is None) == (path_prefix is None):
+                    raise ValueError("exactly one of path_suffix or path_prefix is required")
+                if path_suffix is not None:
+                    path_suffix = str(path_suffix)
+                if path_prefix is not None:
+                    path_prefix = str(path_prefix)
                 status = int(payload["status"])
                 error_code = str(payload.get("error_code", f"http_{status}"))
                 message = str(payload.get("message", f"synthetic HTTP {status}"))
             except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
                 self._json(400, {"error": f"invalid response rule: {exc}"})
                 return
-            if not path_suffix.startswith("/"):
-                self._json(400, {"error": "path_suffix must begin with /"})
+            selected_path = path_suffix if path_suffix is not None else path_prefix
+            if not selected_path.startswith("/"):
+                self._json(400, {"error": "path matcher must begin with /"})
                 return
             if status < 400 or status > 599:
                 self._json(400, {"error": "status must be between 400 and 599"})
                 return
-            STATE.arm_response(method, path_suffix, status, error_code, message)
+            STATE.arm_response(method, path_suffix, path_prefix, status, error_code, message)
             self._json(200, STATE.snapshot())
             return
         self._proxy()
