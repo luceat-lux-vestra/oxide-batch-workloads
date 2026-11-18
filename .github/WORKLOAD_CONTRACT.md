@@ -206,11 +206,14 @@ The canonical authority is:
 python3 .github/scripts/validate-cargo-locks.py check
 ```
 
-For each registered workload/fixture it executes `cargo metadata` with
-`--locked --all-features --no-deps`. A manifest/feature/dependency change that
-would require Cargo to mutate the lockfile therefore fails immediately with an
-explicit stale-lock diagnostic before workload fan-out or supply-chain policy
-scanning.
+For each registered workload/fixture it executes full dependency resolution with
+`cargo metadata --locked --all-features`. The authority intentionally does
+**not** use `--no-deps`: that option can accept a stale lockfile when an
+all-features optional dependency edge is missing from the resolved graph, while
+a downstream full-graph `--locked` consumer correctly rejects the same file.
+A manifest/feature/dependency change that requires Cargo to mutate the lockfile
+therefore fails immediately with an explicit stale-lock diagnostic before
+workload fan-out or supply-chain policy scanning.
 
 When a dependency or feature graph intentionally changes, refresh exactly one
 registered subject through Cargo itself:

@@ -53,6 +53,10 @@ def cargo_metadata_command(
     cargo_bin: str,
     locked: bool,
 ) -> list[str]:
+    # Full dependency resolution is intentional. Do not add --no-deps here:
+    # it can accept a stale lockfile when a newly enabled optional dependency
+    # is absent from the resolved graph, while downstream --locked consumers
+    # such as cargo-deny correctly reject the same lockfile.
     command = [
         cargo_bin,
         "metadata",
@@ -61,7 +65,6 @@ def cargo_metadata_command(
         "--all-features",
         "--format-version",
         "1",
-        "--no-deps",
     ]
     if locked:
         command.insert(2, "--locked")

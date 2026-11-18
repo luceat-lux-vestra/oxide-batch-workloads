@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -42,7 +43,7 @@ class CargoLockAuthorityTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:3], ["cargo", "metadata", "--locked"])
         self.assertIn("--all-features", command)
-        self.assertIn("--no-deps", command)
+        self.assertNotIn("--no-deps", command)
         self.assertIn(str(self.project / "Cargo.toml"), command)
         self.assertEqual(run.call_args.kwargs["cwd"], self.project)
 
@@ -76,7 +77,130 @@ class CargoLockAuthorityTests(unittest.TestCase):
         verify_command = run.call_args_list[1].args[0]
         self.assertNotIn("--locked", refresh_command)
         self.assertIn("--all-features", refresh_command)
+        self.assertNotIn("--no-deps", refresh_command)
         self.assertIn("--locked", verify_command)
+        self.assertNotIn("--no-deps", verify_command)
+
+    @unittest.skipUnless(shutil.which("cargo"), "real Cargo is required")
+    def test_full_resolution_rejects_stale_direct_edge_and_refreshes(self) -> None:
+        src = self.project / "src"
+        src.mkdir()
+        (src / "lib.rs").write_text("pub fn alpha() {}\n", encoding="utf-8")
+
+        beta = self.root / "beta"
+        (beta / "src").mkdir(parents=True)
+        (beta / "Cargo.toml").write_text(
+            '[package]\nname = "beta"\nversion = "0.1.0"\n',
+            encoding="utf-8",
+        )
+        (beta / "src" / "lib.rs").write_text(
+            "pub fn beta() {}\n",
+            encoding="utf-8",
+        )
+
+        gamma = self.root / "gamma"
+        (gamma / "src").mkdir(parents=True)
+        (gamma / "Cargo.toml").write_text(
+            (
+                '[package]\n'
+                'name = "gamma"\n'
+                'version = "0.1.0"\n\n'
+                '[dependencies]\n'
+                'beta = { path = "../beta" }\n'
+            ),
+            encoding="utf-8",
+        )
+        (gamma / "src" / "lib.rs").write_text(
+            "pub fn gamma() { beta::beta(); }\n",
+            encoding="utf-8",
+        )
+
+        # First generate a valid graph where beta is already present only as a
+        # transitive dependency. This mirrors #302: tikv-jemalloc-sys already
+        # existed in Cargo.lock before becoming a direct optional dependency.
+        (self.project / "Cargo.toml").write_text(
+            (
+                '[package]\n'
+                'name = "alpha"\n'
+                'version = "0.1.0"\n\n'
+                '[dependencies]\n'
+                'gamma = { path = "../gamma" }\n'
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "cargo",
+                "generate-lockfile",
+                "--manifest-path",
+                str(self.project / "Cargo.toml"),
+            ],
+            cwd=self.project,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        original_lock = (self.project / "Cargo.lock").read_text(encoding="utf-8")
+        self.assertIn('name = "beta"', original_lock)
+        self.assertIn('"gamma"', original_lock)
+
+        # Add a new direct optional edge to the already-locked beta package.
+        # Cargo.lock is intentionally left at the previous root dependency
+        # shape, exactly the class of stale metadata that #303 missed.
+        (self.project / "Cargo.toml").write_text(
+            (
+                '[package]\n'
+                'name = "alpha"\n'
+                'version = "0.1.0"\n\n'
+                '[features]\n'
+                'default = []\n'
+                'telemetry = ["dep:beta"]\n\n'
+                '[dependencies]\n'
+                'gamma = { path = "../gamma" }\n'
+                'beta = { path = "../beta", optional = true }\n'
+            ),
+            encoding="utf-8",
+        )
+
+        # This is the #302/#303 false negative: --no-deps can accept the stale
+        # root dependency edge because it does not resolve the complete graph.
+        legacy = subprocess.run(
+            [
+                "cargo",
+                "metadata",
+                "--locked",
+                "--all-features",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--manifest-path",
+                str(self.project / "Cargo.toml"),
+            ],
+            cwd=self.project,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+
+        with self.assertRaisesRegex(
+            cargo_locks.CargoLockError,
+            "Cargo.lock is not resolver-consistent",
+        ):
+            cargo_locks.check_subject(self.root, self.entry)
+
+        # Refresh lets Cargo rewrite the root dependency edge; the exact same
+        # full --locked authority must then accept the graph.
+        cargo_locks.refresh_subject(self.root, self.entry)
+        cargo_locks.check_subject(self.root, self.entry)
+
+        refreshed_lock = (self.project / "Cargo.lock").read_text(encoding="utf-8")
+        self.assertNotEqual(refreshed_lock, original_lock)
+        alpha_block = refreshed_lock.split('name = "alpha"', 1)[1].split(
+            "[[package]]", 1
+        )[0]
+        self.assertIn('"beta"', alpha_block)
+        self.assertIn('"gamma"', alpha_block)
 
     def test_missing_lockfile_fails_before_cargo(self) -> None:
         (self.project / "Cargo.lock").unlink()
