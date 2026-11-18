@@ -116,9 +116,10 @@ jobs:
           expected_sha = sys.argv[4]
 
           manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          assert manifest["campaign"] == 323
           assert manifest["lane"] == "heap"
           assert manifest["subject"]["workload_sha"] == expected_sha
-          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.7.0"
           assert manifest["subject"]["build_profile"] == "release"
           assert manifest["subject"]["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
           assert manifest["allocator"]["identity"] == "system"

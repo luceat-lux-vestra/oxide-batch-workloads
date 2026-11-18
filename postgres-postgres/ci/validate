@@ -703,6 +703,7 @@ run_ci_stage() {
 
   echo "profile manifest contract tests"
   python3 benchmark/test_profile_manifest.py
+  python3 benchmark/test_current_campaign_contract.py
 
   echo "profile smoke producer tests"
   python3 benchmark/test_profile_smoke.py

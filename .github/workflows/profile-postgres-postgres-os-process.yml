@@ -77,10 +77,10 @@ jobs:
           manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
 
           assert manifest["schema"] == "oxide-batch-profile-manifest/v2"
-          assert manifest["campaign"] == 266
+          assert manifest["campaign"] == 323
           assert manifest["lane"] == "os-process"
           assert manifest["subject"]["workload_sha"] == expected_sha
-          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.7.0"
           assert manifest["allocator"]["identity"] == "system"
           assert manifest["subject"]["build_profile"] == "release"
           assert manifest["workload"]["reader_mode"] == "paging"

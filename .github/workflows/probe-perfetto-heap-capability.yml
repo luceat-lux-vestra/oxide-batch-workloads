@@ -50,7 +50,7 @@ jobs:
           expected_sha = sys.argv[2]
           document = {
               "schema": "oxide-batch-perfetto-capability-run-context/v1",
-              "campaign": 266,
+              "campaign": 323,
               "repository_sha": expected_sha,
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
@@ -192,7 +192,7 @@ jobs:
 
           document = {
               "schema": "oxide-batch-perfetto-provision/v1",
-              "campaign": 266,
+              "campaign": 323,
               "perfetto_release": "v59.1",
               "perfetto_commit": "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d",
               "prebuilt_roll": "v58.2",
@@ -258,7 +258,7 @@ jobs:
 
           document = {
               "schema": "oxide-batch-perfetto-symbolizer/v1",
-              "campaign": 266,
+              "campaign": 323,
               "install_exit_status": install_status,
               "path": path,
               "version_exit_status": version_status,
@@ -318,7 +318,7 @@ jobs:
           assert context_path.is_file()
           context = json.loads(context_path.read_text(encoding="utf-8"))
           assert context["schema"] == "oxide-batch-perfetto-capability-run-context/v1"
-          assert context["campaign"] == 266
+          assert context["campaign"] == 323
           assert context["repository_sha"] == expected_sha
           assert context["github_event_name"] == "workflow_dispatch"
           assert context["runner_arch"] == "ARM64"
@@ -327,7 +327,7 @@ jobs:
           assert provision_path.is_file()
           provision = json.loads(provision_path.read_text(encoding="utf-8"))
           assert provision["schema"] == "oxide-batch-perfetto-provision/v1"
-          assert provision["campaign"] == 266
+          assert provision["campaign"] == 323
           assert provision["perfetto_release"] == "v59.1"
           assert provision["perfetto_commit"] == "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d"
           assert provision["prebuilt_roll"] == "v58.2"
@@ -341,7 +341,7 @@ jobs:
           assert symbolizer_path.is_file()
           symbolizer = json.loads(symbolizer_path.read_text(encoding="utf-8"))
           assert symbolizer["schema"] == "oxide-batch-perfetto-symbolizer/v1"
-          assert symbolizer["campaign"] == 266
+          assert symbolizer["campaign"] == 323
           if symbolizer_outcome == "success":
               assert symbolizer["available"] is True
               assert symbolizer["path"]
@@ -352,7 +352,7 @@ jobs:
           assert capability_path.is_file(), capability_path
           capability = json.loads(capability_path.read_text(encoding="utf-8"))
           assert capability["schema"] == "oxide-batch-perfetto-heap-capability/v1"
-          assert capability["campaign"] == 266
+          assert capability["campaign"] == 323
           assert capability["profiler"] == "perfetto-heapprofd-host"
           assert capability["perfetto"]["release"] == "v59.1"
           assert capability["perfetto"]["commit"] == "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d"
