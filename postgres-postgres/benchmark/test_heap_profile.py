@@ -188,7 +188,7 @@ temporary memory allocations: 2 (4/s)
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "sparse+https://index.crates.io/",
                 "checksum": "c" * 64,
             },
@@ -242,7 +242,12 @@ temporary memory allocations: 2 (4/s)
         self.assertTrue(any("attribution evidence only" in item for item in limitations))
         self.assertTrue(any("system allocator" in item for item in limitations))
         self.assertTrue(any("CARGO_PROFILE_RELEASE_DEBUG=1" in item for item in limitations))
-        self.assertTrue(any("post-M7" in item for item in limitations))
+        self.assertTrue(
+            any(
+                "later releases" in item and "permanent allocator decision" in item
+                for item in limitations
+            )
+        )
 
     def test_validate_bounds_is_bounded(self) -> None:
         args = self.args()

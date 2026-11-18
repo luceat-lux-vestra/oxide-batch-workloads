@@ -1,5 +1,5 @@
 //! Campaign #98 / Track F proof closure for process ownership, SIGTERM
-//! observability, durable recovery gap attribution, and exposed output channels.
+//! observability, durable recovery hierarchy closure, and exposed output channels.
 #![cfg(target_os = "linux")]
 
 mod support;
@@ -225,7 +225,7 @@ fn spawn_continuation(import_name: &str) -> (u32, Output) {
 }
 
 #[tokio::test]
-async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle_gap() {
+async fn sigterm_recovery_qualifies_process_ownership_and_closes_step_lifecycle() {
     support::migrate();
     support::reset();
     support::seed(SeedOptions {
@@ -358,9 +358,8 @@ async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle
     );
     assert_eq!(
         active_step_execution_count(&pool, &import_name).await,
-        1,
-        "exact published 0.6.0 leaves the crashed attempt's StepExecution nonterminal; \
-         this observed framework gap is tracked by oxide-batch#269"
+        0,
+        "exact published 0.7.0 must atomically terminalize the crashed attempt's child StepExecution"
     );
 
     let (continuation_pid, continuation) = spawn_continuation(&import_name);
@@ -386,9 +385,8 @@ async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle
     assert_eq!(active_execution_count(&pool, &import_name).await, 0);
     assert_eq!(
         active_step_execution_count(&pool, &import_name).await,
-        1,
-        "the recovered attempt's stale StepExecution remains observable after a successful \
-         continuation; do not misreport this as lifecycle closure"
+        0,
+        "the recovered attempt must remain fully closed after a successful continuation"
     );
     assert_no_idle_transaction(&pool).await;
 
@@ -414,8 +412,8 @@ async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle
     );
     assert_eq!(steps[0].0, executions[0].0);
     assert_eq!(
-        steps[0].1, "STARTED",
-        "0.6.0 recovery leaves the crashed attempt's child step nonterminal"
+        steps[0].1, "FAILED",
+        "0.7.0 recovery must apply the parent FAILED disposition to the crashed child step"
     );
     assert_eq!(steps[0].2, 1);
     assert_eq!(steps[0].3, PREVIOUS_COMMITTED_ROWS);
@@ -448,9 +446,9 @@ async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle
             "recovered_job_execution_id": crashed_execution_id,
             "recovered_status": executions[0].2,
             "active_job_executions_after_recovery": 0,
-            "active_step_executions_after_recovery": 1,
-            "step_lifecycle_closure": "UNSUPPORTED/GAP",
-            "upstream_issue": "luceat-lux-vestra/oxide-batch#269"
+            "active_step_executions_after_recovery": 0,
+            "step_lifecycle_closure": "SUPPORTED",
+            "upstream_fix": "luceat-lux-vestra/oxide-batch#275"
         },
         "continuation": {
             "workload_pid": continuation_pid,
@@ -461,10 +459,10 @@ async fn sigterm_recovery_qualifies_process_ownership_and_exposes_step_lifecycle
             "attempt": executions[1].1,
             "status": executions[1].2,
             "active_job_executions_final": 0,
-            "active_step_executions_final": 1
+            "active_step_executions_final": 0
         },
-        "capability_gaps": {
-            "recovery_step_lifecycle_closure": "UNSUPPORTED/GAP: exact published 0.6.0 recovers the JobExecution but leaves the crashed child StepExecution STARTED; tracked by oxide-batch#269"
+        "capabilities": {
+            "recovery_step_lifecycle_closure": "SUPPORTED: exact published 0.7.0 atomically terminalizes nonterminal child StepExecutions with the recovered parent; fixed by oxide-batch#275"
         },
         "step_execution_history": steps
     });

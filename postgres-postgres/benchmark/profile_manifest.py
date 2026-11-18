@@ -17,7 +17,7 @@ SCHEMA_V2 = "oxide-batch-profile-manifest/v2"
 SCHEMA = SCHEMA_V2
 SUPPORTED_SCHEMAS = {SCHEMA_V1, SCHEMA_V2}
 CAMPAIGN = 266
-OXIDE_BATCH_VERSION = "0.6.0"
+OXIDE_BATCH_VERSION = "0.7.0"
 CRATES_IO_SOURCES = {
     "registry+https://github.com/rust-lang/crates.io-index",
     "sparse+https://index.crates.io/",

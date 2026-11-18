@@ -489,7 +489,7 @@ async fn external_process_launch_lifecycle_duplicate_and_recovery_are_qualified(
     let _ = fs::remove_file(&marker);
 
     // ------------------------------------------------------------------
-    // SIGTERM qualification. OxideBatch 0.6.0 is not given a workload-side
+    // SIGTERM qualification. OxideBatch 0.7.0 is not given a workload-side
     // signal bridge here: actual POSIX SIGTERM kills the process abruptly,
     // leaves the durable execution nonterminal, and therefore requires the
     // same explicit recovery transition as hard death. This is evidence of
@@ -588,7 +588,7 @@ async fn external_process_launch_lifecycle_duplicate_and_recovery_are_qualified(
         "producer_checkout": std::env::var("GITHUB_SHA").unwrap_or_else(|_| "local".to_owned()),
         "validation_subject": {
             "crate": "oxide-batch",
-            "version": "0.6.0",
+            "version": "0.7.0",
             "source": "crates.io"
         },
         "validation_rejection": {

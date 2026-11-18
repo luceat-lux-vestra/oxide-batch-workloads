@@ -167,7 +167,7 @@ class AllocatorTelemetryProfileTests(unittest.TestCase):
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "registry+https://github.com/rust-lang/crates.io-index",
                 "checksum": "c" * 64,
             },

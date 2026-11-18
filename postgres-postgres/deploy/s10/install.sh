@@ -160,7 +160,7 @@ cat > "$release_dir/deployment.json.tmp" <<EOF
   "schema": "oxide-batch-workloads.s10-deployment",
   "schema_version": 1,
   "repository_sha": "$repo_sha",
-  "oxide_batch_version": "0.6.0",
+  "oxide_batch_version": "0.7.0",
   "oxide_batch_features": ["postgres"],
   "workload_binary": "bin/postgres-postgres",
   "workload_sha256": "$workload_sha256",

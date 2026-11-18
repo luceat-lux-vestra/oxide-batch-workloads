@@ -1,6 +1,6 @@
 //! Opt-in phase/lifecycle timeline evidence for campaign #266.
 //!
-//! The recorder uses only public OxideBatch 0.6.0 listener and lifecycle
+//! The recorder uses only public OxideBatch 0.7.0 listener and lifecycle
 //! hooks. Normal workload execution is unchanged unless
 //! OXIDE_BATCH_TIMELINE_DIR is set. Callbacks retain bounded, redacted
 //! in-memory records; filesystem I/O occurs only when the run flushes the
@@ -171,7 +171,7 @@ impl TimelineRecorder {
             limitations: vec![
                 "listener timestamps include listener dispatch overhead and are not benchmark timing",
                 "item.read and item.write are database-facing operation boundaries, not isolated database-wait measurements",
-                "OxideBatch 0.6.0 exposes checkpoint durability through the same chunk commit boundary; no separate checkpoint duration is invented",
+                "OxideBatch 0.7.0 exposes checkpoint durability through the same chunk commit boundary; no separate checkpoint duration is invented",
                 "the postgres-postgres workload uses deterministic single-threaded chunk orchestration, so queue/backpressure and worker-concurrency claims are not inferred",
             ],
         };

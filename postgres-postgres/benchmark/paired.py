@@ -236,7 +236,7 @@ def host_provenance(oxide_binary: Path, raw_binary: Path) -> dict[str, Any]:
         "postgres_server": optional(["docker", "compose", "exec", "-T", "postgres", "postgres", "--version"]),
         "postgres_configured_images": (optional(["docker", "compose", "config", "--images"]) or "").splitlines(),
         "postgres_image_id": optional(["docker", "compose", "images", "-q", "postgres"]),
-        "oxide_batch_subject": lock_package(lock_path, "oxide-batch", "0.6.0"),
+        "oxide_batch_subject": lock_package(lock_path, "oxide-batch", "0.7.0"),
         "raw_sqlx_subject": lock_package(lock_path, "sqlx", "0.9.0"),
         "binaries": {
             "oxide": {"path": str(oxide_binary), "sha256": sha256_file(oxide_binary)},

@@ -144,7 +144,7 @@ def profiler_limitations() -> list[str]:
         "gperftools libprofiler uses ITIMER_PROF/SIGPROF on-CPU sampling and can underrepresent database, network, lock, sleep, and other off-CPU wait time",
         "libprofiler is injected with LD_PRELOAD; the producer rejects any dynamic libtcmalloc dependency so the selected allocator is not silently replaced",
         "hosted-runner attribution validates orchestration and profile readability, not stable-host absolute performance",
-        "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
+        "OxideBatch 0.7.0 evidence must not be generalized to later releases or a permanent allocator decision",
     ]
 
 
@@ -238,7 +238,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
     subject_sha = profile_smoke.workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = profile_smoke.sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     profile_smoke.validate_allocator_lock(lock_path, target)
 
     token = profile_smoke.run_token()

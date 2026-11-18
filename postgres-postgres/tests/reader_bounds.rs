@@ -26,7 +26,7 @@
 //! fragile dependency than this workload's tests otherwise take on.
 //!
 //! What this test's passing result *does* rest on: `oxide_batch`
-//! `postgres_cursor_reader`'s own source at the exact pinned `v0.6.0`
+//! `postgres_cursor_reader`'s own source at the exact pinned `v0.7.0`
 //! release (`crates/oxide-batch/src/item_components/postgres_cursor.rs`)
 //! unconditionally issues `FETCH FORWARD <fetch_size> FROM
 //! oxide_batch_cursor` in a loop, stopping only once a batch comes back

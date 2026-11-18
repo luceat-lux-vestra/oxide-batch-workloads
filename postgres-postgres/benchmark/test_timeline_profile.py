@@ -128,7 +128,7 @@ class TimelineProfileTests(unittest.TestCase):
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "sparse+https://index.crates.io/",
                 "checksum": "c" * 64,
             },
@@ -182,7 +182,12 @@ class TimelineProfileTests(unittest.TestCase):
         self.assertTrue(any("not isolated PostgreSQL wait" in item for item in limitations))
         self.assertTrue(any("chunk.committed" in item for item in limitations))
         self.assertTrue(any("queue/backpressure" in item for item in limitations))
-        self.assertTrue(any("post-M7" in item for item in limitations))
+        self.assertTrue(
+            any(
+                "later releases" in item and "permanent allocator decision" in item
+                for item in limitations
+            )
+        )
 
     @staticmethod
     def record(

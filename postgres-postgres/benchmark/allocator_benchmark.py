@@ -131,7 +131,7 @@ def benchmark_limitations(canonical: bool) -> list[str]:
     limitations = [
         "no profiler is attached in benchmark lane",
         "hosted-runner results are same-run relative evidence, not stable-host absolute-performance truth",
-        "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
+        "OxideBatch 0.7.0 evidence must not be generalized to later releases or a permanent allocator decision",
     ]
     if not canonical:
         limitations.append(
@@ -315,7 +315,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = profile_smoke.sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     profile_smoke.validate_allocator_lock(lock_path, target)
 
     token = profile_smoke.run_token()

@@ -105,7 +105,7 @@ class PairedHarnessTests(unittest.TestCase):
 
                     [[package]]
                     name = "oxide-batch"
-                    version = "0.6.0"
+                    version = "0.7.0"
                     source = "registry+https://github.com/rust-lang/crates.io-index"
                     checksum = "deadbeef"
                     """
@@ -113,7 +113,7 @@ class PairedHarnessTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            package = paired.lock_package(path, "oxide-batch", "0.6.0")
+            package = paired.lock_package(path, "oxide-batch", "0.7.0")
             self.assertEqual(package["source"], "registry+https://github.com/rust-lang/crates.io-index")
             self.assertEqual(package["checksum"], "deadbeef")
 

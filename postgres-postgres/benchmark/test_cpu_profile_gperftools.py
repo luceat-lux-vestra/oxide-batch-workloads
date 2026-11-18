@@ -100,7 +100,7 @@ class GperftoolsCpuProfileTests(unittest.TestCase):
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "sparse+https://index.crates.io/",
                 "checksum": "c" * 64,
             },
@@ -153,7 +153,12 @@ class GperftoolsCpuProfileTests(unittest.TestCase):
         self.assertTrue(any("attribution evidence only" in item for item in limitations))
         self.assertTrue(any("ITIMER_PROF/SIGPROF" in item for item in limitations))
         self.assertTrue(any("libtcmalloc" in item for item in limitations))
-        self.assertTrue(any("post-M7" in item for item in limitations))
+        self.assertTrue(
+            any(
+                "later releases" in item and "permanent allocator decision" in item
+                for item in limitations
+            )
+        )
 
 
 if __name__ == "__main__":

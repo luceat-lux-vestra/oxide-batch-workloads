@@ -1,4 +1,4 @@
-//! `postgres-postgres`: OxideBatch 0.6.0 real-workload validation for a
+//! `postgres-postgres`: OxideBatch 0.7.0 real-workload validation for a
 //! PostgreSQL -> PostgreSQL restartable transform, in either cursor mode or
 //! paging mode (`--reader cursor|paging`). See the crate README for
 //! architecture, schemas, and scope.

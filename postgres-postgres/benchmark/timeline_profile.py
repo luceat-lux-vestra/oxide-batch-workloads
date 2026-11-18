@@ -116,10 +116,10 @@ def timeline_limitations() -> list[str]:
         "native timeline timestamps are phase-boundary attribution evidence only and are not benchmark timing",
         "listener timestamps include listener dispatch overhead",
         "item.read and item.write are database-facing operation boundaries, not isolated PostgreSQL wait measurements",
-        "OxideBatch 0.6.0 exposes checkpoint durability through chunk.committed; no separate checkpoint duration is inferred",
+        "OxideBatch 0.7.0 exposes checkpoint durability through chunk.committed; no separate checkpoint duration is inferred",
         "the workload is deterministic and single-threaded, so queue/backpressure and multi-worker concurrency are not inferred",
         "hosted-runner evidence validates orchestration and attribution readability, not stable-host absolute performance",
-        "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
+        "OxideBatch 0.7.0 evidence must not be generalized to later releases or a permanent allocator decision",
     ]
 
 
@@ -293,7 +293,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
     subject_sha = profile_smoke.workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = profile_smoke.sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     profile_smoke.validate_allocator_lock(lock_path, target)
 
     token = profile_smoke.run_token()

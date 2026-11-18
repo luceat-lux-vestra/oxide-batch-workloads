@@ -36,7 +36,7 @@ or increment logical sequences.
 Every deployment manifest records:
 
 ```text
-oxide-batch = { version = "=0.6.0", features = ["postgres"] }
+oxide-batch = { version = "=0.7.0", features = ["postgres"] }
 ```
 
 `install.sh` also records the selected repository SHA plus SHA-256 digests of the workload and

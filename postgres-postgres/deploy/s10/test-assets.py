@@ -214,7 +214,7 @@ def test_install_guard_lifecycle_and_controller_propagation() -> None:
         manifest = json.loads((release / "deployment.json").read_text(encoding="utf-8"))
         assert manifest["schema"] == "oxide-batch-workloads.s10-deployment"
         assert manifest["repository_sha"] == REPO_SHA
-        assert manifest["oxide_batch_version"] == "0.6.0"
+        assert manifest["oxide_batch_version"] == "0.7.0"
         assert manifest["oxide_batch_features"] == ["postgres"]
         assert manifest["shell_binary"] == SYSTEM_SH
         assert len(manifest["workload_sha256"]) == 64
