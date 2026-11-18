@@ -1,0 +1,112 @@
+name: Payment Reference ARM64 Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "payment-reference/**"
+      - ".github/workflows/payment-reference-images.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: payment-reference-images-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish (${{ matrix.service }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - killbill-db
+          - postgres
+          - payment-sandbox
+          - fault-proxy
+          - killbill
+          - gateway
+          - merchant
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build or mirror ARM64 image and publish immutable digest
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          bash payment-reference/deploy/longrun/publish-image.sh \
+            "${{ matrix.service }}" \
+            "ghcr.io/${{ github.repository_owner }}" \
+            "${{ github.sha }}" \
+            "${{ runner.temp }}/image.json"
+
+      - name: Upload image identity
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: payment-reference-image-${{ matrix.service }}-${{ github.sha }}
+          path: ${{ runner.temp }}/image.json
+          if-no-files-found: error
+          retention-days: 90
+
+  manifest:
+    name: immutable image manifest
+    needs: publish
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download per-image identities
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: payment-reference-image-*-${{ github.sha }}
+          path: ${{ runner.temp }}/published-images
+          merge-multiple: false
+
+      - name: Assemble and verify immutable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/bundle"
+          python3 payment-reference/deploy/longrun/image-manifest.py assemble \
+            --input-dir "${{ runner.temp }}/published-images" \
+            --source-sha "${{ github.sha }}" \
+            --out "${{ runner.temp }}/bundle/image-manifest.json"
+          python3 payment-reference/deploy/longrun/image-manifest.py verify \
+            --manifest "${{ runner.temp }}/bundle/image-manifest.json" \
+            --source-sha "${{ github.sha }}"
+          python3 payment-reference/deploy/longrun/image-manifest.py write-env \
+            --manifest "${{ runner.temp }}/bundle/image-manifest.json" \
+            --out "${{ runner.temp }}/bundle/images.env"
+          cat "${{ runner.temp }}/bundle/image-manifest.json"
+
+      - name: Upload OCI deployment bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: payment-reference-arm64-images-${{ github.sha }}
+          path: ${{ runner.temp }}/bundle
+          if-no-files-found: error
+          retention-days: 90
