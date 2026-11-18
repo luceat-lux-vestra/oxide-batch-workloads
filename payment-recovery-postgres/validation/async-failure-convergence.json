@@ -21,18 +21,18 @@
     "payment_method_token_digest": "3ed7a99166f987760e234e82d6ae68f39d84ca11890f965a2069b0a497614932",
     "provider_payment_id": null,
     "gateway_operation_id": null,
-    "source_updated_at": "2026-11-15 10:03:29.896406+00"
+    "source_updated_at": "2026-11-18 08:09:23.935635+00"
   },
   "observations": {
     "run": {
       "run_id": "run-async-failure",
       "contract_version": "payment-recovery-v1",
       "oxide_batch_version": "0.7.0",
-      "business_date": "2026-11-15",
+      "business_date": "2026-11-18",
       "eligibility_cutoff": "2099-01-01 00:00:00+00",
       "scenario_set_id": "run-async-failure",
       "policy_version": "payment-recovery-policy-v1",
-      "candidate_set_digest": "fce34e3cdf148fce95005d38d46211ae9961f33f2beef02f512e69b86fd4e2ec",
+      "candidate_set_digest": "6afc1243fe79ac6dd357c1bc703fa989eea26435f39e663229bd5df8148ac877",
       "processing_generation": 2,
       "run_state": "PROCESSED"
     },
@@ -44,10 +44,10 @@
         "merchant_http_status": 200,
         "canonical_payment_state": "PAYMENT_FAILED",
         "canonical_operation_state": "FAILED",
-        "canonical_provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "canonical_provider_payment_id": "kb-e9628f3c-0068-4b93-b197-5d0c749ef087",
         "canonical_gateway_operation_id": "op-async-failure",
         "provider_visibility": "NOT_FOUND",
-        "provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "provider_payment_id": "kb-e9628f3c-0068-4b93-b197-5d0c749ef087",
         "provider_currency": null,
         "provider_status": null,
         "provider_authorized_amount_minor": null,
@@ -62,10 +62,10 @@
         "merchant_http_status": 200,
         "canonical_payment_state": "PAYMENT_FAILED",
         "canonical_operation_state": "FAILED",
-        "canonical_provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "canonical_provider_payment_id": "kb-e9628f3c-0068-4b93-b197-5d0c749ef087",
         "canonical_gateway_operation_id": "op-async-failure",
         "provider_visibility": "IMMEDIATE",
-        "provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "provider_payment_id": "kb-e9628f3c-0068-4b93-b197-5d0c749ef087",
         "provider_currency": "USD",
         "provider_status": "failed",
         "provider_authorized_amount_minor": 0,
@@ -80,13 +80,13 @@
       "final_canonical_payment_state": "PAYMENT_FAILED",
       "final_canonical_operation_state": "FAILED",
       "final_provider_status": "failed",
-      "result_digest": "498bdc69d687d519e1608f71751e7cbea9651d75597cf902f7a8cb869f806acc",
+      "result_digest": "4cdfda3fb762c9275128409e3501cfea690e0f3bc0b0a5993cabdf5c69d68479",
       "oracle_violations": []
     },
     "provider_truth": {
       "http_status": 200,
       "exists": true,
-      "id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+      "id": "kb-e9628f3c-0068-4b93-b197-5d0c749ef087",
       "currency": "USD",
       "status": "failed",
       "authorized_amount": 0,
@@ -97,7 +97,7 @@
       "dropped": 0,
       "responded": 0,
       "forwarded_by_path": {
-        "GET /payments/kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb": 1
+        "GET /payments/kb-e9628f3c-0068-4b93-b197-5d0c749ef087": 1
       },
       "responded_by_path": {},
       "transition_history": [
@@ -106,7 +106,7 @@
           "outcome": "FAILED",
           "provider_side_effect": false,
           "upstream_status": null,
-          "status_path": "/payments/kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb"
+          "status_path": "/payments/kb-e9628f3c-0068-4b93-b197-5d0c749ef087"
         }
       ],
       "plan": {
@@ -145,7 +145,7 @@
         "final_canonical_payment_state": "PAYMENT_FAILED",
         "final_canonical_operation_state": "FAILED",
         "final_provider_status": null,
-        "result_digest": "ce32e0b52b90658f3a3d4c39eaabbce4823758be2506c8b9b8e2b6448ed12bba",
+        "result_digest": "494f4b7a7185b1fad7231ffffe6a858c1b9c25b736ba2e8de017781fabcff6ac",
         "oracle_violations": []
       }
     },
@@ -159,7 +159,7 @@
         "final_canonical_payment_state": "PAYMENT_FAILED",
         "final_canonical_operation_state": "FAILED",
         "final_provider_status": "failed",
-        "result_digest": "498bdc69d687d519e1608f71751e7cbea9651d75597cf902f7a8cb869f806acc",
+        "result_digest": "4cdfda3fb762c9275128409e3501cfea690e0f3bc0b0a5993cabdf5c69d68479",
         "oracle_violations": []
       }
     }

@@ -19,20 +19,20 @@
     "currency": "USD",
     "idempotency_key_digest": "373edfed1fd2c08490e894707a56bcbc57d6131fa087af6859ee4cccf2860638",
     "payment_method_token_digest": "45698d064917550356783432c56842649c59dbc6e82c07bd0964fb03d44dc272",
-    "provider_payment_id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72",
+    "provider_payment_id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b",
     "gateway_operation_id": "op-retry-later",
-    "source_updated_at": "2026-11-15 10:03:39.324222+00"
+    "source_updated_at": "2026-11-18 08:09:33.816666+00"
   },
   "observations": {
     "run": {
       "run_id": "run-retry-later",
       "contract_version": "payment-recovery-v1",
       "oxide_batch_version": "0.7.0",
-      "business_date": "2026-11-15",
+      "business_date": "2026-11-18",
       "eligibility_cutoff": "2099-01-01 00:00:00+00",
       "scenario_set_id": "run-retry-later",
       "policy_version": "payment-recovery-policy-v1",
-      "candidate_set_digest": "4b3fad8f12886b358d3418225269430e1645044e091d8ca6efeacd7cc823890c",
+      "candidate_set_digest": "f8a3b600dd23aaaea8d2204f4467188424820d7437bb1ee1381e322bd95dc3bb",
       "processing_generation": 2,
       "run_state": "PROCESSED"
     },
@@ -44,10 +44,10 @@
         "merchant_http_status": 202,
         "canonical_payment_state": "PAYMENT_PENDING",
         "canonical_operation_state": "RETRY_PENDING",
-        "canonical_provider_payment_id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72",
+        "canonical_provider_payment_id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b",
         "canonical_gateway_operation_id": "op-retry-later",
         "provider_visibility": "NOT_FOUND",
-        "provider_payment_id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72",
+        "provider_payment_id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b",
         "provider_currency": null,
         "provider_status": null,
         "provider_authorized_amount_minor": null,
@@ -62,10 +62,10 @@
         "merchant_http_status": 202,
         "canonical_payment_state": "PAYMENT_PENDING",
         "canonical_operation_state": "RETRY_PENDING",
-        "canonical_provider_payment_id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72",
+        "canonical_provider_payment_id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b",
         "canonical_gateway_operation_id": "op-retry-later",
         "provider_visibility": "NOT_FOUND",
-        "provider_payment_id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72",
+        "provider_payment_id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b",
         "provider_currency": null,
         "provider_status": null,
         "provider_authorized_amount_minor": null,
@@ -80,13 +80,13 @@
       "final_canonical_payment_state": "PAYMENT_PENDING",
       "final_canonical_operation_state": "RETRY_PENDING",
       "final_provider_status": null,
-      "result_digest": "ec03e9108eed0ccf441502fa19c673d7eee8c476cc950b41a6a33f317bcdbf36",
+      "result_digest": "2178f03d4e21ccd0a1ddb59a3a7c22c0f22a230bd94d8cf07d1fc0900b43edb8",
       "oracle_violations": []
     },
     "provider_truth": {
       "http_status": 404,
       "exists": false,
-      "id": "kb-ea53afd6-5580-4cf9-aaf0-63863cf51e72"
+      "id": "kb-ccddbe50-8357-4abc-81d4-cca9e183494b"
     },
     "fault": {
       "dropped": 0,
@@ -118,7 +118,7 @@
         "final_canonical_payment_state": "PAYMENT_PENDING",
         "final_canonical_operation_state": "RETRY_PENDING",
         "final_provider_status": null,
-        "result_digest": "1e12199d4d03d271f2bd80a38eca63643ff4f6aecb2f2149e1c0dd85cb921e65",
+        "result_digest": "0acaf158a45f162a28559549865f4c128320f83d0a788faa5c4688f8d0fac354",
         "oracle_violations": []
       }
     },
@@ -132,7 +132,7 @@
         "final_canonical_payment_state": "PAYMENT_PENDING",
         "final_canonical_operation_state": "RETRY_PENDING",
         "final_provider_status": null,
-        "result_digest": "ec03e9108eed0ccf441502fa19c673d7eee8c476cc950b41a6a33f317bcdbf36",
+        "result_digest": "2178f03d4e21ccd0a1ddb59a3a7c22c0f22a230bd94d8cf07d1fc0900b43edb8",
         "oracle_violations": []
       }
     }
