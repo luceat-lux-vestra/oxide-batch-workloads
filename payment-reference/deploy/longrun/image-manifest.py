@@ -152,18 +152,22 @@ def write_env(path: Path, manifest: dict[str, Any]) -> None:
         lines.append(f"{item['env_name']}={item['digest_ref']}")
     raw = "\n".join(lines) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = raw.encode("utf-8")
+    if path.exists():
+        if not path.is_file():
+            raise ManifestError(f"environment path is not a regular file: {path}")
+        if path.read_bytes() == encoded:
+            return
+        raise ManifestError(f"immutable environment conflict at {path}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd = os.open(path, flags, stat.S_IRUSR | stat.S_IWUSR)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(raw)
+        with os.fdopen(fd, "wb", closefd=False) as handle:
+            handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
     finally:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        os.close(fd)
 
 
 def parse_args() -> argparse.Namespace:
