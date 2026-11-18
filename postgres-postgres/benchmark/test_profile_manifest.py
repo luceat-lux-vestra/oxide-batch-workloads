@@ -255,7 +255,10 @@ class ProfileManifestTests(unittest.TestCase):
     def test_rejects_non_published_oxide_batch_subject(self) -> None:
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
-        with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.7.0'"):
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError,
+            r"version must match campaign \(0\.7\.0\)",
+        ):
             profile_manifest.validate_manifest(document)
 
     def test_rejects_allocator_on_unqualified_target(self) -> None:
