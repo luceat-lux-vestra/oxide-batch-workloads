@@ -105,7 +105,14 @@ impl ItemWriter<RecoveryWrite> for RecoveryWriter {
             let attempt = transaction
                 .execute(BusinessStatement::new(ATTEMPT_INSERT, &attempt_values))
                 .await
-                .map_err(classify_transaction_error)?;
+                .map_err(|error| {
+                    eprintln!(
+                        "payment-recovery writer failure stage=attempt-insert generation={} attempt_no={} error_kind={error:?}",
+                        item.processing_generation,
+                        item.attempt_no
+                    );
+                    classify_transaction_error(error)
+                })?;
             if attempt.rows_affected() != 1 {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
@@ -124,7 +131,10 @@ impl ItemWriter<RecoveryWrite> for RecoveryWriter {
             let result = transaction
                 .execute(BusinessStatement::new(RESULT_UPSERT, &result_values))
                 .await
-                .map_err(classify_transaction_error)?;
+                .map_err(|error| {
+                    eprintln!("payment-recovery writer failure stage=result-upsert");
+                    classify_transaction_error(error)
+                })?;
             if result.rows_affected() != 1 {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
