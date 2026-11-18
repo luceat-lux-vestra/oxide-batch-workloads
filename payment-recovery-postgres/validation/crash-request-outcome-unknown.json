@@ -22,20 +22,20 @@
     "currency": "USD",
     "idempotency_key_digest": "d6ff7c76cda32dd888c8da4021b87b09558fd26f07dcf7bb15e56b5019bd6b8a",
     "payment_method_token_digest": "60b84d489b7ce0f2c3a86318cc160f506c282f4e85eabc86838311120ad52561",
-    "provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+    "provider_payment_id": "kb-2615046e-0d05-4f60-8202-56cd9ce036cf",
     "gateway_operation_id": "op-crash-2",
-    "source_updated_at": "2026-11-15 10:03:02.957819+00"
+    "source_updated_at": "2026-11-18 08:08:56.585049+00"
   },
   "observations": {
     "run": {
       "run_id": "run-crash-2",
       "contract_version": "payment-recovery-v1",
       "oxide_batch_version": "0.7.0",
-      "business_date": "2026-11-15",
+      "business_date": "2026-11-18",
       "eligibility_cutoff": "2099-01-01 00:00:00+00",
       "scenario_set_id": "run-crash-2",
       "policy_version": "payment-recovery-policy-v1",
-      "candidate_set_digest": "c42f300510cb23adfdcde3654b8d424b31d51e16f98af9a1ef560f58dd4f829f",
+      "candidate_set_digest": "cb160dab461cdc41ac40a55d1e13af70e31e133465f5f03bbff2fefa0678203f",
       "processing_generation": 1,
       "run_state": "PROCESSED"
     },
@@ -47,10 +47,10 @@
         "merchant_http_status": 200,
         "canonical_payment_state": "AUTHORIZED",
         "canonical_operation_state": "SUCCEEDED",
-        "canonical_provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+        "canonical_provider_payment_id": "kb-2615046e-0d05-4f60-8202-56cd9ce036cf",
         "canonical_gateway_operation_id": "op-crash-2",
         "provider_visibility": "IMMEDIATE",
-        "provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+        "provider_payment_id": "kb-2615046e-0d05-4f60-8202-56cd9ce036cf",
         "provider_currency": "USD",
         "provider_status": "authorized",
         "provider_authorized_amount_minor": 702,
@@ -65,13 +65,13 @@
       "final_canonical_payment_state": "AUTHORIZED",
       "final_canonical_operation_state": "SUCCEEDED",
       "final_provider_status": "authorized",
-      "result_digest": "753d5ab22b3331140aead2bb324013a14369209b62b9986cd248565ffe81d7bd",
+      "result_digest": "78e3b059e041018498b8bc0e28a5ccf736808270411f2592c94e50aa87d6bc2a",
       "oracle_violations": []
     },
     "provider_truth": {
       "http_status": 200,
       "exists": true,
-      "id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+      "id": "kb-2615046e-0d05-4f60-8202-56cd9ce036cf",
       "currency": "USD",
       "status": "authorized",
       "authorized_amount": 702,
@@ -82,9 +82,9 @@
       "dropped": 1,
       "responded": 0,
       "forwarded_by_path": {
-        "GET /payments/kb-23f858bb-b800-494f-a368-4ad0b8bd52ed": 1,
+        "GET /payments/kb-2615046e-0d05-4f60-8202-56cd9ce036cf": 1,
         "POST /payments": 1,
-        "POST /payments/kb-23f858bb-b800-494f-a368-4ad0b8bd52ed/authorize": 1
+        "POST /payments/kb-2615046e-0d05-4f60-8202-56cd9ce036cf/authorize": 1
       },
       "responded_by_path": {},
       "transition_history": [],
