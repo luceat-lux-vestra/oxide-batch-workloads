@@ -6,15 +6,15 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: pr302-lock-refresh-${{ github.ref }}
+  group: pr302-lock-materialize-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   fast:
-    name: postgres-postgres-cargo-lock-refresh
+    name: postgres-postgres-cargo-lock-materialize
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -28,24 +28,43 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Refresh postgres-postgres Cargo.lock through full resolver authority
+      - name: Refresh and verify postgres-postgres Cargo.lock
+        id: refresh
         run: |
           set -euo pipefail
           python3 .github/scripts/validate-cargo-locks.py refresh --name postgres-postgres
           python3 .github/scripts/validate-cargo-locks.py check --name postgres-postgres
           git diff --check -- postgres-postgres/Cargo.lock
-          git diff -- postgres-postgres/Cargo.lock > "$RUNNER_TEMP/Cargo.lock.diff"
+          if git diff --quiet -- postgres-postgres/Cargo.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
           sha256sum postgres-postgres/Cargo.toml postgres-postgres/Cargo.lock > "$RUNNER_TEMP/sha256.txt"
           {
-            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'source_head_sha=%s\n' "$GITHUB_SHA"
             cargo --version
             rustc --version
           } > "$RUNNER_TEMP/toolchain.txt"
+          git diff -- postgres-postgres/Cargo.lock > "$RUNNER_TEMP/Cargo.lock.diff"
+
+      - name: Commit exact Cargo-generated lockfile to temporary branch
+        if: steps.refresh.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = "branch"
+          current_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/postgres-postgres/Cargo.lock?ref=$GITHUB_REF_NAME" --jq '.sha')"
+          content="$(base64 -w0 postgres-postgres/Cargo.lock)"
+          payload="$RUNNER_TEMP/lock-update.json"
+          jq -n             --arg message "chore(ci): materialize Cargo-generated lock for PR #302"             --arg content "$content"             --arg sha "$current_sha"             --arg branch "$GITHUB_REF_NAME"             '{message:$message,content:$content,sha:$sha,branch:$branch}' > "$payload"
+          gh api             --method PUT             "repos/$GITHUB_REPOSITORY/contents/postgres-postgres/Cargo.lock"             --input "$payload"             --jq '{commit_sha:.commit.sha, content_sha:.content.sha}'
 
       - name: Upload Cargo-generated lock evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: pr302-postgres-postgres-full-lock-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr302-postgres-postgres-materialized-lock-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             postgres-postgres/Cargo.toml
             postgres-postgres/Cargo.lock
