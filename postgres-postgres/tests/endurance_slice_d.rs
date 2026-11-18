@@ -93,7 +93,7 @@ fn campaign_initialization_is_idempotent_append_only_and_conflict_safe() {
     assert!(store.campaign_dir().join("iterations").is_dir());
     assert!(store.campaign_dir().join("failures").is_dir());
     assert_eq!(store.campaign().campaign_id, campaign_id);
-    assert_eq!(store.campaign().oxide_batch_version, "0.6.0");
+    assert_eq!(store.campaign().oxide_batch_version, "0.7.0");
     assert_eq!(store.campaign().source_rows, CANONICAL_SOURCE_ROWS);
     assert_eq!(store.campaign().seed, CANONICAL_SEED);
     assert_eq!(store.campaign().chunk_size, CANONICAL_CHUNK_SIZE);

@@ -5,7 +5,7 @@ use postgres_postgres::failpoint::FailureMode;
 use postgres_postgres::job::ReaderMode;
 use postgres_postgres::{generator, job, verify};
 
-/// OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreSQL
+/// OxideBatch 0.7.0 real-workload validation: PostgreSQL -> PostgreSQL
 /// restartable transform, in either cursor mode (a real streamed
 /// server-side cursor) or paging mode (independent, bounded keyset pages).
 #[derive(Parser)]

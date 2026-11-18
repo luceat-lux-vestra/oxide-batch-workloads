@@ -10,7 +10,7 @@ rust-version = "1.95"
 default-run = "postgres-postgres"
 publish = false
 license = "Apache-2.0"
-description = "OxideBatch 0.6.0 real-workload validation: PostgreSQL -> PostgreSQL restartable batch transform (cursor and paging reader modes)"
+description = "OxideBatch 0.7.0 real-workload validation: PostgreSQL -> PostgreSQL restartable batch transform (cursor and paging reader modes)"
 
 [features]
 default = []
@@ -35,7 +35,7 @@ name = "postgres-postgres-endurancectl"
 path = "src/bin/postgres-postgres-endurancectl.rs"
 
 [dependencies]
-oxide-batch = { version = "=0.6.0", features = ["postgres"] }
+oxide-batch = { version = "=0.7.0", features = ["postgres"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls-ring-native-roots"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "signal"] }
 clap = { version = "4", features = ["derive", "env"] }

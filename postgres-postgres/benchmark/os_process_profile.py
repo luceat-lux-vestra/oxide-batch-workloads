@@ -307,7 +307,7 @@ def build_manifest(
             "process exit races may yield null metrics with explicit unavailable reasons instead of fabricated zeroes",
             "hosted-runner resource observations are orchestration evidence, not stable-host benchmark or leak evidence",
             "no benchmark timing claim is carried by this telemetry lane",
-            "0.6.0 observations must not be generalized to a post-M7 OxideBatch release",
+            "0.7.0 observations must not be generalized to later OxideBatch releases",
         ],
     }
     profile_manifest.validate_manifest(manifest)
@@ -328,7 +328,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
     subject_sha = profile_smoke.workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = profile_smoke.sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     profile_smoke.validate_allocator_lock(lock_path, target)
 
     token = profile_smoke.run_token()

@@ -499,7 +499,7 @@ def main() -> int:
     subject_sha = workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     validate_allocator_lock(lock_path, target)
 
     token = run_token()

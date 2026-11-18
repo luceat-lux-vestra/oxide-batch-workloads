@@ -292,7 +292,7 @@ fn accepted_fixture_reconciles_schedule_resources_and_atomic_summary() {
         summary.resources.filesystem_available_bytes.minimum,
         Some(850)
     );
-    assert_eq!(summary.campaign.oxide_batch_version, "0.6.0");
+    assert_eq!(summary.campaign.oxide_batch_version, "0.7.0");
 
     let summary_path = root.join(&campaign_id).join("summary.json");
     assert!(summary_path.is_file());

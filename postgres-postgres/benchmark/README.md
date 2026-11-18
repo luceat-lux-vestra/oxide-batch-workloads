@@ -1,5 +1,7 @@
 # PostgreSQL -> PostgreSQL comparative benchmark
 
+> **Version boundary:** retained benchmark evidence described below was produced against exact published OxideBatch `0.6.0`. The current executable workload pin is exact published `0.7.0`; any new benchmark run must record the new subject and must not rewrite historical evidence.
+
 Campaign: #73
 Primary Track: #13
 

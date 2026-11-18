@@ -1,10 +1,11 @@
 # postgres-postgres
 
-Independent external-consumer validation of published
-[OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch) **`0.6.0`**
-(exact crates.io artifact with the `postgres` feature): a restartable
-PostgreSQL-to-PostgreSQL transform exercised end to end through the released
-`oxide_batch::JobLauncher` / `ChunkJob` path in both cursor and paging modes.
+Independent external-consumer validation workload for published
+[OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch). The current
+compatibility qualification target is the exact crates.io **`0.7.0`** artifact
+with the `postgres` feature. The retained campaign/evidence sections below
+remain historical **`0.6.0`** evidence until equivalent 0.7.0 evidence is
+produced; this upgrade does not relabel old evidence.
 
 This workload is the completed campaign tracked by
 [oxide-batch-workloads#63](../../issues/63). It covers clean execution,

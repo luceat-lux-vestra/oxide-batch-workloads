@@ -45,7 +45,7 @@ def valid_manifest(*, lane: str = "benchmark", allocator: str = "system") -> dic
             "build_profile": "release",
             "oxide_batch": {
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "registry+https://github.com/rust-lang/crates.io-index",
                 "checksum": "c" * 64,
             },
@@ -226,7 +226,7 @@ class ProfileManifestTests(unittest.TestCase):
     def test_rejects_non_published_oxide_batch_subject(self) -> None:
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
-        with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.6.0'"):
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.7.0'"):
             profile_manifest.validate_manifest(document)
 
     def test_rejects_allocator_on_unqualified_target(self) -> None:

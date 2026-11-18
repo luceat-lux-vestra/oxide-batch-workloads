@@ -126,7 +126,7 @@ checksum = "d"
             target="aarch64-unknown-linux-gnu",
             oxide_subject={
                 "name": "oxide-batch",
-                "version": "0.6.0",
+                "version": "0.7.0",
                 "source": "sparse+https://index.crates.io/",
                 "checksum": "c" * 64,
             },

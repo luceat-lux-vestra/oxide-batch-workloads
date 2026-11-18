@@ -1,5 +1,7 @@
 # OxideBatch 0.6.0 profiling-harness contract
 
+> **Version boundary:** this document records the original #266 Phase-0 contract and retained evidence for exact published OxideBatch `0.6.0`. The executable harness now qualifies the current exact `0.7.0` workload pin. New runs must record `0.7.0`; historical 0.6.0 evidence is not relabeled.
+
 Campaign: #266  
 Primary Track: #13  
 Cross-track context: #14, #18, #19, #203

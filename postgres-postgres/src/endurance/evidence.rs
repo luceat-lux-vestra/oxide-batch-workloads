@@ -21,7 +21,7 @@ const ITERATION_SCHEMA: &str = "oxide-batch-workloads.endurance-iteration";
 const FAILURE_SCHEMA: &str = "oxide-batch-workloads.endurance-failure";
 const SCHEMA_VERSION: u32 = 1;
 const WORKLOAD_NAME: &str = "postgres-postgres";
-const OXIDE_BATCH_VERSION: &str = "0.6.0";
+const OXIDE_BATCH_VERSION: &str = "0.7.0";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BinaryIdentity {

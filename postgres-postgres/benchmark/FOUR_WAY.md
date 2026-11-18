@@ -1,5 +1,7 @@
 # Campaign #79 four-way same-host measurement
 
+> **Version boundary:** retained four-way campaign evidence below is historical OxideBatch `0.6.0` evidence. The current executable OxideBatch subject is exact published `0.7.0`; reruns must identify that subject explicitly rather than relabeling old results.
+
 This document defines PR4's measurement/report boundary for the PostgreSQL-to-PostgreSQL comparison. It extends the already accepted #73 raw-Rust/Oxide methodology with the raw Java/JDBC and Spring Batch 6.0.5 candidates added by #79 PR1-PR3.
 
 No timing produced by PR validation, a feature branch, PR1, PR2, or PR3 is campaign performance evidence. Only a fresh canonical workflow run from authoritative `main` after PR4 is merged and post-merge correctness gates are green can be reviewed for #79 closure.

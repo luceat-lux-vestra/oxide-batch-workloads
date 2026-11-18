@@ -148,7 +148,7 @@ def cpu_limitations() -> list[str]:
         "CPU profiler runtime is attribution evidence only and must not be compared with benchmark-lane timing",
         "on-CPU sampling can underrepresent database, network, lock, sleep, and other off-CPU wait time",
         "hosted-runner attribution validates orchestration and profile readability, not stable-host absolute performance",
-        "OxideBatch 0.6.0 Phase 0 evidence must not be generalized to the post-M7 allocator decision",
+        "OxideBatch 0.7.0 evidence must not be generalized to later releases or a permanent allocator decision",
     ]
 
 
@@ -242,7 +242,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
     subject_sha = profile_smoke.workload_sha()
     lock_path = Path("Cargo.lock")
     cargo_lock_sha256 = profile_smoke.sha256_file(lock_path)
-    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.6.0")
+    oxide_subject = paired.lock_package(lock_path, "oxide-batch", "0.7.0")
     profile_smoke.validate_allocator_lock(lock_path, target)
 
     token = profile_smoke.run_token()
