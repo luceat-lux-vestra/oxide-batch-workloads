@@ -629,6 +629,18 @@ struct SmapsRollupMetrics {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_process_gone_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::NotFound)
+        || matches!(error.raw_os_error(), Some(2) | Some(3))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_procfs_permission_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::PermissionDenied)
+        || matches!(error.raw_os_error(), Some(1) | Some(13))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation> {
     let proc_root = PathBuf::from(format!("/proc/{pid}"));
     let status_path = proc_root.join("status");
@@ -638,7 +650,7 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
 
     let status = match fs::read_to_string(&status_path) {
         Ok(status) => status,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if is_process_gone_error(&error) => {
             return Ok(ProcessObservation {
                 pid,
                 role: role.to_owned(),
@@ -671,7 +683,7 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
     let status_metrics = parse_status_metrics(&status)?;
     let (stat_metrics, stat_missing) = match fs::read_to_string(&stat_path) {
         Ok(stat) => (Some(parse_stat_metrics(&stat)?), false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, true),
+        Err(error) if is_process_gone_error(&error) => (None, true),
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("read process stat {}", stat_path.display()));
@@ -680,22 +692,18 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
 
     let (smaps, smaps_rollup_unavailable_reason) = match fs::read_to_string(&smaps_rollup_path) {
         Ok(smaps) => (parse_smaps_rollup(&smaps)?, None),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            (
-                SmapsRollupMetrics::default(),
-                Some(match error.kind() {
-                    std::io::ErrorKind::PermissionDenied => {
-                        "smaps-rollup-permission-denied".to_owned()
-                    }
-                    _ => "smaps-rollup-unavailable".to_owned(),
-                }),
-            )
-        }
+        Err(error) if is_process_gone_error(&error) => (
+            SmapsRollupMetrics::default(),
+            Some(if error.raw_os_error() == Some(3) {
+                "process-exited-before-smaps-rollup".to_owned()
+            } else {
+                "smaps-rollup-unavailable-or-process-exited".to_owned()
+            }),
+        ),
+        Err(error) if is_procfs_permission_error(&error) => (
+            SmapsRollupMetrics::default(),
+            Some("smaps-rollup-permission-denied".to_owned()),
+        ),
         Err(error) => {
             return Err(error).with_context(|| {
                 format!("read process smaps_rollup {}", smaps_rollup_path.display())
@@ -714,22 +722,14 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
             }
             (Some(count), None)
         }
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            (
-                None,
-                Some(match error.kind() {
-                    std::io::ErrorKind::PermissionDenied => {
-                        "fd-directory-permission-denied".to_owned()
-                    }
-                    _ => "process-exited-before-fd-sample".to_owned(),
-                }),
-            )
-        }
+        Err(error) if is_process_gone_error(&error) => (
+            None,
+            Some("process-exited-before-fd-sample".to_owned()),
+        ),
+        Err(error) if is_procfs_permission_error(&error) => (
+            None,
+            Some("fd-directory-permission-denied".to_owned()),
+        ),
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("read process fd directory {}", fd_path.display()));
@@ -912,6 +912,35 @@ fn kib_to_bytes(value: u64) -> Result<u64> {
 #[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 mod procfs_parser_tests {
     use super::*;
+
+    #[test]
+    fn classifies_procfs_process_disappearance_without_hiding_other_io_errors() {
+        let enoent = std::io::Error::from_raw_os_error(2);
+        let esrch = std::io::Error::from_raw_os_error(3);
+        let synthetic_not_found =
+            std::io::Error::new(std::io::ErrorKind::NotFound, "synthetic not found");
+        let eio = std::io::Error::from_raw_os_error(5);
+        let eacces = std::io::Error::from_raw_os_error(13);
+
+        assert!(is_process_gone_error(&enoent));
+        assert!(is_process_gone_error(&esrch));
+        assert!(is_process_gone_error(&synthetic_not_found));
+        assert!(!is_process_gone_error(&eio));
+        assert!(!is_process_gone_error(&eacces));
+    }
+
+    #[test]
+    fn classifies_procfs_permission_errors_separately() {
+        let eperm = std::io::Error::from_raw_os_error(1);
+        let eacces = std::io::Error::from_raw_os_error(13);
+        let enoent = std::io::Error::from_raw_os_error(2);
+        let eio = std::io::Error::from_raw_os_error(5);
+
+        assert!(is_procfs_permission_error(&eperm));
+        assert!(is_procfs_permission_error(&eacces));
+        assert!(!is_procfs_permission_error(&enoent));
+        assert!(!is_procfs_permission_error(&eio));
+    }
 
     #[test]
     fn parses_status_resource_fields() {
