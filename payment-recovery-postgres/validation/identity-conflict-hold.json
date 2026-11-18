@@ -19,20 +19,20 @@
     "currency": "USD",
     "idempotency_key_digest": "358f2896fd92e76726de70c477e1d90f7273815e07211de2d5c6c3bf0de0a363",
     "payment_method_token_digest": "17b5061f4235d323ddda4bc2080f65d7caa6abd39816df2eb02c0d081505c482",
-    "provider_payment_id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+    "provider_payment_id": "kb-8696a9aa-9096-4602-9b20-8d3823644f13",
     "gateway_operation_id": "op-identity-conflict",
-    "source_updated_at": "2026-11-15 10:03:35.866291+00"
+    "source_updated_at": "2026-11-18 08:09:30.24821+00"
   },
   "observations": {
     "run": {
       "run_id": "run-identity-conflict",
       "contract_version": "payment-recovery-v1",
       "oxide_batch_version": "0.7.0",
-      "business_date": "2026-11-15",
+      "business_date": "2026-11-18",
       "eligibility_cutoff": "2099-01-01 00:00:00+00",
       "scenario_set_id": "run-identity-conflict",
       "policy_version": "payment-recovery-policy-v1",
-      "candidate_set_digest": "ae57372a22ff944a4227f7fd0fb9f724feeb5021ae1c99876753fc25956b1163",
+      "candidate_set_digest": "1d7f135a7e955ac2f10388145b310e234338db7e0f644743bbfcffd804cc26fd",
       "processing_generation": 1,
       "run_state": "PROCESSED"
     },
@@ -44,10 +44,10 @@
         "merchant_http_status": 200,
         "canonical_payment_state": "AUTHORIZED",
         "canonical_operation_state": "SUCCEEDED",
-        "canonical_provider_payment_id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+        "canonical_provider_payment_id": "kb-8696a9aa-9096-4602-9b20-8d3823644f13",
         "canonical_gateway_operation_id": "op-identity-conflict",
         "provider_visibility": "IMMEDIATE",
-        "provider_payment_id": "conflicting-kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+        "provider_payment_id": "conflicting-kb-8696a9aa-9096-4602-9b20-8d3823644f13",
         "provider_currency": "USD",
         "provider_status": "authorized",
         "provider_authorized_amount_minor": 901,
@@ -62,7 +62,7 @@
       "final_canonical_payment_state": "AUTHORIZED",
       "final_canonical_operation_state": "SUCCEEDED",
       "final_provider_status": "authorized",
-      "result_digest": "978c6de39c4e602ebb8146d921a583645d433a95f6fd9b00638ef080559048a7",
+      "result_digest": "4d72075f288f19150b05564940d78b96cac4e7effb600362dc28f9789272e9dc",
       "oracle_violations": [
         "provider GET identity mismatch"
       ]
@@ -70,7 +70,7 @@
     "provider_truth": {
       "http_status": 200,
       "exists": true,
-      "id": "kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58",
+      "id": "kb-8696a9aa-9096-4602-9b20-8d3823644f13",
       "currency": "USD",
       "status": "authorized",
       "authorized_amount": 901,
@@ -81,9 +81,9 @@
       "dropped": 1,
       "responded": 0,
       "forwarded_by_path": {
-        "GET /payments/kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58": 1,
+        "GET /payments/kb-8696a9aa-9096-4602-9b20-8d3823644f13": 1,
         "POST /payments": 1,
-        "POST /payments/kb-aef6be5e-ad6b-462c-84ac-bbc4e9674a58/authorize": 1
+        "POST /payments/kb-8696a9aa-9096-4602-9b20-8d3823644f13/authorize": 1
       },
       "responded_by_path": {},
       "transition_history": [],
