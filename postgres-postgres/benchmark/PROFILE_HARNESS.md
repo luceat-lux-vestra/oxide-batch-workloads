@@ -1245,3 +1245,40 @@ manifest hash closure, and correctness PASS before Lane E can be closed.
 Long-running/quiescence memory observations remain a separate campaign
 completion obligation and must not be inferred from this point-in-time Lane E
 snapshot.
+
+
+## Lane F retained OS/process evidence
+
+Lane F reuses the completed #203 endurance resource sampler rather than introducing a
+second process sampler. The retained producer is
+`benchmark/os_process_profile.py`; the opt-in workflow is
+`.github/workflows/profile-postgres-postgres-os-process.yml`.
+
+The producer deliberately keeps #203's frozen single-iteration workload semantics:
+200,000 source rows, seed 20,260,904, chunk size 1,000, paging sequence 2, and page
+size 750. This is not forced into the smaller Lane A-E rehearsal geometry because
+doing so would require changing the completed endurance workload contract or
+duplicating its sampler. Lane F is resource/operational evidence, not a timing
+comparison against those lanes.
+
+Retained authoritative raw evidence includes the #203 `campaign.json`,
+`events.jsonl`, `samples.jsonl`, and terminal iteration record. The compact
+`memory/projection/summary.json` and `memory/projection/run.json` files are
+explicit projections only. The manifest lane is `os-process`, carries no
+`benchmark_timing`, and hashes every retained artifact.
+
+The sampled process fields cover RSS/PSS/smaps classes, page faults, CPU ticks,
+voluntary/non-voluntary context switches, thread count, and FD count. Existing
+sampler observations retain PostgreSQL connection/database occupancy and
+filesystem capacity. A disappearing process is represented by null fields plus
+an explicit availability reason; it is never fabricated as a zero.
+
+The clean #203 iteration now preserves the successful verifier JSON report
+additively in its durable terminal result. Lane F therefore uses the verifier's
+actual expected/actual digests for correctness provenance rather than deriving or
+inventing a replacement digest after cleanup.
+
+The hosted-runner workflow validates orchestration, artifact closure, and bounded
+resource evidence only. It does not establish a leak, stable-host performance, or
+the separate long-running/quiescence completion criterion. The latter remains a
+separate S10/#203 evidence unit.

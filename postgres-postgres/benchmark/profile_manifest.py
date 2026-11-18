@@ -204,6 +204,11 @@ def validate_instrumentation(instrumentation: dict[str, Any], lane: str) -> None
             fail("allocator lane must not attach a profiler")
         if not tools:
             fail("allocator lane requires at least one allocator-native telemetry tool")
+    if lane == "os-process":
+        if profiler_attached:
+            fail("os-process lane must not attach a profiler")
+        if not tools:
+            fail("os-process lane requires at least one resource-observation tool")
     if lane in {"cpu", "heap"}:
         if not profiler_attached:
             fail(f"{lane} lane requires profiler attachment")

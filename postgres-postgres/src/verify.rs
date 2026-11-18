@@ -26,8 +26,9 @@
 //! the nonzero-mismatch failure below) is always driven by
 //! `total_mismatches`, never by `mismatches.len()`.
 
+use anyhow::Context;
 use futures_util::TryStreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::hex::hex_digest;
@@ -133,14 +134,14 @@ fn hash_actual(hasher: &mut Sha256, row: &ActualRow) {
     hasher.update([0xFFu8]);
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 struct Mismatch {
     customer_id: i64,
     reason: String,
 }
 
-#[derive(Serialize)]
-struct VerifyReport {
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct VerifyReport {
     import_name: String,
     source_digest: String,
     source_rows: usize,
@@ -160,6 +161,37 @@ struct VerifyReport {
     /// `total_mismatches - mismatches.len()`.
     mismatches: Vec<Mismatch>,
     mismatches_truncated: bool,
+}
+
+/// Parse and validate the JSON emitted by a successful `verify` child.
+///
+/// The caller must still require a successful process exit. This function
+/// independently validates the report's success invariants so durable evidence
+/// cannot record a structurally valid but contradictory verifier payload.
+pub fn parse_successful_report(bytes: &[u8]) -> anyhow::Result<VerifyReport> {
+    let report: VerifyReport =
+        serde_json::from_slice(bytes).context("parse successful verify child stdout as JSON")?;
+
+    if !report.row_counts_match {
+        anyhow::bail!("successful verify report says row counts do not match");
+    }
+    if !report.digests_match {
+        anyhow::bail!("successful verify report says digests do not match");
+    }
+    if report.expected_digest_sha256 != report.actual_digest_sha256 {
+        anyhow::bail!("successful verify report digest fields disagree");
+    }
+    if report.total_mismatches != 0 {
+        anyhow::bail!(
+            "successful verify report contains {} mismatches",
+            report.total_mismatches
+        );
+    }
+    if !report.mismatches.is_empty() || report.mismatches_truncated {
+        anyhow::bail!("successful verify report retains mismatch diagnostics");
+    }
+
+    Ok(report)
 }
 
 /// Records one mismatch: always increments `total`, but only appends to
@@ -386,4 +418,54 @@ pub async fn verify(database_url: &str, import_name: &str) -> anyhow::Result<()>
         anyhow::bail!("verify failed: expected and actual content digests do not match");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_successful_report;
+
+    fn successful_report_json() -> Vec<u8> {
+        br#"{
+            "import_name":"endurance_fixture_000002_paging",
+            "source_digest":"source-fixture",
+            "source_rows":200000,
+            "destination_rows":200000,
+            "row_counts_match":true,
+            "expected_digest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "actual_digest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "digests_match":true,
+            "total_mismatches":0,
+            "mismatches":[],
+            "mismatches_truncated":false
+        }"#.to_vec()
+    }
+
+    #[test]
+    fn successful_report_round_trips_with_exact_durable_shape() -> anyhow::Result<()> {
+        let report = parse_successful_report(&successful_report_json())?;
+        let value = serde_json::to_value(report)?;
+
+        assert_eq!(value["source_rows"], 200_000);
+        assert_eq!(value["destination_rows"], 200_000);
+        assert_eq!(value["row_counts_match"], true);
+        assert_eq!(value["digests_match"], true);
+        assert_eq!(value["total_mismatches"], 0);
+        assert_eq!(value["mismatches"], serde_json::json!([]));
+        assert_eq!(value["mismatches_truncated"], false);
+        assert_eq!(
+            value["expected_digest_sha256"],
+            value["actual_digest_sha256"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn successful_report_parser_rejects_contradictory_payload() -> anyhow::Result<()> {
+        let mut value: serde_json::Value = serde_json::from_slice(&successful_report_json())?;
+        value["total_mismatches"] = serde_json::json!(1);
+
+        let bytes = serde_json::to_vec(&value)?;
+        assert!(parse_successful_report(&bytes).is_err());
+        Ok(())
+    }
 }

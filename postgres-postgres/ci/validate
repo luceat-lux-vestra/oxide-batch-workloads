@@ -729,6 +729,9 @@ run_ci_stage() {
   echo "Allocator-native telemetry producer tests"
   python3 benchmark/test_allocator_telemetry_profile.py
 
+  echo "OS/process telemetry producer tests"
+  python3 benchmark/test_os_process_profile.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 

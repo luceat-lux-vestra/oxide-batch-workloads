@@ -86,6 +86,7 @@ pub struct CleanIterationResult {
     pub page_size: Option<usize>,
     pub run: ChildProcessResult,
     pub verification: ChildProcessResult,
+    pub verification_report: crate::verify::VerifyReport,
     pub cleanup_deleted_rows: u64,
 }
 
@@ -231,6 +232,7 @@ pub async fn execute_clean_iteration_observed(
     )
     .await?;
     require_success("verify", &verification, &verify_output)?;
+    let verification_report = crate::verify::parse_successful_report(&verify_output.stdout)?;
 
     let cleanup_deleted_rows = cleanup_business(database_url, &plan.import_name).await?;
     observer.record(
@@ -251,6 +253,7 @@ pub async fn execute_clean_iteration_observed(
         page_size,
         run,
         verification,
+        verification_report,
         cleanup_deleted_rows,
     })
 }
