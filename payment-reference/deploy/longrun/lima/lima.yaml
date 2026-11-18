@@ -1,0 +1,73 @@
+# Owner: #318
+# Canonical first service-shaped host: dedicated ARM64 Linux VM on Apple Silicon.
+minimumLimaVersion: 2.3.0
+
+vmType: "vz"
+arch: "aarch64"
+cpus: 8
+memory: "24GiB"
+disk: "120GiB"
+
+images:
+- location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+  digest: "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+  variant: "server"
+
+# Keep campaign data on the VM-local disk. The reference campaign must not
+# depend on a host-shared filesystem.
+mounts: []
+
+containerd:
+  system: false
+  user: false
+
+rosetta:
+  enabled: false
+  binfmt: false
+
+networkOpts:
+  hostLoopback: false
+
+# Do not expose payment-reference guest-loopback services onto the macOS host.
+portForwards:
+- guestIP: "127.0.0.1"
+  guestPortRange: [1, 65535]
+  proto: "any"
+  ignore: true
+
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends       ca-certificates       curl       git       jq       python3
+
+    if ! command -v docker >/dev/null 2>&1; then
+      curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+      sh /tmp/get-docker.sh
+      rm -f /tmp/get-docker.sh
+    fi
+
+    systemctl enable --now docker.service docker.socket
+    usermod -aG docker "{{.User}}"
+
+    install -d -m 0750 -o "{{.User}}" -g "{{.User}}"       /var/lib/oxide-batch-workloads       /var/lib/oxide-batch-workloads/src       /var/lib/oxide-batch-workloads/evidence
+
+probes:
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    test "$(uname -m)" = "aarch64"
+    test "$(nproc)" -ge 8
+    test "$(awk '/MemTotal:/ {print int($2 * 1024)}' /proc/meminfo)" -ge 25769803776
+    timeout 60s bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+    docker compose version >/dev/null
+
+message: |
+  #318 ARM64 host VM is running.
+  Next: run the repository's host-qualification sequence from inside the guest.
