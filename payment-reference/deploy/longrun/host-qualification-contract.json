@@ -1,20 +1,25 @@
 {
   "schema": "oxide-batch-workloads.payment-reference-host-qualification-contract",
-  "schema_version": 1,
+  "schema_version": 2,
   "campaign_contract": "payment-reference-longrun-v1",
   "campaign_issue": 318,
+  "host_profile": "oci-free-shared-arm64-linux-v1",
   "allowed_guest_architectures": ["aarch64", "arm64"],
-  "minimum_vcpu": 8,
-  "minimum_memory_bytes": 25769803776,
+  "minimum_vcpu": 2,
+  "minimum_memory_bytes": 11811160064,
   "minimum_disk_total_bytes": 128849018880,
   "minimum_disk_free_bytes": 42949672960,
+  "campaign_admission": {
+    "minimum_memory_available_bytes": 7516192768,
+    "maximum_swap_used_bytes": 536870912
+  },
   "disk_guard": {
     "minimum_free_percent": 20,
     "minimum_free_bytes": 21474836480
   },
   "qualification": {
     "consecutive_smoke_runs": 3,
-    "post_reboot_smoke_runs": 1,
+    "stack_restart_smoke_runs": 1,
     "pre_campaign_quiescence_seconds": 1800,
     "unexpected_container_restart_limit": 0,
     "unexpected_oom_limit": 0
