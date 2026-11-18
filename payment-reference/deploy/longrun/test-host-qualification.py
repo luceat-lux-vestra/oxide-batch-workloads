@@ -22,6 +22,7 @@ def load_module(name: str, filename: str):
 
 
 capture = load_module("capture_provenance", "capture-provenance.py")
+admission = load_module("campaign_admission", "check-admission.py")
 guard = load_module("disk_guard", "disk-guard.py")
 
 GIB = 1024 * 1024 * 1024
@@ -95,14 +96,19 @@ class HostQualificationTests(unittest.TestCase):
         contract = capture.load_contract(HERE / "host-qualification-contract.json")
         self.assertEqual(contract["campaign_issue"], 318)
         self.assertEqual(contract["campaign_contract"], "payment-reference-longrun-v1")
-        self.assertEqual(contract["minimum_vcpu"], 8)
-        self.assertEqual(contract["minimum_memory_bytes"], 24 * GIB)
+        self.assertEqual(contract["schema_version"], 2)
+        self.assertEqual(contract["host_profile"], "oci-free-shared-arm64-linux-v1")
+        self.assertEqual(contract["minimum_vcpu"], 2)
+        self.assertEqual(contract["minimum_memory_bytes"], 11 * GIB)
         self.assertEqual(contract["minimum_disk_total_bytes"], 120 * GIB)
         self.assertEqual(contract["minimum_disk_free_bytes"], 40 * GIB)
+        self.assertEqual(contract["campaign_admission"]["minimum_memory_available_bytes"], 7 * GIB)
+        self.assertEqual(contract["campaign_admission"]["maximum_swap_used_bytes"], 512 * 1024 * 1024)
         self.assertEqual(contract["disk_guard"]["minimum_free_percent"], 20)
         self.assertEqual(contract["disk_guard"]["minimum_free_bytes"], 20 * GIB)
         self.assertEqual(contract["qualification"]["consecutive_smoke_runs"], 3)
-        self.assertEqual(contract["qualification"]["post_reboot_smoke_runs"], 1)
+        self.assertEqual(contract["qualification"]["stack_restart_smoke_runs"], 1)
+        self.assertNotIn("post_reboot_smoke_runs", contract["qualification"])
         self.assertEqual(contract["qualification"]["pre_campaign_quiescence_seconds"], 1800)
 
     def test_resource_contract_is_fail_closed(self) -> None:
@@ -110,19 +116,19 @@ class HostQualificationTests(unittest.TestCase):
         capture.validate_host_resources(
             contract,
             architecture="aarch64",
-            vcpu=8,
-            memory_total_bytes=24 * GIB,
+            vcpu=2,
+            memory_total_bytes=11 * GIB,
             disk_total_bytes=120 * GIB,
             disk_free_bytes=40 * GIB,
             host_sleep_disabled_attested=True,
         )
         cases = [
-            dict(architecture="x86_64", vcpu=8, memory_total_bytes=24 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
-            dict(architecture="aarch64", vcpu=7, memory_total_bytes=24 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
-            dict(architecture="aarch64", vcpu=8, memory_total_bytes=24 * GIB - 1, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
-            dict(architecture="aarch64", vcpu=8, memory_total_bytes=24 * GIB, disk_total_bytes=120 * GIB - 1, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
-            dict(architecture="aarch64", vcpu=8, memory_total_bytes=24 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB - 1, host_sleep_disabled_attested=True),
-            dict(architecture="aarch64", vcpu=8, memory_total_bytes=24 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=False),
+            dict(architecture="x86_64", vcpu=2, memory_total_bytes=11 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
+            dict(architecture="aarch64", vcpu=1, memory_total_bytes=11 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
+            dict(architecture="aarch64", vcpu=2, memory_total_bytes=11 * GIB - 1, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
+            dict(architecture="aarch64", vcpu=2, memory_total_bytes=11 * GIB, disk_total_bytes=120 * GIB - 1, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=True),
+            dict(architecture="aarch64", vcpu=2, memory_total_bytes=11 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB - 1, host_sleep_disabled_attested=True),
+            dict(architecture="aarch64", vcpu=2, memory_total_bytes=11 * GIB, disk_total_bytes=120 * GIB, disk_free_bytes=40 * GIB, host_sleep_disabled_attested=False),
         ]
         for case in cases:
             with self.subTest(case=case):
@@ -202,6 +208,7 @@ class HostQualificationTests(unittest.TestCase):
                 )
                 host = json.loads((evidence / "host.json").read_text())
                 self.assertEqual(host["repository_sha"], SHA)
+                self.assertEqual(host["host_profile"], "oci-free-shared-arm64-linux-v1")
                 self.assertEqual(host["vcpu"], 8)
                 runtime = json.loads((evidence / "runtime.json").read_text())
                 self.assertEqual(runtime["compose_services"], ["merchant"])
@@ -282,6 +289,50 @@ class HostQualificationTests(unittest.TestCase):
         self.assertIn('drop_id="$(qualified_id provider-fault-plan-drop)"', fault)
         self.assertNotIn('pre_id="provider-fault-plan-503"', fault)
         self.assertNotIn('drop_id="provider-fault-plan-drop"', fault)
+
+    def test_shared_host_campaign_admission_is_fail_closed(self) -> None:
+        contract = admission.load_contract(HERE / "host-qualification-contract.json")
+        allowed = admission.evaluate(
+            contract,
+            architecture="aarch64",
+            vcpu=2,
+            memory_total_bytes=12 * GIB,
+            memory_available_bytes=8 * GIB,
+            swap_total_bytes=2 * GIB,
+            swap_free_bytes=2 * GIB,
+            disk_total_bytes=150 * GIB,
+            disk_free_bytes=80 * GIB,
+            data_path="/srv/oxide-batch-workloads",
+        )
+        self.assertEqual(allowed["decision"], "ALLOW")
+
+        low_memory = admission.evaluate(
+            contract,
+            architecture="aarch64",
+            vcpu=2,
+            memory_total_bytes=12 * GIB,
+            memory_available_bytes=6 * GIB,
+            swap_total_bytes=2 * GIB,
+            swap_free_bytes=2 * GIB,
+            disk_total_bytes=150 * GIB,
+            disk_free_bytes=80 * GIB,
+            data_path="/srv/oxide-batch-workloads",
+        )
+        self.assertEqual(low_memory["decision"], "BLOCK")
+
+        swap_pressure = admission.evaluate(
+            contract,
+            architecture="aarch64",
+            vcpu=2,
+            memory_total_bytes=12 * GIB,
+            memory_available_bytes=8 * GIB,
+            swap_total_bytes=2 * GIB,
+            swap_free_bytes=1 * GIB,
+            disk_total_bytes=150 * GIB,
+            disk_free_bytes=80 * GIB,
+            data_path="/srv/oxide-batch-workloads",
+        )
+        self.assertEqual(swap_pressure["decision"], "BLOCK")
 
     def test_disk_guard_matches_203_policy(self) -> None:
         allowed = guard.evaluate(100 * GIB, 25 * GIB, 20, 20 * GIB)
