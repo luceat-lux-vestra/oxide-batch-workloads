@@ -58,7 +58,7 @@ provision:
     install -d -m 0750 -o "{{.User}}" -g "{{.User}}"       /var/lib/oxide-batch-workloads       /var/lib/oxide-batch-workloads/src       /var/lib/oxide-batch-workloads/evidence
 
 probes:
-- mode: user
+- mode: readiness
   script: |
     #!/bin/bash
     set -eux -o pipefail
