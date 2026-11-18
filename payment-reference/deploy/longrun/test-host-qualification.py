@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -282,6 +283,38 @@ class HostQualificationTests(unittest.TestCase):
         self.assertIn('drop_id="$(qualified_id provider-fault-plan-drop)"', fault)
         self.assertNotIn('pre_id="provider-fault-plan-503"', fault)
         self.assertNotIn('drop_id="provider-fault-plan-drop"', fault)
+
+
+    def test_guest_provisioning_helper_is_syntax_valid_and_stays_outside_qualification(self) -> None:
+        script = HERE / "prepare-ubuntu-host.sh"
+        completed = subprocess.run(
+            ["bash", "-n", str(script)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        content = script.read_text(encoding="utf-8")
+        for required in (
+            "host-qualification-contract.json",
+            "Ubuntu 24.04 LTS",
+            "download.docker.com/linux/ubuntu",
+            "docker-ce",
+            "docker-compose-plugin",
+            "systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target",
+            "config --quiet",
+            "disk-guard.py",
+            "physical_host_sleep_attestation=NOT_CAPTURED_BY_THIS_SCRIPT",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, content)
+
+        self.assertNotIn("docker compose up", content)
+        self.assertNotIn("smoke.sh", content)
+        self.assertNotIn("capture-provenance.py", content)
+        self.assertNotIn("--host-sleep-disabled-attested", content)
 
     def test_disk_guard_matches_203_policy(self) -> None:
         allowed = guard.evaluate(100 * GIB, 25 * GIB, 20, 20 * GIB)

@@ -47,6 +47,43 @@ python3 payment-reference/deploy/longrun/test-host-qualification.py
 It is also invoked by the normal payment-reference runtime smoke so contract
 drift fails before expensive runtime setup.
 
+
+## Guest provisioning helper
+
+Provisioning is deliberately separate from qualification. A fresh Ubuntu 24.04
+ARM64 guest can be prepared from a clean repository checkout with:
+
+\`\`\`bash
+sudo bash payment-reference/deploy/longrun/prepare-ubuntu-host.sh
+\`\`\`
+
+The helper:
+
+- rejects non-Ubuntu-24.04 and non-ARM64 guests;
+- installs Git, Python, jq and Docker Engine + Buildx/Compose from Docker's
+  Ubuntu package repository;
+- enables Docker and masks **guest** sleep/suspend/hibernate targets;
+- adds the invoking operator to the \`docker\` group;
+- creates the durable host-qualification evidence root;
+- enforces the machine-readable CPU/RAM/disk floors before proceeding;
+- verifies Docker Engine architecture and \`docker compose ... config --quiet\`;
+- runs the #203-equivalent disk guard.
+
+It intentionally does **not**:
+
+- create or resize the VM;
+- choose/freeze a hypervisor;
+- disable sleep on the physical Apple-Silicon host;
+- start the payment-reference services;
+- run qualification smoke tests;
+- capture immutable provenance;
+- reboot the guest;
+- claim that the host is qualified.
+
+After it succeeds, log out/in (or reboot) so Docker group membership is active.
+The physical host's sleep must still be disabled by the operator and is only
+attested later during immutable provenance capture.
+
 ## Qualification sequence
 
 Use an exact clean repository revision. The canonical first campaign currently
