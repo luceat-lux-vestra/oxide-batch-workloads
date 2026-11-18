@@ -112,6 +112,36 @@ post_merchant() {
   fi
 }
 
+merchant_sql() {
+  local query="$1"
+  "${compose[@]}" exec -T merchant-db \
+    psql -v ON_ERROR_STOP=1 -U merchant -d merchant -Atq -c "$query"
+}
+
+settlement_statement_id() {
+  local provider_account_id="$1"
+  local settlement_date="$2"
+  local currency="$3"
+  python3 - "$provider_account_id" "$settlement_date" "$currency" <<'PY'
+import hashlib
+import json
+import sys
+
+identity = {
+    "statement_contract_version": "provider-settlement-statement-v1",
+    "provider_account_id": sys.argv[1],
+    "settlement_date": sys.argv[2],
+    "currency": sys.argv[3],
+}
+canonical = json.dumps(
+    identity,
+    sort_keys=True,
+    separators=(",", ":"),
+).encode("utf-8")
+print("statement-" + hashlib.sha256(canonical).hexdigest())
+PY
+}
+
 provider_payment_status() {
   local provider_payment_id="$1"
   "${compose[@]}" exec -T payment-sandbox \
@@ -157,6 +187,8 @@ provider_payment() {
     >"$output"
 }
 
+python3 ../scenarios/v1/test_provider_settlement_statement.py
+
 "${compose[@]}" up -d --build
 
 wait_for_url "${killbill_base}/1.0/healthcheck"
@@ -194,6 +226,176 @@ fi
 
 wait_for_url "${gateway_base}/health"
 wait_for_url "${merchant_base}/health"
+
+# Settlement activation gate 5: Merchant authoritative close semantics.
+settlement_account="payment-sandbox-default"
+settlement_date="2026-11-18"
+settlement_currency="USD"
+settlement_statement_id="$(
+  settlement_statement_id "$settlement_account" "$settlement_date" "$settlement_currency"
+)"
+settlement_digest="sha256:$(printf 'a%.0s' {1..64})"
+settlement_close_body="$(
+  jq -nc \
+    --arg statement_id "$settlement_statement_id" \
+    --arg statement_digest "$settlement_digest" \
+    --arg provider_account_id "$settlement_account" \
+    --arg settlement_date "$settlement_date" \
+    --arg currency "$settlement_currency" \
+    '{
+      statement_id:$statement_id,
+      statement_digest:$statement_digest,
+      provider_account_id:$provider_account_id,
+      settlement_date:$settlement_date,
+      currency:$currency,
+      line_count:3,
+      captured_total_minor:6000,
+      refunded_total_minor:3500,
+      net_settlement_total_minor:2500
+    }'
+)"
+
+post_merchant "/settlements/close" "$settlement_close_body" 201 /tmp/pr-settlement-close-created.json
+jq -e '
+  .statement_id == "'"$settlement_statement_id"'"
+  and .settlement_state == "CLOSED"
+  and .replayed == false
+  and .line_count == 3
+  and .captured_total_minor == 6000
+  and .refunded_total_minor == 3500
+  and .net_settlement_total_minor == 2500
+' /tmp/pr-settlement-close-created.json >/dev/null
+
+post_merchant "/settlements/close" "$settlement_close_body" 200 /tmp/pr-settlement-close-replay.json
+jq -e '
+  .statement_id == "'"$settlement_statement_id"'"
+  and .settlement_state == "CLOSED"
+  and .replayed == true
+' /tmp/pr-settlement-close-replay.json >/dev/null
+
+settlement_conflict_digest="sha256:$(printf 'b%.0s' {1..64})"
+settlement_conflict_body="$(
+  jq -nc \
+    --arg statement_id "$settlement_statement_id" \
+    --arg statement_digest "$settlement_conflict_digest" \
+    --arg provider_account_id "$settlement_account" \
+    --arg settlement_date "$settlement_date" \
+    --arg currency "$settlement_currency" \
+    '{
+      statement_id:$statement_id,
+      statement_digest:$statement_digest,
+      provider_account_id:$provider_account_id,
+      settlement_date:$settlement_date,
+      currency:$currency,
+      line_count:3,
+      captured_total_minor:6001,
+      refunded_total_minor:3500,
+      net_settlement_total_minor:2501
+    }'
+)"
+post_merchant "/settlements/close" "$settlement_conflict_body" 409 /tmp/pr-settlement-close-conflict.json
+jq -e '.error | contains("different digest or totals")' /tmp/pr-settlement-close-conflict.json >/dev/null
+
+settlement_close_count="$(
+  merchant_sql "SELECT COUNT(*)::BIGINT
+                FROM payment_reference_merchant.settlement_close
+                WHERE statement_id = '$settlement_statement_id'
+                  AND settlement_state = 'CLOSED';"
+)"
+[ "$settlement_close_count" = "1" ] ||
+  fail "settlement exact replay/conflict changed CLOSED row cardinality: $settlement_close_count"
+
+settlement_event_count="$(
+  merchant_sql "SELECT COUNT(*)::BIGINT
+                FROM payment_reference_merchant.business_event
+                WHERE aggregate_type = 'SETTLEMENT'
+                  AND aggregate_id = '$settlement_statement_id'
+                  AND event_type = 'SETTLEMENT_CLOSED';"
+)"
+[ "$settlement_event_count" = "1" ] ||
+  fail "settlement exact replay emitted duplicate close events: $settlement_event_count"
+
+settlement_stored_digest="$(
+  merchant_sql "SELECT statement_digest
+                FROM payment_reference_merchant.settlement_close
+                WHERE statement_id = '$settlement_statement_id';"
+)"
+[ "$settlement_stored_digest" = "$settlement_digest" ] ||
+  fail "settlement conflict replaced the authoritative digest"
+
+held_account="payment-sandbox-held"
+held_date="2026-11-19"
+held_statement_id="$(
+  settlement_statement_id "$held_account" "$held_date" "$settlement_currency"
+)"
+held_digest="sha256:$(printf 'c%.0s' {1..64})"
+merchant_sql "INSERT INTO payment_reference_merchant.settlement_close
+  (
+    statement_id,
+    statement_digest,
+    provider_account_id,
+    settlement_date,
+    currency,
+    line_count,
+    captured_total_minor,
+    refunded_total_minor,
+    net_settlement_total_minor,
+    settlement_state,
+    closed_at
+  )
+  VALUES (
+    '$held_statement_id',
+    '$held_digest',
+    '$held_account',
+    '$held_date'::date,
+    '$settlement_currency',
+    1,
+    100,
+    0,
+    100,
+    'HELD',
+    NULL
+  );" >/dev/null
+
+held_close_body="$(
+  jq -nc \
+    --arg statement_id "$held_statement_id" \
+    --arg statement_digest "$held_digest" \
+    --arg provider_account_id "$held_account" \
+    --arg settlement_date "$held_date" \
+    --arg currency "$settlement_currency" \
+    '{
+      statement_id:$statement_id,
+      statement_digest:$statement_digest,
+      provider_account_id:$provider_account_id,
+      settlement_date:$settlement_date,
+      currency:$currency,
+      line_count:1,
+      captured_total_minor:100,
+      refunded_total_minor:0,
+      net_settlement_total_minor:100
+    }'
+)"
+post_merchant "/settlements/close" "$held_close_body" 409 /tmp/pr-settlement-held-conflict.json
+jq -e '.error | contains("HELD")' /tmp/pr-settlement-held-conflict.json >/dev/null
+
+held_state="$(
+  merchant_sql "SELECT settlement_state
+                FROM payment_reference_merchant.settlement_close
+                WHERE statement_id = '$held_statement_id';"
+)"
+[ "$held_state" = "HELD" ] ||
+  fail "HELD settlement was mutated by close attempt: $held_state"
+
+held_event_count="$(
+  merchant_sql "SELECT COUNT(*)::BIGINT
+                FROM payment_reference_merchant.business_event
+                WHERE aggregate_type = 'SETTLEMENT'
+                  AND aggregate_id = '$held_statement_id'
+                  AND event_type = 'SETTLEMENT_CLOSED';"
+)"
+[ "$held_event_count" = "0" ] ||
+  fail "HELD settlement emitted a close event: $held_event_count"
 
 curl --fail --silent --show-error \
   --request POST \
@@ -702,5 +904,6 @@ printf 'Plugin registration: killbill-payment-sandbox\n'
 printf 'Happy paths: authorize/capture/refund, auth-capture, cancel\n'
 printf 'Negative paths: idempotency conflict, operation-id conflict, response-loss ambiguity, provider-503-before-side-effect\n'
 printf 'Fault matrix: plan-503, post-commit-loss, async-success/stale-convergence, async-failure, webhook ordering/duplicate/drop/retry\n'
+printf 'Settlement: deterministic statement/retention + Merchant close/replay/conflict/HELD cardinality\n'
 
 trap - EXIT

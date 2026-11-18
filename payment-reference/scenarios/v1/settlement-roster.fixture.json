@@ -1,0 +1,14 @@
+{
+  "contract_version": "settlement-roster-v1",
+  "scenario_version": 1,
+  "scenario_seed": 31401,
+  "source_revision": "e572ad3de8d679060ba0bf17f300bd9a15008612",
+  "provider_account_id": "payment-sandbox-default",
+  "settlement_date": "2026-11-18",
+  "currency": "USD",
+  "provider_payment_ids": [
+    "provider-payment-0001",
+    "provider-payment-0002",
+    "provider-payment-0003"
+  ]
+}

@@ -1,4 +1,5 @@
 mod gateway;
+mod settlement;
 
 use std::net::SocketAddr;
 
@@ -15,6 +16,7 @@ use payment_reference_contract::{
     PaymentMutationRequest, PaymentOperationKind, PaymentState,
 };
 use serde::{Deserialize, Serialize};
+use settlement::close_settlement;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 
 #[derive(Clone)]
@@ -148,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/settlements/close", post(close_settlement))
         .route("/merchants", post(create_merchant))
         .route("/customers", post(create_customer))
         .route("/orders", post(create_order))

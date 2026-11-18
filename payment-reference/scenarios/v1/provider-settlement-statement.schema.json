@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oxide-batch.dev/payment-reference/provider-settlement-statement-v1.schema.json",
+  "title": "Payment Reference Provider Settlement Statement v1",
+  "description": "Immutable provider-side periodized projection derived from an explicit settlement-roster-v1 and direct payment-sandbox provider truth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "statement_contract_version",
+    "statement_id",
+    "statement_digest",
+    "source_roster_digest",
+    "provider_account_id",
+    "settlement_date",
+    "currency",
+    "lines",
+    "line_count",
+    "captured_total_minor",
+    "refunded_total_minor",
+    "net_settlement_total_minor"
+  ],
+  "properties": {
+    "statement_contract_version": {
+      "const": "provider-settlement-statement-v1"
+    },
+    "statement_id": {
+      "type": "string",
+      "pattern": "^statement-[0-9a-f]{64}$",
+      "description": "SHA-256 identity derived only from statement_contract_version, provider_account_id, settlement_date, and currency."
+    },
+    "statement_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of canonical statement JSON with statement_digest omitted."
+    },
+    "source_roster_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "SHA-256 of canonical settlement-roster-v1 JSON."
+    },
+    "provider_account_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "settlement_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Producer emits lines sorted lexicographically by provider_payment_id.",
+      "items": {
+        "$ref": "#/$defs/settlement_line"
+      }
+    },
+    "line_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "captured_total_minor": {
+      "$ref": "#/$defs/nonnegative_i64"
+    },
+    "refunded_total_minor": {
+      "$ref": "#/$defs/nonnegative_i64"
+    },
+    "net_settlement_total_minor": {
+      "$ref": "#/$defs/nonnegative_i64"
+    }
+  },
+  "$defs": {
+    "nonnegative_i64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "settlement_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line_id",
+        "provider_payment_id",
+        "provider_version",
+        "currency",
+        "captured_amount_minor",
+        "refunded_amount_minor",
+        "net_settlement_amount_minor"
+      ],
+      "properties": {
+        "line_id": {
+          "type": "string",
+          "pattern": "^line-[0-9a-f]{64}$"
+        },
+        "provider_payment_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "provider_version": {
+          "$ref": "#/$defs/nonnegative_i64"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "captured_amount_minor": {
+          "$ref": "#/$defs/nonnegative_i64"
+        },
+        "refunded_amount_minor": {
+          "$ref": "#/$defs/nonnegative_i64"
+        },
+        "net_settlement_amount_minor": {
+          "$ref": "#/$defs/nonnegative_i64"
+        }
+      }
+    }
+  }
+}
