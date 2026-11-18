@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "campaign_issue": 271,
+  "contract_version": "payment-recovery-v1",
+  "validation_subject": "oxide-batch 0.7.0",
+  "scenario": "async-failure-convergence",
+  "scenario_kind": "deterministic-provider-failure",
+  "failure_point": null,
+  "candidate": {
+    "candidate_id": "candidate-3418a049f394256f83607745ab79ff438d30cd51439009e82d2cbfea697d468f",
+    "merchant_id": "merchant-async-failure",
+    "merchant_order_id": "order-async-failure",
+    "merchant_payment_id": "payment-async-failure",
+    "operation_id": "op-async-failure",
+    "operation_kind": "AUTHORIZE",
+    "payment_state": "PAYMENT_UNKNOWN",
+    "operation_state": "UNKNOWN",
+    "amount_minor": 912,
+    "currency": "USD",
+    "idempotency_key_digest": "12b3e0bf791847c4680fd40b6305ea39a7e1d54aa45250725ad27087a0229631",
+    "payment_method_token_digest": "3ed7a99166f987760e234e82d6ae68f39d84ca11890f965a2069b0a497614932",
+    "provider_payment_id": null,
+    "gateway_operation_id": null,
+    "source_updated_at": "2026-11-15 10:03:29.896406+00"
+  },
+  "observations": {
+    "run": {
+      "run_id": "run-async-failure",
+      "contract_version": "payment-recovery-v1",
+      "oxide_batch_version": "0.7.0",
+      "business_date": "2026-11-15",
+      "eligibility_cutoff": "2099-01-01 00:00:00+00",
+      "scenario_set_id": "run-async-failure",
+      "policy_version": "payment-recovery-policy-v1",
+      "candidate_set_digest": "fce34e3cdf148fce95005d38d46211ae9961f33f2beef02f512e69b86fd4e2ec",
+      "processing_generation": 2,
+      "run_state": "PROCESSED"
+    },
+    "attempts": [
+      {
+        "attempt_no": 1,
+        "processing_generation": 1,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "PAYMENT_FAILED",
+        "canonical_operation_state": "FAILED",
+        "canonical_provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "canonical_gateway_operation_id": "op-async-failure",
+        "provider_visibility": "NOT_FOUND",
+        "provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "provider_currency": null,
+        "provider_status": null,
+        "provider_authorized_amount_minor": null,
+        "provider_captured_amount_minor": null,
+        "provider_refunded_amount_minor": null,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      },
+      {
+        "attempt_no": 2,
+        "processing_generation": 2,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "PAYMENT_FAILED",
+        "canonical_operation_state": "FAILED",
+        "canonical_provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "canonical_gateway_operation_id": "op-async-failure",
+        "provider_visibility": "IMMEDIATE",
+        "provider_payment_id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+        "provider_currency": "USD",
+        "provider_status": "failed",
+        "provider_authorized_amount_minor": 0,
+        "provider_captured_amount_minor": 0,
+        "provider_refunded_amount_minor": 0,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      }
+    ],
+    "result": {
+      "classification": "RESOLVED_FAILED",
+      "duplicate_provider_mutation_count": 0,
+      "final_canonical_payment_state": "PAYMENT_FAILED",
+      "final_canonical_operation_state": "FAILED",
+      "final_provider_status": "failed",
+      "result_digest": "498bdc69d687d519e1608f71751e7cbea9651d75597cf902f7a8cb869f806acc",
+      "oracle_violations": []
+    },
+    "provider_truth": {
+      "http_status": 200,
+      "exists": true,
+      "id": "kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb",
+      "currency": "USD",
+      "status": "failed",
+      "authorized_amount": 0,
+      "captured_amount": 0,
+      "refunded_amount": 0
+    },
+    "fault": {
+      "dropped": 0,
+      "responded": 0,
+      "forwarded_by_path": {
+        "GET /payments/kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb": 1
+      },
+      "responded_by_path": {},
+      "transition_history": [
+        {
+          "operation_id": "issue-271-failed-auth",
+          "outcome": "FAILED",
+          "provider_side_effect": false,
+          "upstream_status": null,
+          "status_path": "/payments/kb-11b762d2-b0c2-4182-b7dd-aed3b556f3eb"
+        }
+      ],
+      "plan": {
+        "identity": {
+          "expected_canonical_outcome": "FAILED",
+          "expected_provider_truth": "FAILED",
+          "fault_plan_version": 1,
+          "logical_business_time": "2026-11-15T00:00:00Z",
+          "scenario_case": "issue-271-async-failure",
+          "scenario_version": 1,
+          "seed": 27105
+        },
+        "consumed_request_steps": [
+          "defer"
+        ],
+        "dispatched_timeline_steps": [
+          "fail"
+        ]
+      }
+    }
+  },
+  "side_effects": {
+    "successful_provider_effect_count": 0,
+    "provider_transition_effect": false,
+    "provider_mutation_forward_count": 0,
+    "duplicate_provider_mutation_count": 0
+  },
+  "phases": [
+    {
+      "name": "generation-1",
+      "processing_generation": 1,
+      "launched": true,
+      "result": {
+        "classification": "RETRY_LATER",
+        "duplicate_provider_mutation_count": 0,
+        "final_canonical_payment_state": "PAYMENT_FAILED",
+        "final_canonical_operation_state": "FAILED",
+        "final_provider_status": null,
+        "result_digest": "ce32e0b52b90658f3a3d4c39eaabbce4823758be2506c8b9b8e2b6448ed12bba",
+        "oracle_violations": []
+      }
+    },
+    {
+      "name": "generation-2",
+      "processing_generation": 2,
+      "launched": true,
+      "result": {
+        "classification": "RESOLVED_FAILED",
+        "duplicate_provider_mutation_count": 0,
+        "final_canonical_payment_state": "PAYMENT_FAILED",
+        "final_canonical_operation_state": "FAILED",
+        "final_provider_status": "failed",
+        "result_digest": "498bdc69d687d519e1608f71751e7cbea9651d75597cf902f7a8cb869f806acc",
+        "oracle_violations": []
+      }
+    }
+  ]
+}

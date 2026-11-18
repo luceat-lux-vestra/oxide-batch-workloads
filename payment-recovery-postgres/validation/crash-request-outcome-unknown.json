@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "campaign_issue": 271,
+  "contract_version": "payment-recovery-v1",
+  "validation_subject": "oxide-batch 0.7.0",
+  "scenario": "crash-request-outcome-unknown",
+  "scenario_kind": "hard-crash-new-process",
+  "failure_point": {
+    "signal": 9,
+    "boundary": "while-replay-outcome-unknown"
+  },
+  "candidate": {
+    "candidate_id": "candidate-2ba5a00f15d42d5aa0bb26bb5e75b12f79e8d2f45dda5c58a5ea696832b08c6f",
+    "merchant_id": "merchant-crash-2",
+    "merchant_order_id": "order-crash-2",
+    "merchant_payment_id": "payment-crash-2",
+    "operation_id": "op-crash-2",
+    "operation_kind": "AUTHORIZE",
+    "payment_state": "PAYMENT_UNKNOWN",
+    "operation_state": "UNKNOWN",
+    "amount_minor": 702,
+    "currency": "USD",
+    "idempotency_key_digest": "d6ff7c76cda32dd888c8da4021b87b09558fd26f07dcf7bb15e56b5019bd6b8a",
+    "payment_method_token_digest": "60b84d489b7ce0f2c3a86318cc160f506c282f4e85eabc86838311120ad52561",
+    "provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+    "gateway_operation_id": "op-crash-2",
+    "source_updated_at": "2026-11-15 10:03:02.957819+00"
+  },
+  "observations": {
+    "run": {
+      "run_id": "run-crash-2",
+      "contract_version": "payment-recovery-v1",
+      "oxide_batch_version": "0.7.0",
+      "business_date": "2026-11-15",
+      "eligibility_cutoff": "2099-01-01 00:00:00+00",
+      "scenario_set_id": "run-crash-2",
+      "policy_version": "payment-recovery-policy-v1",
+      "candidate_set_digest": "c42f300510cb23adfdcde3654b8d424b31d51e16f98af9a1ef560f58dd4f829f",
+      "processing_generation": 1,
+      "run_state": "PROCESSED"
+    },
+    "attempts": [
+      {
+        "attempt_no": 1,
+        "processing_generation": 1,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "AUTHORIZED",
+        "canonical_operation_state": "SUCCEEDED",
+        "canonical_provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+        "canonical_gateway_operation_id": "op-crash-2",
+        "provider_visibility": "IMMEDIATE",
+        "provider_payment_id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+        "provider_currency": "USD",
+        "provider_status": "authorized",
+        "provider_authorized_amount_minor": 702,
+        "provider_captured_amount_minor": 0,
+        "provider_refunded_amount_minor": 0,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE"
+      }
+    ],
+    "result": {
+      "classification": "RESOLVED_SUCCEEDED",
+      "duplicate_provider_mutation_count": 0,
+      "final_canonical_payment_state": "AUTHORIZED",
+      "final_canonical_operation_state": "SUCCEEDED",
+      "final_provider_status": "authorized",
+      "result_digest": "753d5ab22b3331140aead2bb324013a14369209b62b9986cd248565ffe81d7bd",
+      "oracle_violations": []
+    },
+    "provider_truth": {
+      "http_status": 200,
+      "exists": true,
+      "id": "kb-23f858bb-b800-494f-a368-4ad0b8bd52ed",
+      "currency": "USD",
+      "status": "authorized",
+      "authorized_amount": 702,
+      "captured_amount": 0,
+      "refunded_amount": 0
+    },
+    "fault": {
+      "dropped": 1,
+      "responded": 0,
+      "forwarded_by_path": {
+        "GET /payments/kb-23f858bb-b800-494f-a368-4ad0b8bd52ed": 1,
+        "POST /payments": 1,
+        "POST /payments/kb-23f858bb-b800-494f-a368-4ad0b8bd52ed/authorize": 1
+      },
+      "responded_by_path": {},
+      "transition_history": [],
+      "plan": {
+        "identity": {
+          "expected_canonical_outcome": "PAYMENT_UNKNOWN/UNKNOWN",
+          "expected_provider_truth": "AUTHORIZED",
+          "fault_plan_version": 1,
+          "logical_business_time": "2026-11-15T00:00:00Z",
+          "scenario_case": "issue-271-unknown-seed-crash-2",
+          "scenario_version": 1,
+          "seed": 27101
+        },
+        "consumed_request_steps": [],
+        "dispatched_timeline_steps": [
+          "hide-initial-provider-status",
+          "reveal-provider-status"
+        ]
+      }
+    }
+  },
+  "side_effects": {
+    "provider_mutation_forward_count": 1,
+    "duplicate_provider_mutation_count": 0
+  },
+  "phases": [
+    {
+      "name": "after-kill",
+      "run_state": "PROCESSING",
+      "attempt_count": 0
+    },
+    {
+      "name": "after-recover",
+      "processing_generation": 1,
+      "launched": true,
+      "retry_later_count": 0
+    },
+    {
+      "name": "terminal-replay",
+      "processing_generation": 1,
+      "launched": false,
+      "retry_later_count": 0
+    }
+  ]
+}
