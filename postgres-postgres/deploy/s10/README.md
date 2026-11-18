@@ -172,6 +172,24 @@ It does **not** target the durable evidence root. In particular, rotation never 
 - `events.jsonl`
 - `iterations/`
 - `samples.jsonl`
+
+
+Resource process observations are an additive extension of the existing
+`oxide-batch-workloads.endurance-sample/v1` record. On Linux/Android, each
+observable child process may retain:
+
+- `VmRSS` plus `smaps_rollup` RSS/PSS/private/shared/swap byte counters;
+- cumulative minor/major page faults and CPU ticks from `/proc/<pid>/stat`;
+- voluntary/non-voluntary context switches and thread count from
+  `/proc/<pid>/status`;
+- open FD count from `/proc/<pid>/fd`.
+
+The original v1 fields and meanings are unchanged, so existing #203 summaries
+remain readable. `smaps_rollup` and FD observations are nullable where the
+kernel, Android procfs policy, process lifetime, or permissions do not expose
+them; the sample retains an explicit unavailability reason instead of
+fabricating a value. These observations are resource evidence, not leak
+classification or allocator-performance timing.
 - `failures/`
 - `summary.json`
 

@@ -129,9 +129,36 @@ async fn sampled_clean_iterations_append_measurements_and_stop_after_return() {
     assert!(clean_process["pid"].as_u64().is_some());
     let rss_recorded = clean_process["rss_bytes"].as_u64().is_some();
     let cpu_recorded = clean_process["cpu_time_ticks"].as_u64().is_some();
+    let minor_faults_recorded = clean_process["minor_faults"].as_u64().is_some();
+    let major_faults_recorded = clean_process["major_faults"].as_u64().is_some();
+    let voluntary_context_switches_recorded = clean_process["voluntary_context_switches"]
+        .as_u64()
+        .is_some();
+    let nonvoluntary_context_switches_recorded = clean_process["nonvoluntary_context_switches"]
+        .as_u64()
+        .is_some();
+    let thread_count_recorded = clean_process["thread_count"].as_u64().is_some();
+    let fd_count_recorded = clean_process["fd_count"].as_u64().is_some();
+    let pss_recorded = clean_process["pss_bytes"].as_u64().is_some();
+    let smaps_rss_recorded = clean_process["smaps_rollup_rss_bytes"].as_u64().is_some();
     let explicit_unavailable = clean_process["unavailable_reason"].as_str().is_some();
+    let smaps_unavailable = clean_process["smaps_rollup_unavailable_reason"]
+        .as_str()
+        .is_some();
+    let fd_unavailable = clean_process["fd_count_unavailable_reason"]
+        .as_str()
+        .is_some();
+
     assert!(rss_recorded || explicit_unavailable);
     assert!(cpu_recorded || explicit_unavailable);
+    assert!(minor_faults_recorded || explicit_unavailable);
+    assert!(major_faults_recorded || explicit_unavailable);
+    assert!(voluntary_context_switches_recorded || explicit_unavailable);
+    assert!(nonvoluntary_context_switches_recorded || explicit_unavailable);
+    assert!(thread_count_recorded || explicit_unavailable);
+    assert!(fd_count_recorded || fd_unavailable || explicit_unavailable);
+    assert!(pss_recorded || smaps_unavailable || explicit_unavailable);
+    assert!(smaps_rss_recorded || smaps_unavailable || explicit_unavailable);
 
     assert!(first_samples
         .iter()
