@@ -1203,6 +1203,36 @@ exact protected-main SHA and independent inspection of all three retained
 allocator artifacts. Hosted-runner evidence remains orchestration/native-API
 evidence rather than stable-host allocator-performance evidence.
 
+## Lane F OS/process telemetry foundation
+
+The existing campaign #203 resource sampler is the shared process-observation
+primitive for Lane F rather than introducing a second procfs sampler. Its
+`oxide-batch-workloads.endurance-sample` v1 process object is extended
+additively on Linux/Android with:
+
+- status RSS;
+- `smaps_rollup` RSS/PSS/private-clean/private-dirty/shared-clean/shared-dirty/swap;
+- minor/major faults and cumulative CPU ticks;
+- voluntary/non-voluntary context switches;
+- thread count;
+- open FD count.
+
+The original v1 field meanings remain unchanged so retained #203 evidence and
+summary reconciliation remain compatible. Optional procfs surfaces fail
+explicitly to null + an unavailability reason when the process exits, the
+kernel does not expose the surface, or access is denied. No missing value is
+coerced to zero.
+
+PostgreSQL total/active connection occupancy, OxideBatch metadata growth, and
+filesystem capacity remain in each existing resource sample. The later Lane F
+retained-evidence producer must project these raw samples without treating
+hosted-runner timing or resource deltas as benchmark results.
+
+This foundation alone does **not** close Lane F and does not satisfy the
+long-running/quiescence completion criterion. A later bounded producer/workflow
+must retain exact-main raw samples plus a hash-closed profile manifest; the S10
+soak/quiescence unit remains separately claim-scoped.
+
 ## Next implementation boundary
 
 Review and merge the allocator-native retained-evidence producer/workflow first.

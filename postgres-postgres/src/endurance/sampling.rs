@@ -40,8 +40,23 @@ pub struct ProcessObservation {
     pub pid: u32,
     pub role: String,
     pub rss_bytes: Option<u64>,
+    pub pss_bytes: Option<u64>,
+    pub smaps_rollup_rss_bytes: Option<u64>,
+    pub private_clean_bytes: Option<u64>,
+    pub private_dirty_bytes: Option<u64>,
+    pub shared_clean_bytes: Option<u64>,
+    pub shared_dirty_bytes: Option<u64>,
+    pub swap_bytes: Option<u64>,
+    pub minor_faults: Option<u64>,
+    pub major_faults: Option<u64>,
     pub cpu_time_ticks: Option<u64>,
+    pub voluntary_context_switches: Option<u64>,
+    pub nonvoluntary_context_switches: Option<u64>,
+    pub thread_count: Option<u64>,
+    pub fd_count: Option<u64>,
     pub unavailable_reason: Option<String>,
+    pub smaps_rollup_unavailable_reason: Option<String>,
+    pub fd_count_unavailable_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -585,9 +600,41 @@ fn fail_if_sampler_failed(state: &SamplerState) -> Result<()> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Debug, Default)]
+struct StatusMetrics {
+    rss_bytes: Option<u64>,
+    voluntary_context_switches: Option<u64>,
+    nonvoluntary_context_switches: Option<u64>,
+    thread_count: Option<u64>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Debug)]
+struct StatMetrics {
+    minor_faults: u64,
+    major_faults: u64,
+    cpu_time_ticks: u64,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Debug, Default)]
+struct SmapsRollupMetrics {
+    rss_bytes: Option<u64>,
+    pss_bytes: Option<u64>,
+    private_clean_bytes: Option<u64>,
+    private_dirty_bytes: Option<u64>,
+    shared_clean_bytes: Option<u64>,
+    shared_dirty_bytes: Option<u64>,
+    swap_bytes: Option<u64>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation> {
-    let status_path = PathBuf::from(format!("/proc/{pid}/status"));
-    let stat_path = PathBuf::from(format!("/proc/{pid}/stat"));
+    let proc_root = PathBuf::from(format!("/proc/{pid}"));
+    let status_path = proc_root.join("status");
+    let stat_path = proc_root.join("stat");
+    let smaps_rollup_path = proc_root.join("smaps_rollup");
+    let fd_path = proc_root.join("fd");
 
     let status = match fs::read_to_string(&status_path) {
         Ok(status) => status,
@@ -596,8 +643,23 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
                 pid,
                 role: role.to_owned(),
                 rss_bytes: None,
+                pss_bytes: None,
+                smaps_rollup_rss_bytes: None,
+                private_clean_bytes: None,
+                private_dirty_bytes: None,
+                shared_clean_bytes: None,
+                shared_dirty_bytes: None,
+                swap_bytes: None,
+                minor_faults: None,
+                major_faults: None,
                 cpu_time_ticks: None,
+                voluntary_context_switches: None,
+                nonvoluntary_context_switches: None,
+                thread_count: None,
+                fd_count: None,
                 unavailable_reason: Some("process-exited-before-sample".to_owned()),
+                smaps_rollup_unavailable_reason: None,
+                fd_count_unavailable_reason: None,
             });
         }
         Err(error) => {
@@ -606,9 +668,9 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
         }
     };
 
-    let rss_bytes = parse_rss_bytes(&status)?;
-    let (cpu_time_ticks, cpu_missing) = match fs::read_to_string(&stat_path) {
-        Ok(stat) => (Some(parse_cpu_ticks(&stat)?), false),
+    let status_metrics = parse_status_metrics(&status)?;
+    let (stat_metrics, stat_missing) = match fs::read_to_string(&stat_path) {
+        Ok(stat) => (Some(parse_stat_metrics(&stat)?), false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, true),
         Err(error) => {
             return Err(error)
@@ -616,43 +678,107 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
         }
     };
 
-    let unavailable_reason = match (rss_bytes.is_none(), cpu_missing) {
+    let (smaps, smaps_rollup_unavailable_reason) = match fs::read_to_string(&smaps_rollup_path) {
+        Ok(smaps) => (parse_smaps_rollup(&smaps)?, None),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            (
+                SmapsRollupMetrics::default(),
+                Some(match error.kind() {
+                    std::io::ErrorKind::PermissionDenied => {
+                        "smaps-rollup-permission-denied".to_owned()
+                    }
+                    _ => "smaps-rollup-unavailable".to_owned(),
+                }),
+            )
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("read process smaps_rollup {}", smaps_rollup_path.display())
+            });
+        }
+    };
+
+    let (fd_count, fd_count_unavailable_reason) = match fs::read_dir(&fd_path) {
+        Ok(entries) => {
+            let mut count = 0_u64;
+            for entry in entries {
+                entry.with_context(|| format!("read process fd entry {}", fd_path.display()))?;
+                count = count
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("process fd count overflow"))?;
+            }
+            (Some(count), None)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            (
+                None,
+                Some(match error.kind() {
+                    std::io::ErrorKind::PermissionDenied => {
+                        "fd-directory-permission-denied".to_owned()
+                    }
+                    _ => "process-exited-before-fd-sample".to_owned(),
+                }),
+            )
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read process fd directory {}", fd_path.display()));
+        }
+    };
+
+    let unavailable_reason = match (status_metrics.rss_bytes.is_none(), stat_missing) {
         (false, false) => None,
         (true, false) => Some("rss-unavailable".to_owned()),
-        (false, true) => Some("process-exited-before-cpu-sample".to_owned()),
-        (true, true) => Some("rss-and-cpu-unavailable".to_owned()),
+        (false, true) => Some("process-exited-before-stat-sample".to_owned()),
+        (true, true) => Some("rss-and-stat-unavailable".to_owned()),
     };
 
     Ok(ProcessObservation {
         pid,
         role: role.to_owned(),
-        rss_bytes,
-        cpu_time_ticks,
+        rss_bytes: status_metrics.rss_bytes,
+        pss_bytes: smaps.pss_bytes,
+        smaps_rollup_rss_bytes: smaps.rss_bytes,
+        private_clean_bytes: smaps.private_clean_bytes,
+        private_dirty_bytes: smaps.private_dirty_bytes,
+        shared_clean_bytes: smaps.shared_clean_bytes,
+        shared_dirty_bytes: smaps.shared_dirty_bytes,
+        swap_bytes: smaps.swap_bytes,
+        minor_faults: stat_metrics.as_ref().map(|metrics| metrics.minor_faults),
+        major_faults: stat_metrics.as_ref().map(|metrics| metrics.major_faults),
+        cpu_time_ticks: stat_metrics.as_ref().map(|metrics| metrics.cpu_time_ticks),
+        voluntary_context_switches: status_metrics.voluntary_context_switches,
+        nonvoluntary_context_switches: status_metrics.nonvoluntary_context_switches,
+        thread_count: status_metrics.thread_count,
+        fd_count,
         unavailable_reason,
+        smaps_rollup_unavailable_reason,
+        fd_count_unavailable_reason,
     })
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn parse_rss_bytes(status: &str) -> Result<Option<u64>> {
-    for line in status.lines() {
-        if let Some(value) = line.strip_prefix("VmRSS:") {
-            let kib = value
-                .split_whitespace()
-                .next()
-                .ok_or_else(|| anyhow!("VmRSS line is missing numeric value"))?
-                .parse::<u64>()
-                .context("parse VmRSS KiB")?;
-            return Ok(Some(
-                kib.checked_mul(1024)
-                    .ok_or_else(|| anyhow!("VmRSS byte conversion overflow"))?,
-            ));
-        }
-    }
-    Ok(None)
+fn parse_status_metrics(status: &str) -> Result<StatusMetrics> {
+    Ok(StatusMetrics {
+        rss_bytes: parse_proc_kib_field(status, "VmRSS:")?,
+        voluntary_context_switches: parse_proc_u64_field(status, "voluntary_ctxt_switches:")?,
+        nonvoluntary_context_switches: parse_proc_u64_field(status, "nonvoluntary_ctxt_switches:")?,
+        thread_count: parse_proc_u64_field(status, "Threads:")?,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn parse_cpu_ticks(stat: &str) -> Result<u64> {
+fn parse_stat_metrics(stat: &str) -> Result<StatMetrics> {
     let close = stat
         .rfind(')')
         .ok_or_else(|| anyhow!("proc stat is missing command closing parenthesis"))?;
@@ -662,17 +788,79 @@ fn parse_cpu_ticks(stat: &str) -> Result<u64> {
         .split_whitespace()
         .collect::<Vec<_>>();
     if fields.len() <= 12 {
-        bail!("proc stat does not contain utime/stime fields");
+        bail!("proc stat does not contain fault/utime/stime fields");
     }
+
+    let minor_faults = fields[7].parse::<u64>().context("parse proc minflt")?;
+    let major_faults = fields[9].parse::<u64>().context("parse proc majflt")?;
     let user_ticks = fields[11]
         .parse::<u64>()
         .context("parse proc utime ticks")?;
     let system_ticks = fields[12]
         .parse::<u64>()
         .context("parse proc stime ticks")?;
-    user_ticks
+    let cpu_time_ticks = user_ticks
         .checked_add(system_ticks)
-        .ok_or_else(|| anyhow!("process CPU tick sum overflow"))
+        .ok_or_else(|| anyhow!("process CPU tick sum overflow"))?;
+
+    Ok(StatMetrics {
+        minor_faults,
+        major_faults,
+        cpu_time_ticks,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn parse_smaps_rollup(smaps: &str) -> Result<SmapsRollupMetrics> {
+    Ok(SmapsRollupMetrics {
+        rss_bytes: parse_proc_kib_field(smaps, "Rss:")?,
+        pss_bytes: parse_proc_kib_field(smaps, "Pss:")?,
+        private_clean_bytes: parse_proc_kib_field(smaps, "Private_Clean:")?,
+        private_dirty_bytes: parse_proc_kib_field(smaps, "Private_Dirty:")?,
+        shared_clean_bytes: parse_proc_kib_field(smaps, "Shared_Clean:")?,
+        shared_dirty_bytes: parse_proc_kib_field(smaps, "Shared_Dirty:")?,
+        swap_bytes: parse_proc_kib_field(smaps, "Swap:")?,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn parse_proc_kib_field(text: &str, field: &str) -> Result<Option<u64>> {
+    let Some(value) = proc_field_value(text, field) else {
+        return Ok(None);
+    };
+    let mut fields = value.split_whitespace();
+    let kib = fields
+        .next()
+        .ok_or_else(|| anyhow!("{field} line is missing numeric value"))?
+        .parse::<u64>()
+        .with_context(|| format!("parse {field} KiB"))?;
+    let unit = fields.next();
+    if unit.is_some_and(|unit| unit != "kB") {
+        bail!("{field} line has unexpected unit {unit:?}");
+    }
+    kib.checked_mul(1024)
+        .map(Some)
+        .ok_or_else(|| anyhow!("{field} byte conversion overflow"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn parse_proc_u64_field(text: &str, field: &str) -> Result<Option<u64>> {
+    let Some(value) = proc_field_value(text, field) else {
+        return Ok(None);
+    };
+    let raw = value
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow!("{field} line is missing numeric value"))?;
+    raw.parse::<u64>()
+        .map(Some)
+        .with_context(|| format!("parse {field} value"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn proc_field_value<'a>(text: &'a str, field: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(field).map(str::trim))
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -719,4 +907,63 @@ fn kib_to_bytes(value: u64) -> Result<u64> {
     value
         .checked_mul(1024)
         .ok_or_else(|| anyhow!("filesystem KiB-to-byte conversion overflow"))
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+mod procfs_parser_tests {
+    use super::*;
+
+    #[test]
+    fn parses_status_resource_fields() {
+        let status = "\
+VmRSS:\t123 kB
+Threads:\t5
+voluntary_ctxt_switches:\t7
+nonvoluntary_ctxt_switches:\t11
+";
+        let metrics = parse_status_metrics(status).expect("parse status metrics");
+        assert_eq!(metrics.rss_bytes, Some(123 * 1024));
+        assert_eq!(metrics.thread_count, Some(5));
+        assert_eq!(metrics.voluntary_context_switches, Some(7));
+        assert_eq!(metrics.nonvoluntary_context_switches, Some(11));
+    }
+
+    #[test]
+    fn parses_stat_faults_and_cpu_ticks_with_spaces_in_comm() {
+        let stat = "123 (worker process) S 1 2 3 4 5 6 7 8 9 10 11 12 13";
+        let metrics = parse_stat_metrics(stat).expect("parse stat metrics");
+        assert_eq!(metrics.minor_faults, 7);
+        assert_eq!(metrics.major_faults, 9);
+        assert_eq!(metrics.cpu_time_ticks, 23);
+    }
+
+    #[test]
+    fn parses_smaps_rollup_byte_fields() {
+        let smaps = "\
+Rss:                 100 kB
+Pss:                  80 kB
+Shared_Clean:         10 kB
+Shared_Dirty:          2 kB
+Private_Clean:         3 kB
+Private_Dirty:        65 kB
+Swap:                  4 kB
+";
+        let metrics = parse_smaps_rollup(smaps).expect("parse smaps_rollup metrics");
+        assert_eq!(metrics.rss_bytes, Some(100 * 1024));
+        assert_eq!(metrics.pss_bytes, Some(80 * 1024));
+        assert_eq!(metrics.shared_clean_bytes, Some(10 * 1024));
+        assert_eq!(metrics.shared_dirty_bytes, Some(2 * 1024));
+        assert_eq!(metrics.private_clean_bytes, Some(3 * 1024));
+        assert_eq!(metrics.private_dirty_bytes, Some(65 * 1024));
+        assert_eq!(metrics.swap_bytes, Some(4 * 1024));
+    }
+
+    #[test]
+    fn missing_optional_procfs_field_stays_none() {
+        let metrics = parse_status_metrics("Threads:\t2\n").expect("parse sparse status");
+        assert_eq!(metrics.rss_bytes, None);
+        assert_eq!(metrics.thread_count, Some(2));
+        assert_eq!(metrics.voluntary_context_switches, None);
+        assert_eq!(metrics.nonvoluntary_context_switches, None);
+    }
 }
