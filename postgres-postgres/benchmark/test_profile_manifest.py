@@ -149,6 +149,43 @@ class ProfileManifestTests(unittest.TestCase):
         ):
             profile_manifest.validate_manifest(document)
 
+    def test_valid_allocator_lane_requires_native_tool_without_profiler(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {
+            "profiler_attached": False,
+            "tools": [
+                {
+                    "name": "allocator-native-telemetry",
+                    "version": "oxide-batch-allocator-native-telemetry/v1",
+                    "role": "native snapshot",
+                }
+            ],
+        }
+        profile_manifest.validate_manifest(document)
+
+    def test_allocator_lane_rejects_profiler_attachment(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {
+            "profiler_attached": True,
+            "tools": [
+                {
+                    "name": "allocator-native-telemetry",
+                    "version": "oxide-batch-allocator-native-telemetry/v1",
+                    "role": "native snapshot",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "must not attach"):
+            profile_manifest.validate_manifest(document)
+
+    def test_allocator_lane_requires_native_tool(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {"profiler_attached": False, "tools": []}
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "allocator-native telemetry tool"
+        ):
+            profile_manifest.validate_manifest(document)
+
     def test_profile_lane_rejects_benchmark_timing(self) -> None:
         document = valid_manifest(lane="cpu")
         document["benchmark_timing"] = {
