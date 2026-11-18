@@ -2,7 +2,21 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-compose=(docker compose -f compose.yaml)
+compose_file="${PAYMENT_REFERENCE_COMPOSE_FILE:-compose.yaml}"
+compose_env_file="${PAYMENT_REFERENCE_COMPOSE_ENV_FILE:-}"
+[ -f "$compose_file" ] || {
+  echo "PAYMENT_REFERENCE_COMPOSE_FILE does not exist: $compose_file" >&2
+  exit 64
+}
+compose=(docker compose)
+if [ -n "$compose_env_file" ]; then
+  [ -f "$compose_env_file" ] || {
+    echo "PAYMENT_REFERENCE_COMPOSE_ENV_FILE does not exist: $compose_env_file" >&2
+    exit 64
+  }
+  compose+=(--env-file "$compose_env_file")
+fi
+compose+=(-f "$compose_file")
 
 killbill_port="${KILLBILL_PORT:-8080}"
 gateway_port="${GATEWAY_PORT:-18082}"
@@ -240,7 +254,7 @@ python3 longrun/test-host-qualification.py
 python3 longrun/lima/test-provisioning.py
 
 if [ "$skip_build" = "true" ]; then
-  "${compose[@]}" up -d
+  "${compose[@]}" up -d --no-build --pull never
 else
   "${compose[@]}" up -d --build
 fi
