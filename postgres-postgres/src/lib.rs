@@ -9,6 +9,7 @@
 //! CLI's stdout/logs.
 
 pub mod allocator;
+pub mod allocator_telemetry;
 pub mod endurance;
 pub mod failpoint;
 pub mod generator;
@@ -16,5 +17,6 @@ pub mod hex;
 pub mod job;
 pub mod processor;
 pub mod source_digest;
+pub mod timeline;
 pub mod verify;
 pub mod writer;

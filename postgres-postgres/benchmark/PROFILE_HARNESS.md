@@ -66,11 +66,15 @@ their timing semantics must not be silently mixed.
 
 Purpose: minimally instrumented allocator comparison.
 
-Initial allocator identities:
+Phase 0 initial allocator identities were:
 
 - `system`;
 - `jemalloc`;
 - `mimalloc`.
+
+The Phase 1 registry now additionally qualifies `snmalloc` and `tcmalloc`
+on ARM64 Linux. Candidate-screen expansion does not turn this lane into a
+default-allocator recommendation.
 
 This lane may report wall time, throughput, CPU observations, peak/steady RSS
 where available, and correctness. Profiler attachment is forbidden for
@@ -103,6 +107,60 @@ Only add signals needed to distinguish materially useful boundaries such as
 read/process/write/checkpoint, worker/task lifetime, DB wait, queue/backpressure,
 and explicit quiescence windows.
 
+The first Lane D implementation uses only public OxideBatch 0.6.0 hooks. Setting
+`OXIDE_BATCH_TIMELINE_DIR=<directory>` on the `postgres-postgres run` command
+attaches:
+
+- the framework's `LifecycleEventSink` to the existing `JobLauncher`;
+- one bounded `ItemListenerSet` covering read/process/write callbacks.
+
+No alternate execution path, reader/writer wrapper, or post-0.6.0 API is
+introduced. Without the environment variable, no timeline recorder is created
+and the normal workload path is unchanged.
+
+The recorder retains at most 50,000 observations in memory and writes only after
+the framework launch returns:
+
+- `events.jsonl`: monotonic process-relative lifecycle and item phase
+  boundaries, including chunk sequence where the 0.6.0 callback exposes it;
+- `summary.json`: schema/provenance-oriented recorder metadata, retained/drop
+  counts, and exact limitations.
+
+This is attribution evidence only. Listener timestamps include instrumentation
+overhead and are never benchmark-lane timing. `item.read` and `item.write`
+are database-facing operation boundaries, not isolated PostgreSQL wait time.
+The 0.6.0 public hook surface does not expose a separate checkpoint-duration
+callback; the workload's checkpoint and business write remain one
+`AtomicSameResource` transaction, so checkpoint durability is represented only
+by the framework's `chunk.committed` lifecycle boundary rather than a fabricated
+standalone duration. This workload's chunk driver is deterministic and
+single-threaded, so queue/backpressure or multi-worker concurrency is not
+inferred when those mechanisms are not present.
+
+`benchmark/timeline_profile.py` now turns this raw recorder output into a
+self-contained Lane D evidence root. The manual-only
+`.github/workflows/profile-postgres-postgres-timeline.yml` runs the producer on
+the repository's ARM64 Ubuntu runner against the exact checked-out workload SHA.
+
+The first authoritative geometry is intentionally bounded to 2,000 rows,
+seed 266, chunk size 200, and page/fetch size 128. The producer uses only the
+system allocator so Lane D does not become an allocator-comparison experiment.
+It retains the release binary, raw `timeline/events.jsonl`, recorder
+`timeline/summary.json`, run metadata, workload stdout/stderr, the independent
+verifier report, and a validated `lane=timeline` campaign manifest.
+
+Evidence acceptance fails closed when recorder output is missing, record
+sequence or monotonic elapsed time regresses, required read/process/write and
+`chunk.committed` boundaries are absent, any records were dropped, artifact
+digests disagree, or the independent final-state verifier fails. The producer
+reserves recorder-cap headroom before execution and still requires
+`dropped_records == 0` after execution.
+
+The producer/workflow establishes the executable retained-evidence path; Lane D
+is closed only after an exact-main authoritative dispatch succeeds and its
+uploaded artifact is independently inspected. It does not add DB-wait,
+queue/backpressure, multi-worker, or standalone checkpoint-duration claims.
+
 ### Allocator-native lane
 
 Purpose: allocator-specific state.
@@ -112,6 +170,45 @@ resident, mapped, retained, and relevant arena/bin/tcache state. Do not invent a
 single normalized fragmentation metric across allocators with incompatible
 semantics.
 
+Lane E native telemetry is compiled separately from Lane A allocator builds.
+The ordinary `allocator-*` features remain the benchmark identities; telemetry
+uses registry-owned `allocator-*-telemetry` features so enabling statistics
+cannot silently alter a benchmark-lane binary.
+
+The first native snapshot plumbing supports:
+
+- jemalloc: `mallctl` after an explicit epoch refresh, retaining the native
+  `stats.allocated`, `stats.active`, `stats.metadata`,
+  `stats.resident`, `stats.mapped`, and `stats.retained` counters;
+- mimalloc 0.1.52: the wrapper's `MiMalloc::stats_json()` /
+  `mi_stats_get_json` payload, retained as mimalloc's native JSON schema
+  without cross-allocator field normalization;
+- snmalloc 0.7.6 with its dedicated `stats` feature:
+  `SnMalloc::memory_stats()` current/peak OS-level reservation values.
+
+Setting `OXIDE_BATCH_ALLOCATOR_TELEMETRY_DIR=<directory>` on a successful
+`postgres-postgres run` writes `snapshot.json` only after the workload launch
+returns. Without the environment variable, no native snapshot is requested.
+A snapshot failure fails the profiling command but cannot rewrite the already
+committed workload transaction.
+
+The snmalloc values are range-level slab/chunk reservation statistics, not live
+application allocation bytes. Mimalloc's native JSON may include allocator
+semantics that do not map directly to jemalloc or snmalloc. Jemalloc's counters
+are refreshed via its native epoch contract and still include allocator/cache
+semantics. These payloads therefore remain allocator-specific evidence.
+
+`tcmalloc-better 0.1.19` is deliberately not marked wired: its exposed
+`extension` surface in the pinned wrapper provides background-action lifecycle
+methods but no numeric allocator-statistics API. Lane E must not relabel that
+lifecycle hook as telemetry. The system allocator likewise has no allocator-
+native snapshot contract in this harness.
+
+This plumbing does not close Lane E. A later producer/workflow unit must run
+each registry-wired telemetry build on the same correctness-complete workload,
+retain exact subject/environment provenance plus the native snapshot, and
+independently validate the artifact.
+
 ### OS/process lane
 
 Purpose: process-level resource observation.
@@ -119,6 +216,35 @@ Purpose: process-level resource observation.
 Where supported, retain RSS/PSS/smaps-class observations, faults/context
 switches, thread/task count, FD count, connection/pool occupancy, and a bounded
 resource timeline.
+
+## Allocator candidate registry
+
+`benchmark/allocator_registry.json` is the canonical selection metadata for
+the profiling harness. Producer code, manifest validation, CI smoke selection,
+MSRV feature checks, and mutual-exclusion checks consume the same registry
+instead of maintaining independent allocator lists.
+
+The registry records, per candidate:
+
+- allocator identity and lifecycle status;
+- screening tier;
+- Cargo feature;
+- wrapper crate/version;
+- exact lockfile package/version requirements;
+- upstream-version observation state;
+- target qualification state;
+- build prerequisites;
+- telemetry wiring state.
+
+The registry is configuration, not benchmark evidence. A target marked
+`qualified` means this harness has a supported execution path on that target;
+it does not mean the allocator is faster or preferred.
+
+New candidates must first enter the registry with an explicit target state.
+They must not be enabled merely because the upstream allocator supports a
+platform: the Rust wrapper/build path must also be qualified. Producer and CI
+selection are filtered by the exact Rust host target, and manifests fail closed
+if an allocator is not qualified for the recorded target.
 
 ## Build-variant invariant
 
@@ -133,15 +259,36 @@ They must preserve:
 - the same release profile and workload parameters for comparable runs;
 - the same final-state verifier and correctness bar.
 
-The build-selection unit pins the wrappers used by this rehearsal:
+The registry currently activates the qualified ARM64 Linux candidate set:
 
 | Identity | Cargo selection | Pinned wrapper/system crate | Upstream allocator provenance |
 |---|---|---|---|
 | `system` | no allocator feature | Rust/platform default allocator | host/toolchain-owned; no replacement wrapper |
 | `jemalloc` | `allocator-jemalloc` | `tikv-jemallocator =0.7.0` | locked `tikv-jemalloc-sys 0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8` identifies jemalloc 5.3.1 |
 | `mimalloc` | `allocator-mimalloc` | `mimalloc =0.1.52` | locked `libmimalloc-sys 0.1.49`; wrapper default selects its bundled mimalloc v3 source family |
+| `snmalloc` | `allocator-snmalloc` | `snmalloc-rs =0.7.6` | locked `snmalloc-sys 0.7.6`; wrapper tracks upstream snmalloc 0.7.6 |
+| `tcmalloc` | `allocator-tcmalloc` | `tcmalloc-better =0.1.19` | locked `libtcmalloc-sys 0.1.14`; exact vendored Google TCMalloc revision is not inferred from wrapper/sys versions |
 
-The two replacement features are mutually exclusive. No feature means
+### Phase 1 candidate queue
+
+Candidate registration is deliberately separate from dependency activation.
+`planned` and `conditional` entries describe what should be qualified next;
+they are excluded from producer/CI execution and cannot appear in retained
+manifests until promoted to `active` with exact lockfile provenance and at
+least one `qualified` target.
+
+| Identity | Lifecycle | Wrapper | Target state | Qualification note |
+|---|---|---|---|---|
+| `snmalloc` | `active` / Phase 1 | `snmalloc-rs 0.7.6` | ARM64 Linux: `qualified`; x86_64 Linux: `supported-unverified` | exact published wrapper/sys 0.7.6 is locked; default CMake build is qualified by repository CI and the allocator smoke on ARM64 before any performance claim |
+| `tcmalloc` | `active` / Phase 1 | `tcmalloc-better 0.1.19` | ARM64 Linux: `qualified`; x86_64 Linux: `supported-unverified` | default 8k-page/extension wrapper build is locked; workload entry points explicitly invoke the wrapper background-action lifecycle before qualification evidence is accepted |
+| `rpmalloc` | `conditional` | `rpmalloc 0.2.2` | ARM64 Linux: `unsupported`; x86_64 Linux: `supported-unverified` | Rust wrapper documents tested support only on x86_64 Windows/macOS/Linux, so it is not an ARM64 campaign candidate without separate wrapper qualification |
+
+Empty `lock_packages` is valid only while a replacement allocator is not
+`active`. Activation requires Cargo dependency resolution in this repository,
+exact locked package provenance, build/correctness qualification on the target,
+and an explicit registry state change.
+
+All active replacement allocator features are pairwise mutually exclusive. No feature means
 `system`, preserving the pre-campaign workload build. The exact mimalloc
 upstream revision is not encoded in the sys-crate version string, so later
 manifest generation must record any more precise version only from an
@@ -175,7 +322,7 @@ At minimum, `manifest.json` records:
 - exact OxideBatch version and registry provenance;
 - lockfile identity;
 - allocator identity plus wrapper/upstream versions when applicable;
-- Rust toolchain and target;
+- Rust compiler and Cargo versions, plus target;
 - OS, kernel, CPU, and memory observations;
 - build profile and material flags;
 - PostgreSQL configured image and observed server version;
@@ -221,8 +368,8 @@ It may not:
 
 ## Build-selection smoke
 
-Protected workload CI exercises the three build identities against one small
-deterministic PostgreSQL source. Each variant runs the unchanged paging
+Protected workload CI exercises every registry-qualified active build identity
+for the exact host target against one small deterministic PostgreSQL source. Each variant runs the unchanged paging
 workload and the unchanged independent verifier under a distinct import name.
 The smoke is correctness/build evidence only: its timings are discarded and
 must never enter benchmark comparisons.
@@ -230,7 +377,841 @@ must never enter benchmark comparisons.
 CI also rejects enabling both replacement allocators together and checks both
 optional variants under the workload's declared MSRV.
 
+## Executable allocator smoke producer
+
+`benchmark/profile_smoke.py` is the first executable consumer of the manifest
+contract. It deliberately remains a **diagnostic smoke**, not a claim-bearing
+allocator benchmark.
+
+For one selected reader mode it:
+
+1. builds every registry-qualified active allocator variant for the host target in release mode;
+2. creates one deterministic template database and clones an isolated database
+   per allocator;
+3. runs the unchanged workload path for each variant;
+4. runs the unchanged independent verifier;
+5. records bounded GNU-time/process observations and the verifier JSON as raw
+   artifacts;
+6. emits one `manifest.json` per allocator and validates it through
+   `profile_manifest.py`.
+
+The result bundle is shaped as:
+
+```text
+profile-artifacts/
+  system/
+    manifest.json
+    benchmark/
+      measurement.json
+      verifier.json
+  jemalloc/
+    ...
+  mimalloc/
+    ...
+  snmalloc/
+    ...
+  tcmalloc/
+    ...
+```
+
+The producer rejects non-empty output roots so evidence from separate runs
+cannot be silently mixed. Its smoke dataset is bounded to at most 100,000 rows.
+Every manifest explicitly states that the timing is diagnostic, has no profiler
+attached, and is not stable-host allocator-selection evidence.
+
+The manual-only workflow
+`.github/workflows/profile-postgres-postgres-smoke.yml` runs this matrix on the
+repository's ARM64 Ubuntu runner and uploads the bundle for review. Ordinary PR
+CI runs only the dependency-free producer unit tests; it does not perform the
+release smoke matrix.
+
+## Manifest schema evolution
+
+Retained Phase 0 evidence may use either:
+
+- `oxide-batch-profile-manifest/v1` — original contract; Cargo version was not
+  recorded and remains valid historical evidence;
+- `oxide-batch-profile-manifest/v2` — current producer contract; adds exact
+  `subject.cargo` provenance while preserving the remaining v1 semantics.
+
+The validator accepts both versions so previously retained v1 artifacts remain
+independently reviewable. New producer runs emit v2 only. A v2 manifest without
+an exact Cargo version fails closed.
+
+This distinction matters for Rust/Cargo 1.100 and later because build-directory
+selection can vary with build configuration and feature state; allocator
+variants must therefore retain the exact Cargo version alongside `rustc`.
+
+## Repeated allocator benchmark producer
+
+`benchmark/allocator_benchmark.py` is the benchmark-lane producer for the
+registry-qualified allocator matrix. It is intentionally separate from the
+diagnostic smoke producer and from CPU/heap profiler orchestration.
+
+The canonical geometry remains the previously fixed benchmark contract:
+
+- both cursor and paging readers;
+- 1,000,000 source rows with seed 20260904;
+- chunk size 1000;
+- cursor fetch size 500;
+- paging page size 750;
+- 2 warmup rounds per reader;
+- 7 measured rounds per reader.
+
+Each allocator sample receives a fresh clone of one deterministic template
+database. Setup, cloning, teardown, and independent verification remain outside
+the timed interval. Warmups execute the same correctness path but are excluded
+from measured distributions.
+
+Allocator order rotates deterministically across rounds. Warmup and measured
+order sequences are independent, so warmups cannot shift the measured
+position-balance schedule. One complete measured cycle places every allocator
+in every order position once; alternating cycles reverse the rotation
+direction. The exact warmup and measured order is retained in the summary
+artifact.
+
+Each measured sample emits its own validated benchmark-lane manifest plus raw
+measurement and verifier artifacts. The top-level summary retains
+min/median/max/p95 distributions for elapsed time, throughput, user/system CPU,
+and peak RSS for every allocator/reader pair.
+
+Only the exact canonical geometry is labelled
+`same-host-relative-observational`. Any bounded override is labelled
+`diagnostic-noncanonical` and every sample manifest records that it is not
+campaign acceptance evidence. Hosted-runner numbers remain unsuitable for
+stable-host absolute-performance claims, and this 0.6.0 rehearsal cannot select
+the post-M7 default allocator.
+
+## CPU attribution producer
+
+`benchmark/cpu_profile.py` is the first CPU-lane producer. It keeps profiling
+mechanically separate from the benchmark lane and profiles exactly one
+registry-qualified allocator/reader selection at a time.
+
+The producer:
+
+- builds the normal release workload binary for the selected allocator; it
+  does not add an in-process profiler dependency or change default builds;
+- attaches Linux `perf record` externally with frequency sampling and DWARF
+  call chains;
+- passes the credential-bearing PostgreSQL URL through `DATABASE_URL`, never
+  the recorded child argv;
+- retains raw `cpu/perf.data`, textual `perf script` stacks, a reviewable
+  `perf report --stdio` projection, profiler metadata, and the independent
+  workload verifier;
+- emits a validated `lane=cpu` manifest with `profiler_attached=true` and
+  no `benchmark_timing` field;
+- rejects an unavailable profiler, an unqualified allocator/target, empty
+  profile/projection output, profiler failure, or failed correctness
+  verification.
+
+Default profile geometry is bounded to 100,000 rows at 99 Hz. The producer
+allows explicit bounded overrides up to 1,000,000 rows and 1,000 Hz, but those
+numbers never become benchmark evidence.
+
+Example command after PostgreSQL is running:
+
+```bash
+python3 benchmark/cpu_profile.py \
+  --base-database-url "$DATABASE_URL" \
+  --output "$RUNNER_TEMP/cpu-profile-artifacts" \
+  --allocator jemalloc \
+  --reader paging
+```
+
+CPU-profile elapsed time is attribution-only. On-CPU sampling can understate
+database/network/lock/sleep waits, and hosted-runner profiles prove
+orchestration/readability rather than stable-host absolute performance.
+
+The first authoritative hosted ARM64 dispatch proved that Linux `perf` is
+installed but unavailable to the unprivileged runner because
+`perf_event_paranoid=4`. That failed capability probe remains retained
+evidence; it is not a CPU profile.
+
+For hosted runners, `benchmark/cpu_profile_gperftools.py` provides a separate
+external sampling path using gperftools `libprofiler` with
+`ITIMER_PROF/SIGPROF`. The workflow installs Ubuntu's packaged
+`google-perftools` and `libgoogle-perftools-dev`, records their exact package
+versions, and retains both the raw gperftools profile and the exact profiled
+binary so the raw evidence can be re-symbolized later.
+
+The fallback is allocator-safe by contract: before profiling, it resolves
+`libprofiler.so`, records its SHA-256 and dynamic dependencies, and fails
+closed if any dynamic dependency names tcmalloc. The workload's selected
+system/jemalloc/mimalloc/snmalloc/tcmalloc allocator therefore cannot be
+silently replaced merely to obtain CPU attribution.
+
+The hosted workflow preserves both capability records:
+- the original Linux `perf` probe, which may remain unsupported;
+- the gperftools capability record used by the fallback producer.
+
+## CPU attribution rehearsal status
+
+The authoritative hosted ARM64 fallback dispatch completed successfully for
+system+paging on exact OxideBatch 0.6.0. The retained bundle independently
+validated the unavailable Linux perf capability, the allocator-safe
+gperftools fallback, raw CPU profile, projections, exact profiled binary,
+correctness verifier, and artifact hashes. The CPU attribution lane is
+therefore rehearsed for Phase 0; its samples remain attribution-only evidence.
+
+## Heap/allocation tool screening
+
+For the generic heap lane, the first host/tool combination selected for
+runtime qualification is Ubuntu 24.04 ARM64 plus the distribution
+`heaptrack` package. Package availability alone is not treated as runtime
+support.
+
+The screening boundary is intentional:
+
+- `heaptrack` is selected for the system allocator because it records
+  allocation call stacks, allocation counts, peak-live contributors,
+  temporary allocations, allocation-size histograms, Massif-compatible
+  live-heap projections, and folded stacks while retaining a native trace;
+- Valgrind Massif remains a fallback for cases where page-level allocation
+  visibility is more important, but its substantially heavier instrumentation
+  and earlier aggregation make it a poorer first Phase 0 allocation tracer;
+- the gperftools heap profiler is not a generic fallback because it requires
+  tcmalloc and would therefore replace the allocator under test;
+- replacement Rust global allocators such as jemalloc/mimalloc/snmalloc/tcmalloc
+  may bypass the malloc-family functions heaptrack interposes. Generic
+  heaptrack evidence must therefore not be claimed for those allocators.
+  Their memory state belongs in later allocator-native tooling unless a
+  separate generic interception path is qualified.
+
+## Heap/allocation attribution producer
+
+`benchmark/heap_profile.py` is the initial heap-lane producer and is
+fail-closed to `allocator=system`.
+
+The producer:
+
+- builds the exact published OxideBatch 0.6.0 workload in release mode with
+  `CARGO_PROFILE_RELEASE_DEBUG=1` in an isolated Cargo target directory so
+  allocation stacks can be symbolized without changing benchmark-lane builds;
+- retains the exact profiled binary and records the material build flag;
+- passes the PostgreSQL URL through `DATABASE_URL` for the profiled child so
+  credentials are absent from the heaptrack-recorded argv;
+- rejects a pre-existing `LD_PRELOAD`;
+- records exact Ubuntu `heaptrack`/`libheaptrack` package versions,
+  `libheaptrack_preload.so` path/SHA-256/dynamic dependencies, and fails
+  closed if the preload library dynamically names a known replacement
+  allocator;
+- provides a DB-independent `--probe-output` mode that compiles a tiny
+  debug-symbol C program with a known noinline malloc call site, profiles it,
+  generates an allocation folded-stack projection, and accepts the host only
+  when that exact known symbol is present in a readable stack; non-empty trace
+  bytes and a non-empty report alone are not sufficient;
+- records the probe compiler/version, compile status, binary size, trace size,
+  folded-stack size/weights/readability, known-symbol observation, and bounded
+  stderr/status evidence in capability schema
+  `oxide-batch-heaptrack-capability/v2`;
+- retains the native heaptrack trace as authoritative evidence;
+- derives reviewable projections with `heaptrack_print`: the full allocation
+  report, allocation-size histogram, allocation folded stacks, temporary
+  allocation folded stacks, and Massif-compatible live-heap snapshots;
+- emits a compact `heap/summary.json` v2 containing allocation count,
+  cumulative allocated bytes, peak-live bytes, temporary-allocation count and
+  ratio, histogram bucket count, largest allocation size, and allocation-stack
+  readability/weight evidence;
+- derives cumulative allocated bytes from the event-counted size histogram
+  only when the histogram event count exactly matches heaptrack's global
+  allocation count;
+- derives exact peak-live bytes from the maximum `mem_heap_B` Massif
+  snapshot;
+- rejects a workload profile whose allocation folded-stack projection is empty,
+  consists only of `??`/raw-address frames, or whose folded-stack total weight
+  does not equal heaptrack's global allocation count;
+- runs the unchanged independent workload verifier and emits a validated
+  `lane=heap` manifest with `profiler_attached=true` and no
+  `benchmark_timing`.
+
+Default heap geometry is intentionally smaller than the benchmark lane:
+25,000 rows, seed 266, chunk size 1000, and the normal reader-specific
+fetch/page size. The producer caps this instrumentation lane at 100,000 rows.
+
+Capability probe before starting PostgreSQL:
+
+```bash
+python3 benchmark/heap_profile.py \
+  --probe-output "$RUNNER_TEMP/heaptrack-capability.json"
+```
+
+Example profile after PostgreSQL and heaptrack are available:
+
+```bash
+python3 benchmark/heap_profile.py \
+  --base-database-url "$DATABASE_URL" \
+  --output "$RUNNER_TEMP/heap-profile-artifacts" \
+  --allocator system \
+  --reader paging
+```
+
+The native heaptrack trace remains authoritative over the summary and all
+generated projections. Heap-instrumented runtime is never benchmark evidence.
+
+### Authoritative hosted ARM64 finding
+
+The first authoritative main dispatch, run `43845055327` on
+`b2749a7526569c2ab02a5283812bb29499e7bca9`, proved that heaptrack 1.5.0 on
+the hosted ARM64 image can record reproducible scalar heap evidence while
+failing the actual attribution requirement.
+
+That retained run independently validated 739,985 allocations, 74,352,509
+cumulative allocated bytes, 1,283,088 peak-live bytes, 276,130 temporary
+allocations, the complete artifact hashes, and unchanged workload correctness.
+However both folded-stack projections collapsed to `??`, the textual report
+collapsed to `0x0 / in ??`, and all native allocation-info records referred to
+trace index zero. The retained Rust binary was independently confirmed to
+contain debug/unwind/symbol sections and was not stripped.
+
+Therefore run 43845055327 is accepted as **scalar heap evidence** but explicitly
+rejected as allocation-stack attribution evidence. The older v1 capability
+probe was too weak because it only proved that heaptrack could produce a
+non-empty trace/report.
+
+The v2 capability contract fixes that false positive: a compiled known malloc
+call site must survive recording and projection with its named symbol visible.
+The workload producer independently enforces readable folded-stack attribution
+as a second gate.
+
+The hardened authoritative rerun, run `43858820727` on
+`316b8d24b28283fa6e5d368af19d6d0b081ec01b`, then closed the host/tool
+classification. Its purpose-built C probe compiled successfully, heaptrack
+recorded a non-empty native trace, and `heaptrack_print` completed, but the
+folded allocation stack still contained only unknown attribution. The known
+symbol `oxide_batch_heap_probe_allocate` was absent. Therefore Ubuntu 24.04
+hosted ARM64 plus the distribution heaptrack 1.5.0 package is **unsupported
+for generic heap allocation-stack attribution** in this campaign. This does
+not invalidate the scalar heap evidence retained from run 43845055327.
+
+## Perfetto heapprofd fallback capability
+
+The first allocator-preserving fallback selected for qualification is Perfetto
+heapprofd host mode. This is a separate capability path from heaptrack and does
+not weaken the heaptrack failure classification.
+
+`benchmark/perfetto_heap_probe.py` is intentionally capability-only. It does
+not run PostgreSQL, produce OxideBatch workload evidence, or make benchmark
+timing claims.
+
+The provenance contract follows the upstream release itself rather than a
+floating download:
+
+- Perfetto release: `v59.1`;
+- release commit: `1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d`;
+- `tools/heap_profile` Git blob:
+  `1d5b1cc8d9bd38749c6d200a8d5aac9b616b84ed`;
+- the v59.1 script embeds prebuilts rolled at `v58.2`, so the campaign pins
+  those exact upstream artifacts instead of pretending that they are v59.1
+  binaries;
+- linux-arm64 tracebox SHA-256:
+  `2d21883e9c55818f851fd8c391afb9b366032b3110076b4fd41f31f30b5849fa`;
+- linux-arm64 `libheapprofd_glibc_preload.so` SHA-256:
+  `4ca10d32455973389d0f772f1c9ad8616b61eb46edc3b995a2825dee9fab2662`;
+- linux-arm64 trace processor SHA-256:
+  `0e6e0c5452c505c8d46fe472fd196a0d17d963460727e2ce2013b02aa1309555`.
+
+The producer does not download any of those files. The manual
+`.github/workflows/probe-perfetto-heap-capability.yml` workflow provisions
+them from the pinned upstream URLs, records a provision manifest, and fails
+closed unless the script Git-blob identity plus prebuilt byte sizes/SHA-256
+values match exactly. The producer independently repeats the same identity
+checks before any profiler execution.
+
+The allocator boundary is also fail-closed. Perfetto documents the standalone
+glibc preload interceptor as calling glibc-specific `__libc_malloc`-family
+symbols so that the system allocator continues to serve the allocations. The
+probe additionally records `ldd` output and rejects a preload binary that
+dynamically names jemalloc, mimalloc, snmalloc, tcmalloc, or rpmalloc.
+
+The runtime qualification uses another tiny debug-symbol C program with the
+known noinline allocation function
+`oxide_batch_perfetto_probe_allocate`. It runs host-mode heapprofd with:
+
+- sampling interval `1`, Perfetto's fully accurate high-overhead mode;
+- explicit pinned tracebox, preload, and trace processor paths;
+- a required, version-recorded `llvm-symbolizer` on `PATH` for native
+  symbolization;
+- blocking-client mode so the bounded capability run fails by latency rather
+  than silently losing allocation events;
+- a retained raw Perfetto trace plus the generated gzipped pprof projections;
+- `PERFETTO_BINARY_PATH` fixed to the probe-binary directory so the helper
+  emits separate symbol packets and a `symbolized-trace`; the untouched
+  `raw-trace` remains authoritative.
+
+The symbolized trace is queried with the pinned trace processor when available;
+otherwise the raw trace is queried and the known-symbol gate will fail closed.
+Support requires:
+
+- positive allocation count and bytes in `heap_profile_allocation`;
+- at least one named frame reachable from a positive allocation callsite;
+- the exact known probe symbol to appear in an allocation-reachable stack;
+- at least one non-empty pprof projection;
+- zero recorded heapprofd corruption, buffer-overrun, guardrail, client,
+  malformed/missing-packet, non-finalized-profile, or sampling-interval-adjusted
+  events;
+- all pinned provenance and allocator-boundary checks to pass.
+
+Capability schema is
+`oxide-batch-perfetto-heap-capability/v1`. The output directory retains the
+probe source/binary, helper stdout/stderr, raw trace, pprof projections, SQL
+projections, hashes, and capability document. Sampling interval 1 is strictly
+instrumentation evidence and must never be compared with benchmark-lane
+timings.
+
+### First hosted ARM64 Perfetto run: wrapper compatibility failure
+
+Authoritative run `43869082342` on exact main
+`16966581bc04b147c973f85ff799c4c40a6b314b` successfully provisioned every
+pinned Perfetto input and compiled/executed the known C probe far enough to
+produce a non-empty raw trace. The run did **not** classify heapprofd
+unwinding support because post-processing failed first.
+
+The retained evidence showed:
+
+- all v59.1 script / v58.2 ARM64 helper identities matched exactly;
+- the glibc preload retained only system-library dependencies and no known
+  replacement allocator;
+- the C probe compiled successfully;
+- `raw-trace` was non-empty;
+- the v59.1 `heap_profile` wrapper invoked its helper using the legacy
+  `traceconv symbolize` / `traceconv profile` CLI;
+- the pinned v58.2 helper is `trace_processor_shell`, whose supported
+  interface is `util symbolize` and `convert profile --output-dir`;
+- therefore symbol packets, pprof output, and SQL attribution checks were never
+  reached.
+
+This is classified as a **harness compatibility failure**, not a hosted-runner
+permission failure and not a heapprofd unwind/symbolization failure.
+
+The capability producer now generates and retains a narrow compatibility shim
+that translates only the two legacy calls made by `heap_profile`:
+
+- `symbolize TRACE` -> `trace_processor_shell util symbolize TRACE`;
+- `profile [--no-annotations] TRACE` ->
+  `trace_processor_shell convert profile [--no-annotations] --output-dir ... TRACE`.
+
+The upstream trace processor binary remains byte-for-byte pinned and is still
+used directly for all SQL evidence queries. The shim is campaign-owned,
+retained with SHA-256 evidence, and covered by dependency-free CI tests.
+
+### Second hosted ARM64 Perfetto run: missing llvm-symbolizer prerequisite
+
+Authoritative run `43875632737` on exact main
+`ccb8a69f62e8b85598e6e891f2a622a18fc27cc7` passed pinned provisioning and
+used the retained traceconv compatibility shim, but it still did not reach a
+valid unwind/symbolization classification.
+
+Retained evidence showed:
+
+- all pinned source/prebuilt identities matched exactly;
+- allocator semantics were still system/glibc;
+- the known C probe compiled successfully;
+- heapprofd connected, collected, shut down cleanly, and retained a non-empty
+  `raw-trace` (2,063 bytes);
+- the compatibility shim was present and retained with its SHA-256;
+- Perfetto then logged `Failed to exec llvm-symbolizer (errno: 2)`;
+- no symbolized trace or pprof projection was produced;
+- therefore allocation SQL / known-symbol gates were not reached.
+
+Perfetto's own native-symbolization documentation requires
+`llvm-symbolizer` on `PATH` and recommends installing the `llvm` package
+on Debian/Ubuntu. This run is classified as an **environment prerequisite
+failure**, not a heapprofd collection failure and not evidence that hosted ARM64
+unwinding is unsupported.
+
+The producer now records the exact observed `llvm-symbolizer` path/version and
+fails closed before profiling when it is unavailable. The manual workflow
+ensures the prerequisite is present (installing Ubuntu's `llvm` package when
+necessary) and retains a separate `perfetto-symbolizer.json` document with
+the install result, path, version, and availability verdict.
+
+### Third hosted ARM64 Perfetto run: capability PASS
+
+Authoritative run `43880787544` on exact main
+`65dfb6ebdd87976d5a5ec7188b3cd19e0189e922` closed the generic
+system-allocator capability qualification:
+
+- workflow conclusion: SUCCESS;
+- all pinned Perfetto source/prebuilt identities matched;
+- allocator semantics remained system/glibc with no replacement allocator;
+- `llvm-symbolizer` was available;
+- profiler exit status was 0;
+- raw trace: 2,061 bytes;
+- symbol packets: 332 bytes;
+- symbolized trace: 2,393 bytes;
+- one non-empty pprof projection;
+- 35 positive allocations / 139,602 positive allocation bytes across four
+  allocation callsites;
+- 37 allocation-reachable frame rows, eight named frame rows;
+- exact known C allocation symbol
+  `oxide_batch_perfetto_probe_allocate` survived in an allocation-reachable
+  stack;
+- heapprofd error counter: 0.
+
+Therefore Ubuntu 24.04 hosted ARM64 plus the pinned Perfetto heapprofd host path
+is **qualified for generic system-allocator allocation-stack attribution**.
+This capability result replaces heaptrack as the selected generic heap
+attribution path, but does not itself complete the heap lane because it used a
+purpose-built C probe rather than the OxideBatch workload.
+
+The earlier symbolizer evidence stored only the first output line
+(`llvm-symbolizer`), which proves executable availability but not the LLVM
+version. The workload producer tightens this by parsing the full
+`llvm-symbolizer --version` output for the version token and retaining both
+that version and the executable SHA-256.
+
+### Perfetto-backed OxideBatch heap workload producer
+
+`benchmark/perfetto_heap_profile.py` carries the capability contract into the
+real `postgres-postgres` workload while remaining intentionally limited to
+the `system` allocator.
+
+It uses a Perfetto-specific bounded qualification geometry and the existing
+correctness path:
+
+- default rows: 2,000;
+- seed: 266;
+- chunk size: 200;
+- cursor fetch size: 128;
+- paging page size: 128;
+- release build with `CARGO_PROFILE_RELEASE_DEBUG=1`;
+- exact locked OxideBatch `=0.6.0`;
+- independent `postgres-postgres verify` correctness digest after the
+  profiled run.
+- Perfetto host mode does not propagate the child workload exit code, so the
+  independent verifier digest is the authoritative workload completion and
+  correctness gate.
+
+The producer independently rechecks:
+
+- Perfetto v59.1 `heap_profile` source identity;
+- exact v58.2 ARM64 tracebox/preload/trace-processor sizes and SHA-256 values;
+- glibc preload dynamic dependencies and absence of known replacement
+  allocators;
+- Linux aarch64 host scope;
+- `llvm-symbolizer` availability, parsed version, and executable SHA-256.
+
+The real-workload profiler command uses Perfetto's upstream default
+4,096-byte sampling interval with blocking-client mode, explicit pinned helper
+paths, and the campaign traceconv compatibility shim. Sampling is intentional:
+the workload lane needs readable allocation call-stack attribution, not exact
+every-allocation accounting. The purpose-built C capability probe remains at
+interval 1 because its tiny geometry can afford the fully accurate mode.
+Blocking-client is retained for the claim-bearing workload so a full buffer
+does not silently terminate profiling early; the existing 600-second
+process-group timeout remains the outer safety bound. The workload database URL
+is supplied only through the child environment, not command-line evidence.
+
+The upstream profiler is launched in an isolated process group with stdout and
+stderr streamed live to both the GitHub job log and retained files. The
+producer imposes a 600-second profiler timeout; timeout first sends SIGTERM to
+the whole process group and escalates to SIGKILL after a bounded grace period.
+The retained `profiler-process.json` records the timeout contract, exit status,
+termination path, and process-group isolation. Profiler timeout/runtime is
+instrumentation evidence only, never benchmark timing.
+
+The producer retains the authoritative raw trace plus:
+
+- symbol packets;
+- symbolized trace;
+- pprof projection(s);
+- positive allocation-count/byte/callsite SQL projection;
+- heapprofd failure/data-loss SQL projection;
+- complete allocation-reachable named-symbol projection;
+- stack summary projection;
+- profiler stdout/stderr;
+- compatibility shim;
+- profiled binary;
+- correctness verifier;
+- run/capability/summary metadata and hashes.
+
+The workload attribution gate is deliberately stronger than the C capability
+gate. A PASS requires at least one **single allocation callsite stack** that
+contains all of:
+
+- a symbolized Rust frame, accepted only when the frame is either demangled
+  Rust form containing `::` or Rust v0 mangled form beginning with `_R`;
+- a `postgres_postgres` crate identity marker;
+- an `oxide_batch` crate identity marker.
+
+The Rust predicate intentionally does not treat arbitrary non-empty native
+symbols as Rust. The crate markers remain independent gates, so recognizing an
+`_R` symbol alone cannot establish workload-to-OxideBatch attribution.
+
+It also requires non-empty raw/symbolized/symbol/pprof evidence, positive
+allocation counters, zero heapprofd error counters, and correctness PASS.
+Merely producing a trace or some readable symbols is insufficient.
+
+The summary schema is
+`oxide-batch-perfetto-heap-profile-summary/v3`; workload run metadata is
+`oxide-batch-perfetto-heap-profile-run/v3`. Both retain the explicit
+`demangled-or-rust-v0` symbol-classification contract. Capability evidence
+remains v2 because host/tool capability did not change. Capability/run/summary
+evidence records the 4,096-byte Poisson-sampling contract, blocking-client
+policy, and that trace allocation counters are sampled attribution evidence,
+not exact allocation-event totals. The campaign profile manifest remains lane
+`heap`, carries no `benchmark_timing`, and marks all profiler timing as
+attribution-only.
+
+### Manual hosted ARM64 qualification workflow
+
+`.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and
+runs on `ubuntu-24.04-arm`. It does not install Rust, start PostgreSQL, or run
+the OxideBatch workload.
+
+The workflow retains:
+- exact repository SHA/run context;
+- per-download status plus observed size/hash/executable-bit evidence;
+- `llvm-symbolizer` install status, path, and exact observed version;
+- the capability document and all producer-retained raw/projection artifacts;
+- evidence even when provisioning or capability qualification fails.
+
+Provisioning and capability execution use `continue-on-error` only so the
+evidence can be uploaded. A final postcondition still fails the workflow when
+provisioning, capability qualification, or retained-evidence validation did not
+pass. Therefore a red workflow remains a meaningful unsupported/blocked
+qualification artifact instead of losing the diagnostic state.
+
+### First real OxideBatch Perfetto workload attempt: cancelled
+
+Authoritative run `43896923666` on exact main
+`5778d112e91c94eab05161eec6f31f1536ee10cf` reached the real workload
+producer after all prerequisites passed, but step 10 remained in progress for
+roughly half an hour and was manually cancelled.
+
+The retained partial artifact proved:
+
+- pinned Perfetto provenance and system/glibc allocator boundary still passed;
+- `llvm-symbolizer` 18.1.3 was available;
+- the profiled system binary was retained;
+- a non-empty raw Perfetto trace (75,239 bytes) was produced;
+- no symbol packets, symbolized trace, pprof, SQL projections, summary,
+  correctness verifier, or manifest had been produced before cancellation.
+
+The producer at that point launched `heap_profile host` using
+`capture_output=True`, so child output was buffered until process exit and the
+GitHub step was operationally opaque. It also reused the heaptrack 25,000-row
+geometry with interval 1 plus blocking-client mode, creating pathological event
+volume for the first real Perfetto workload qualification.
+
+This run is classified as a **harness/runtime-geometry failure**, not a
+Perfetto capability, unwind/symbolization, PostgreSQL, or workload-correctness
+failure.
+
+The corrected harness therefore:
+
+- streams profiler stdout/stderr live and retains the same bytes;
+- isolates the profiler and descendants in one process group;
+- imposes a 600-second profiler timeout with TERM/KILL cleanup;
+- reduces the first qualification geometry to 2,000 rows / chunk 200 /
+  paging 128, matching the repository's bounded golden-path scale while still
+  exercising multiple chunks and pages;
+- at that point kept interval 1, exact provenance, system-only allocator
+  scope, correctness verification, and the same-callsite
+  `postgres_postgres + oxide_batch` fail-closed stack gate unchanged.
+
+### Second real OxideBatch Perfetto workload attempt: bounded exact mode timed out
+
+Authoritative run `43929111788` on exact main
+`3cce5eb81621dfaf1895f853c7dab88640e0b2b0` exercised the corrected
+observable/timeout harness with the reduced 2,000-row geometry. Provisioning,
+symbolizer setup, PostgreSQL startup, pinned provenance, and the system/glibc
+allocator boundary all passed. The profiler still exceeded the explicit
+600-second timeout under interval 1 plus blocking-client mode.
+
+The retained evidence proved that the harness itself now behaved correctly:
+
+- stdout/stderr were retained;
+- the profiler ran in an isolated process group;
+- `profiler-process.json` recorded `timed_out=true`,
+  `termination=timeout-sigterm`, and exit status -15;
+- a non-empty raw trace (80,568 bytes) and the profiled binary were retained;
+- capability remained `supported=true`.
+
+Symbol packets, symbolized trace, pprof, SQL projections, summary, correctness
+verifier, and final manifest were not reached before timeout. Therefore this
+run is classified as a **real-workload instrumentation-mode failure**, not a
+Perfetto capability, unwind/symbolization, PostgreSQL, or correctness failure.
+
+Perfetto documents interval 1 as the fully accurate high-overhead mode and
+uses 4,096 bytes as the default sampling interval. Heapprofd samples one
+allocation on average per configured byte interval using size-weighted Poisson
+sampling; increasing the interval is the documented way to reduce profiler
+impact. The claim-bearing real-workload contract therefore changes to:
+
+- sampling interval: 4,096 bytes;
+- sampling purpose: call-stack attribution, not exact allocation-event counts;
+- blocking-client: retained so buffer pressure does not silently truncate the
+  profile;
+- explicit 600-second process-group timeout: retained as the outer fail-closed
+  bound;
+- positive allocation count/byte SQL values: sampled attribution counters only;
+- same-callsite `postgres_postgres + oxide_batch` readability gate,
+  correctness verifier, exact provenance, and system-only allocator boundary:
+  unchanged.
+
+The C capability probe remains interval 1 because its tiny known-symbol program
+is specifically intended to prove maximum-fidelity host capability.
+
+### Third real OxideBatch Perfetto workload attempt: attribution reached, Rust symbol gate was stale
+
+Authoritative run `44055506205` on exact main
+`95eda2ecfccede12f9f1ee166859f5fa841a9f54` exercised the practical
+4,096-byte sampling contract. The profiler completed naturally with exit status
+0, did not hit the 600-second timeout, retained non-empty raw/symbolized/pprof
+evidence, and recorded zero heapprofd errors.
+
+The sampled attribution projection contained:
+
+- 1,121 positive sampled allocations;
+- 8,645,000 sampled positive allocation bytes;
+- 249 positive allocation callsites;
+- 6,414 allocation-reachable frame rows;
+- 5,383 named frame rows;
+- 239 callsites containing `postgres_postgres`;
+- 211 callsites containing `oxide_batch`.
+
+The producer still failed because the then-current Rust predicate accepted only
+symbols containing `::`. Independent inspection of the retained complete
+allocation-stack projection showed:
+
+- 0 of 249 allocation roots contained a `::` frame;
+- all 249 roots contained at least one symbol beginning with Rust v0 `_R`;
+- 211 roots contained both `postgres_postgres` and `oxide_batch`;
+- all 211 of those same cross-boundary roots also contained the observed
+  Rust v0 symbol form.
+
+One retained representative symbol is:
+
+`_RNCNvMs8_NtNtCsiwTohZ3ZiY4_11oxide_batch10repository8postgresNtB7_21PostgresJobRepository7connect0Cs6q1KHVFtCnK_17postgres_postgres`
+
+Therefore run 44055506205 is classified as a **fail-closed
+symbol-classification contract defect**, not a sampling, collection,
+symbolization, or attribution failure. The run cannot close lane C because the
+producer rejected the projection before the independent correctness verifier
+and final manifest were generated.
+
+The repaired contract accepts exactly two Rust symbol forms:
+
+- demangled Rust names containing `::`;
+- Rust v0 mangled names beginning with `_R`.
+
+It still requires `postgres_postgres` and `oxide_batch` in the same
+allocation-reachable root. Arbitrary C/native symbol names remain insufficient.
+
+### Manual hosted ARM64 Perfetto workload workflow
+
+`.github/workflows/profile-postgres-postgres-perfetto-heap.yml` is the
+manual runtime wrapper for the qualified Perfetto workload producer.
+
+It intentionally exposes no workflow inputs. The runtime geometry is fixed to
+the first claim-bearing workload qualification boundary:
+
+- runner: `ubuntu-24.04-arm`;
+- allocator: `system`;
+- reader: `paging`;
+- rows: 2,000;
+- seed: 266;
+- chunk size: 200;
+- page size: 128;
+- sampling interval: 4,096 bytes;
+- blocking-client: retained;
+- explicit profiler timeout: 600 seconds;
+- exact repository SHA from the dispatched ref.
+
+The workflow:
+
+- installs the repository stable Rust toolchain and build cache;
+- executes the producer/manifest unit contracts before runtime work;
+- records exact run/runner/geometry context;
+- provisions and independently verifies the same pinned Perfetto v59.1 script
+  and v58.2 ARM64 helper identities qualified by the C capability run;
+- ensures `llvm-symbolizer` exists and records its parsed version plus
+  executable SHA-256;
+- starts PostgreSQL 18;
+- executes only `benchmark/perfetto_heap_profile.py` with the explicit
+  600-second profiler timeout;
+- independently revalidates the resulting manifest, every retained artifact
+  hash, Perfetto provenance, symbolizer identity, profiled binary digest,
+  correctness digest, and fail-closed cross-boundary allocation-stack summary;
+- uploads prerequisite and partial producer evidence even when runtime
+  qualification fails;
+- tears PostgreSQL down unconditionally.
+
+The final workflow verdict remains fail-closed. A successful artifact upload
+does not convert a failed prerequisite or producer run into a PASS.
+
+This workflow is orchestration only. Merging it does **not** establish real
+OxideBatch heap attribution; that claim requires a later manual dispatch on an
+exact protected-main SHA and independent inspection of the retained artifact.
+
+## Allocator-native telemetry retained-evidence producer
+
+`benchmark/allocator_telemetry_profile.py` is the Lane E retained-evidence
+producer for registry-wired allocator-native telemetry.
+
+The producer is deliberately separate from Lane A benchmark timing. It records
+no elapsed time, throughput, CPU, RSS, or synthetic cross-allocator
+fragmentation value. One invocation selects exactly one wired allocator
+(`jemalloc`, `mimalloc`, or `snmalloc`), builds its dedicated telemetry
+feature, clones a fresh seeded PostgreSQL database, executes the normal workload,
+captures the allocator's native post-success snapshot, runs the independent
+correctness verifier, and retains:
+
+- `allocator/snapshot.json` with the native allocator payload;
+- `allocator/run.json` with the exact telemetry feature, capabilities, native
+  API, command, binary digest, and snapshot digest;
+- workload stdout/stderr;
+- the independent verifier report;
+- the exact release binary;
+- the exact `Cargo.lock`;
+- the allocator registry and selected allocator record;
+- rustc/cargo/target build provenance;
+- a v2 campaign manifest hashing every retained artifact.
+
+The snapshot validator is allocator-specific only where the native contract is
+stable enough to validate honestly:
+
+- jemalloc requires the six retained `stats.*` counters as non-negative
+  native integers after epoch refresh;
+- mimalloc retains the wrapper's native JSON object without inventing a common
+  schema and requires the `mi_stats_get_json` API identity;
+- snmalloc requires non-negative current/peak OS reservation values and
+  `peak >= current`.
+
+`.github/workflows/profile-postgres-postgres-allocator-native.yml` is the
+manual hosted ARM64 wrapper. It has no user inputs and runs a fixed matrix over
+jemalloc, mimalloc, and snmalloc with the same bounded geometry:
+
+- runner: `ubuntu-24.04-arm`;
+- reader: paging;
+- rows: 2,000;
+- seed: 266;
+- chunk size: 200;
+- page size: 128;
+- exact repository SHA from the dispatched ref.
+
+Each matrix shard independently reruns producer contracts, starts PostgreSQL 18,
+runs the producer, revalidates the manifest and every retained SHA-256, checks
+the native snapshot/run metadata and provenance relationship, uploads evidence
+even on failure, and tears PostgreSQL down unconditionally.
+
+A merged workflow is orchestration capability only. It does **not** itself close
+Lane E. Claim-bearing Lane E evidence requires a later manual dispatch from an
+exact protected-main SHA and independent inspection of all three retained
+allocator artifacts. Hosted-runner evidence remains orchestration/native-API
+evidence rather than stable-host allocator-performance evidence.
+
 ## Next implementation boundary
 
-Profiler tools, opt-in profiling orchestration, soak execution, allocator-native
-telemetry, and retained claim-bearing measurements remain separate later units.
+Review and merge the allocator-native retained-evidence producer/workflow first.
+The following separate unit may dispatch it exactly once from protected main;
+do not poll after dispatch.
+
+A later classification unit must independently inspect jemalloc, mimalloc, and
+snmalloc artifacts and require exact-main provenance, native snapshot validity,
+manifest hash closure, and correctness PASS before Lane E can be closed.
+Long-running/quiescence memory observations remain a separate campaign
+completion obligation and must not be inferred from this point-in-time Lane E
+snapshot.

@@ -30,9 +30,9 @@ use oxide_batch::{
     Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
     ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ComponentRevision,
     ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
-    FailureCategory, FailureId, InFlightPolicy, ItemReader, ItemStream, JobInstanceKey,
-    JobLauncher, JobName, JobParameter, JobParameters, JobRepository, NoopChunkCompletion,
-    ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
+    FailureCategory, FailureId, InFlightPolicy, ItemListenerSet, ItemReader, ItemStream,
+    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository,
+    NoopChunkCompletion, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
     PostgresJobRepository, PostgresMigrator, ReaderError, RecoveryRequest, SequentialIdGenerator,
     StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource, StreamStateContract,
@@ -305,6 +305,7 @@ fn parameters(
 #[allow(clippy::too_many_arguments)]
 async fn launch_and_finish<R>(
     launcher: &JobLauncher<'_>,
+    timeline: Option<&Arc<crate::timeline::TimelineRecorder>>,
     repository: &PostgresJobRepository,
     source_guard: sqlx::Transaction<'static, sqlx::Postgres>,
     guard_pool: sqlx::PgPool,
@@ -362,7 +363,7 @@ where
         Arc::clone(&fired),
     );
 
-    let step = ChunkStep::new(
+    let mut step = ChunkStep::new(
         StepName::new("transform_customers")?,
         ChunkSize::new(chunk_size)?,
         reader,
@@ -372,6 +373,14 @@ where
         Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(namespace, stream, contract);
+
+    if let Some(timeline) = timeline {
+        let listeners = ItemListenerSet::<SourceRow, ProjectedRow>::new()
+            .with_read_listener(timeline.clone())?
+            .with_process_listener(timeline.clone())?
+            .with_write_listener(timeline.clone())?;
+        step = step.with_item_listeners(listeners);
+    }
 
     let mut chunk_job = ChunkJob::new(
         JobName::new(import_name)?,
@@ -411,6 +420,9 @@ where
     }
     let status = execution.metadata().status();
     repository.close().await?;
+    if let Some(timeline) = timeline {
+        timeline.flush()?;
+    }
     // launch_chunk returning Ok only means the launcher's own future
     // completed; a component failure is persisted, not surfaced as Err
     // (see JobLauncher::launch's doc comment). A caller relying on process
@@ -482,7 +494,13 @@ pub async fn run(
     let clock = Arc::new(SystemClock);
     let repository = PostgresJobRepository::connect(pg_config(database_url)?, clock).await?;
     let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
-    let launcher = JobLauncher::new(&repository, &SystemClock, &ids);
+    let timeline = crate::timeline::TimelineRecorder::from_env()?;
+    let base_launcher = JobLauncher::new(&repository, &SystemClock, &ids);
+    let launcher = if let Some(timeline) = timeline.as_deref() {
+        base_launcher.with_event_sink(timeline)
+    } else {
+        base_launcher
+    };
 
     let guard_pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
@@ -521,6 +539,7 @@ pub async fn run(
             let revisions = component_revisions(reader_mode, namespace.clone())?;
             launch_and_finish(
                 &launcher,
+                timeline.as_ref(),
                 &repository,
                 source_guard,
                 guard_pool,
@@ -556,6 +575,7 @@ pub async fn run(
             let revisions = component_revisions(reader_mode, namespace.clone())?;
             launch_and_finish(
                 &launcher,
+                timeline.as_ref(),
                 &repository,
                 source_guard,
                 guard_pool,

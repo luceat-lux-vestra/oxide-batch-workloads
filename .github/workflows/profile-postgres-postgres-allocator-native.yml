@@ -1,0 +1,213 @@
+name: Profile PostgreSQL allocator-native telemetry
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-allocator-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  allocator-native-profile:
+    name: allocator-native-${{ matrix.allocator }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        allocator:
+          - jemalloc
+          - mimalloc
+          - snmalloc
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      EXPECTED_SHA: ${{ github.sha }}
+      PROFILE_ALLOCATOR: ${{ matrix.allocator }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate allocator-native producer contracts
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_allocator_telemetry_profile.py
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          python3 benchmark/allocator_registry.py --telemetry-lines --target "$target" \
+            | grep -Fx "${PROFILE_ALLOCATOR}|allocator-${PROFILE_ALLOCATOR}-telemetry"
+
+      - name: Start PostgreSQL 18
+        id: postgres
+        continue-on-error: true
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run allocator-native telemetry producer
+        id: producer
+        if: steps.postgres.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/allocator_telemetry_profile.py \
+            --base-database-url "$DATABASE_URL" \
+            --output "$RUNNER_TEMP/allocator-native-artifacts" \
+            --allocator "$PROFILE_ALLOCATOR" \
+            --reader paging \
+            --rows 2000 \
+            --seed 266 \
+            --chunk-size 200 \
+            --fetch-size 128 \
+            --page-size 128
+
+      - name: Validate retained allocator-native evidence
+        id: evidence
+        if: steps.producer.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/allocator-native-artifacts"
+          python3 benchmark/profile_manifest.py "$root/manifest.json" >/dev/null
+          python3 - "$root" "$PROFILE_ALLOCATOR" "$EXPECTED_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          allocator = sys.argv[2]
+          expected_sha = sys.argv[3]
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          assert manifest["schema"] == "oxide-batch-profile-manifest/v2"
+          assert manifest["campaign"] == 266
+          assert manifest["lane"] == "allocator"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["allocator"]["identity"] == allocator
+          assert manifest["subject"]["build_profile"] == "release"
+          assert manifest["workload"]["reader_mode"] == "paging"
+          assert manifest["workload"]["rows"] == 2000
+          assert manifest["workload"]["seed"] == 266
+          assert manifest["workload"]["chunk_size"] == 200
+          assert manifest["workload"]["page_size"] == 128
+          assert manifest["instrumentation"]["profiler_attached"] is False
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == artifact["sha256"], path
+
+          required = (
+              "allocator/snapshot.json",
+              "allocator/run.json",
+              "allocator/workload.stdout.txt",
+              "allocator/workload.stderr.txt",
+              "correctness/verifier.json",
+              f"binary/postgres-postgres-{allocator}-telemetry",
+              "provenance/Cargo.lock",
+              "provenance/allocator_registry.json",
+              "provenance/allocator.json",
+              "provenance/toolchain.json",
+          )
+          for relative in required:
+              assert (root / relative).is_file(), relative
+          for relative in (
+              "allocator/snapshot.json",
+              "allocator/run.json",
+              "correctness/verifier.json",
+              f"binary/postgres-postgres-{allocator}-telemetry",
+              "provenance/Cargo.lock",
+              "provenance/allocator_registry.json",
+              "provenance/allocator.json",
+              "provenance/toolchain.json",
+          ):
+              assert (root / relative).stat().st_size > 0, relative
+
+          snapshot = json.loads(
+              (root / "allocator/snapshot.json").read_text(encoding="utf-8")
+          )
+          assert snapshot["schema"] == "oxide-batch-allocator-native-telemetry/v1"
+          assert snapshot["allocator"] == allocator
+          assert snapshot["capture"] == "post-successful-workload-run"
+          assert isinstance(snapshot["native_api"], str) and snapshot["native_api"]
+          assert isinstance(snapshot["native_payload"], dict) and snapshot["native_payload"]
+          assert isinstance(snapshot["limitations"], list) and snapshot["limitations"]
+
+          run = json.loads((root / "allocator/run.json").read_text(encoding="utf-8"))
+          assert run["schema"] == "oxide-batch-allocator-telemetry-profile-run/v1"
+          assert run["claim"] == "allocator-native-post-success-snapshot-only"
+          assert run["allocator"] == allocator
+          assert run["workload_exit_status"] == 0
+          assert run["telemetry_schema"] == snapshot["schema"]
+          assert run["native_api"] == snapshot["native_api"]
+          assert run["snapshot_sha256"] == hashlib.sha256(
+              (root / "allocator/snapshot.json").read_bytes()
+          ).hexdigest()
+          assert run["binary_sha256"] == hashlib.sha256(
+              (root / f"binary/postgres-postgres-{allocator}-telemetry").read_bytes()
+          ).hexdigest()
+
+          retained_lock_sha = hashlib.sha256(
+              (root / "provenance/Cargo.lock").read_bytes()
+          ).hexdigest()
+          assert retained_lock_sha == manifest["subject"]["cargo_lock_sha256"]
+
+          allocator_provenance = json.loads(
+              (root / "provenance/allocator.json").read_text(encoding="utf-8")
+          )
+          assert allocator_provenance["identity"] == allocator
+          assert allocator_provenance["telemetry"]["status"] == "wired"
+          assert allocator_provenance["telemetry"]["cargo_feature"] == run["telemetry_feature"]
+          assert allocator_provenance["telemetry"]["capabilities"] == run["capabilities"]
+
+          print(
+              "validated allocator-native telemetry evidence: "
+              f"allocator={allocator} sha={expected_sha}"
+          )
+          PY
+
+      - name: Upload allocator-native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-allocator-native-${{ matrix.allocator }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/allocator-native-artifacts
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if PostgreSQL, producer, or evidence validation failed
+        if: steps.postgres.outcome != 'success' || steps.producer.outcome != 'success' || steps.evidence.outcome != 'success'
+        run: |
+          echo "::error::allocator-native telemetry qualification failed; inspect retained artifact"
+          exit 1

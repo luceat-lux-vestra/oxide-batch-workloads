@@ -39,7 +39,8 @@ def valid_manifest(*, lane: str = "benchmark", allocator: str = "system") -> dic
         "subject": {
             "workload_sha": "a" * 40,
             "cargo_lock_sha256": "b" * 64,
-            "rustc": "rustc 1.95.0",
+            "rustc": "rustc 1.100.0 (fixture)",
+            "cargo": "cargo 1.100.0 (fixture)",
             "target": "aarch64-unknown-linux-gnu",
             "build_profile": "release",
             "oxide_batch": {
@@ -103,6 +104,24 @@ def valid_manifest(*, lane: str = "benchmark", allocator: str = "system") -> dic
 
 
 class ProfileManifestTests(unittest.TestCase):
+    def test_preserves_v1_manifest_without_cargo_version(self) -> None:
+        document = valid_manifest()
+        document["schema"] = profile_manifest.SCHEMA_V1
+        document["subject"].pop("cargo")
+        profile_manifest.validate_manifest(document)
+
+    def test_v2_requires_cargo_version(self) -> None:
+        document = valid_manifest()
+        document["subject"].pop("cargo")
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "subject.cargo"):
+            profile_manifest.validate_manifest(document)
+
+    def test_rejects_unknown_schema_version(self) -> None:
+        document = valid_manifest()
+        document["schema"] = "oxide-batch-profile-manifest/v3"
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "schema must be one of"):
+            profile_manifest.validate_manifest(document)
+
     def test_valid_benchmark_system_manifest(self) -> None:
         profile_manifest.validate_manifest(valid_manifest())
 
@@ -127,6 +146,43 @@ class ProfileManifestTests(unittest.TestCase):
         document["instrumentation"]["profiler_attached"] = False
         with self.assertRaisesRegex(
             profile_manifest.ManifestError, "requires profiler attachment"
+        ):
+            profile_manifest.validate_manifest(document)
+
+    def test_valid_allocator_lane_requires_native_tool_without_profiler(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {
+            "profiler_attached": False,
+            "tools": [
+                {
+                    "name": "allocator-native-telemetry",
+                    "version": "oxide-batch-allocator-native-telemetry/v1",
+                    "role": "native snapshot",
+                }
+            ],
+        }
+        profile_manifest.validate_manifest(document)
+
+    def test_allocator_lane_rejects_profiler_attachment(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {
+            "profiler_attached": True,
+            "tools": [
+                {
+                    "name": "allocator-native-telemetry",
+                    "version": "oxide-batch-allocator-native-telemetry/v1",
+                    "role": "native snapshot",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(profile_manifest.ManifestError, "must not attach"):
+            profile_manifest.validate_manifest(document)
+
+    def test_allocator_lane_requires_native_tool(self) -> None:
+        document = valid_manifest(lane="allocator", allocator="jemalloc")
+        document["instrumentation"] = {"profiler_attached": False, "tools": []}
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "allocator-native telemetry tool"
         ):
             profile_manifest.validate_manifest(document)
 
@@ -171,6 +227,14 @@ class ProfileManifestTests(unittest.TestCase):
         document = valid_manifest()
         document["subject"]["oxide_batch"]["version"] = "0.6.1"
         with self.assertRaisesRegex(profile_manifest.ManifestError, "must be '0.6.0'"):
+            profile_manifest.validate_manifest(document)
+
+    def test_rejects_allocator_on_unqualified_target(self) -> None:
+        document = valid_manifest(allocator="jemalloc")
+        document["subject"]["target"] = "x86_64-unknown-linux-gnu"
+        with self.assertRaisesRegex(
+            profile_manifest.ManifestError, "is not qualified for target"
+        ):
             profile_manifest.validate_manifest(document)
 
     def test_replacement_allocator_requires_wrapper_identity(self) -> None:

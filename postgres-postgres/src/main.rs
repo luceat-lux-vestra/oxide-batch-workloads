@@ -127,6 +127,9 @@ enum Command {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    let _allocator_background_actions =
+        postgres_postgres::allocator::initialize_selected_allocator();
+
     // Defaults to info (per-job/per-step/per-chunk progress, never
     // per-row) so useful diagnostics are visible without an operator
     // needing to know to set RUST_LOG first; still fully overridable.
@@ -168,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
             failure_mode,
             pause_for_kill,
         } => {
-            job::run(
+            let result = job::run(
                 &database_url,
                 &import_name,
                 chunk_size,
@@ -179,7 +182,11 @@ async fn main() -> anyhow::Result<()> {
                 failure_mode,
                 pause_for_kill,
             )
-            .await
+            .await;
+            if result.is_ok() {
+                postgres_postgres::allocator_telemetry::capture_from_env()?;
+            }
+            result
         }
         Command::Recover {
             database_url,

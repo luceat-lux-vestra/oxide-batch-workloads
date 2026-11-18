@@ -238,6 +238,14 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test-discover-supply-chain-workloads.py
 
+      - name: Test Cargo lock consistency authority
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/test-validate-cargo-locks.py
+
+      - name: Validate registered Cargo lockfiles
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/validate-cargo-locks.py check
+
       - name: Test consolidated supply-chain authority
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test-run-supply-chain-authority.py

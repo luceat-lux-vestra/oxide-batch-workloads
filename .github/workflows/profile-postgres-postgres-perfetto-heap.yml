@@ -1,0 +1,617 @@
+name: Profile PostgreSQL heap attribution with Perfetto
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-perfetto-heap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  perfetto-heap-profile:
+    name: postgres-postgres-perfetto-heap-profile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      EXPECTED_SHA: ${{ github.sha }}
+      PERFETTO_RELEASE: v59.1
+      PERFETTO_COMMIT: 1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d
+      PERFETTO_PREBUILT_ROLL: v58.2
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate Perfetto heap workload producer
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_perfetto_heap_probe.py
+          python3 benchmark/test_perfetto_heap_profile.py
+
+      - name: Retain run context
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/perfetto-workload-run-context.json" "$EXPECTED_SHA" <<'PY'
+          import json
+          import os
+          import pathlib
+          import platform
+          import sys
+
+          output = pathlib.Path(sys.argv[1])
+          expected_sha = sys.argv[2]
+          document = {
+              "schema": "oxide-batch-perfetto-heap-workflow-context/v2",
+              "campaign": 266,
+              "repository_sha": expected_sha,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "github_ref": os.environ["GITHUB_REF"],
+              "github_event_name": os.environ["GITHUB_EVENT_NAME"],
+              "runner_os": os.environ.get("RUNNER_OS"),
+              "runner_arch": os.environ.get("RUNNER_ARCH"),
+              "platform_machine": platform.machine(),
+              "platform_release": platform.release(),
+              "allocator": "system",
+              "reader": "paging",
+              "geometry": {
+                  "rows": 2000,
+                  "seed": 266,
+                  "chunk_size": 200,
+                  "fetch_size": 128,
+                  "page_size": 128,
+              },
+              "sampling": {
+                  "interval_bytes": 4096,
+                  "mode": "poisson-sampled-attribution",
+                  "block_client": True,
+                  "overflow_policy": "block-client",
+                  "allocation_counter_claim": (
+                      "sampled-attribution-not-exact-allocation-event-count"
+                  ),
+              },
+              "profiler_timeout_seconds": 600,
+          }
+          output.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Provision pinned Perfetto ARM64 tools
+        id: provision
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          TOOL_ROOT="$RUNNER_TEMP/perfetto-tools"
+          STATUS_FILE="$RUNNER_TEMP/perfetto-download-status.txt"
+          mkdir -p "$TOOL_ROOT"
+          : > "$STATUS_FILE"
+
+          fetch() {
+            local name="$1"
+            local url="$2"
+            local executable="$3"
+            local destination="$TOOL_ROOT/$name"
+            local temporary="$destination.tmp"
+            local status=0
+
+            rm -f "$temporary" "$destination"
+            if curl --fail --location --retry 3 --retry-delay 1 --connect-timeout 20 --max-time 180 --output "$temporary" "$url"; then
+              mv "$temporary" "$destination"
+              if [[ "$executable" == "yes" ]]; then
+                chmod 0755 "$destination"
+              fi
+            else
+              status=$?
+              rm -f "$temporary"
+            fi
+            printf '%s|%s\n' "$name" "$status" >> "$STATUS_FILE"
+            return "$status"
+          }
+
+          HEAP_PROFILE_URL="https://raw.githubusercontent.com/google/perfetto/1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d/tools/heap_profile"
+          TRACEBOX_URL="https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/tracebox"
+          PRELOAD_URL="https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/libheapprofd_glibc_preload.so"
+          TRACE_PROCESSOR_URL="https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/trace_processor_shell"
+
+          set +e
+          fetch "heap_profile" "$HEAP_PROFILE_URL" "no"
+          HEAP_PROFILE_STATUS=$?
+          fetch "tracebox" "$TRACEBOX_URL" "yes"
+          TRACEBOX_STATUS=$?
+          fetch "libheapprofd_glibc_preload.so" "$PRELOAD_URL" "no"
+          PRELOAD_STATUS=$?
+          fetch "trace_processor_shell" "$TRACE_PROCESSOR_URL" "yes"
+          TRACE_PROCESSOR_STATUS=$?
+          set -e
+
+          python3 - "$TOOL_ROOT" "$STATUS_FILE" "$RUNNER_TEMP/perfetto-provision.json" <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import sys
+
+          tool_root = pathlib.Path(sys.argv[1])
+          status_file = pathlib.Path(sys.argv[2])
+          output = pathlib.Path(sys.argv[3])
+
+          expected = {
+              "heap_profile": {
+                  "url": "https://raw.githubusercontent.com/google/perfetto/1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d/tools/heap_profile",
+                  "git_blob_sha1": "1d5b1cc8d9bd38749c6d200a8d5aac9b616b84ed",
+              },
+              "tracebox": {
+                  "url": "https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/tracebox",
+                  "sha256": "2d21883e9c55818f851fd8c391afb9b366032b3110076b4fd41f31f30b5849fa",
+                  "size": 3470168,
+              },
+              "libheapprofd_glibc_preload.so": {
+                  "url": "https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/libheapprofd_glibc_preload.so",
+                  "sha256": "4ca10d32455973389d0f772f1c9ad8616b61eb46edc3b995a2825dee9fab2662",
+                  "size": 1034480,
+              },
+              "trace_processor_shell": {
+                  "url": "https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v58.2/linux-arm64/trace_processor_shell",
+                  "sha256": "0e6e0c5452c505c8d46fe472fd196a0d17d963460727e2ce2013b02aa1309555",
+                  "size": 14086160,
+              },
+          }
+
+          statuses = {}
+          for line in status_file.read_text(encoding="utf-8").splitlines():
+              name, raw_status = line.split("|", 1)
+              statuses[name] = int(raw_status)
+
+          files = {}
+          for name, contract in expected.items():
+              path = tool_root / name
+              exists = path.is_file()
+              data = path.read_bytes() if exists else b""
+              record = {
+                  **contract,
+                  "download_exit_status": statuses.get(name),
+                  "exists": exists,
+                  "bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest() if exists else None,
+                  "executable": exists and os.access(path, os.X_OK),
+              }
+              if name == "heap_profile":
+                  header = f"blob {len(data)}\0".encode()
+                  actual_blob = hashlib.sha1(header + data).hexdigest() if exists else None
+                  record["git_blob_sha1"] = actual_blob
+                  record["expected_git_blob_sha1"] = contract["git_blob_sha1"]
+                  record["matches_expected"] = (
+                      exists
+                      and record["download_exit_status"] == 0
+                      and actual_blob == contract["git_blob_sha1"]
+                  )
+              else:
+                  record["matches_expected"] = (
+                      exists
+                      and record["download_exit_status"] == 0
+                      and record["bytes"] == contract["size"]
+                      and record["sha256"] == contract["sha256"]
+                      and (
+                          name == "libheapprofd_glibc_preload.so"
+                          or record["executable"]
+                      )
+                  )
+              files[name] = record
+
+          document = {
+              "schema": "oxide-batch-perfetto-provision/v1",
+              "campaign": 266,
+              "perfetto_release": "v59.1",
+              "perfetto_commit": "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d",
+              "prebuilt_roll": "v58.2",
+              "files": files,
+              "matches_expected": all(
+                  record["matches_expected"] for record in files.values()
+              ),
+          }
+          output.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          if not document["matches_expected"]:
+              raise SystemExit("pinned Perfetto provision identity verification failed")
+          PY
+
+          if (( HEAP_PROFILE_STATUS != 0 || TRACEBOX_STATUS != 0 || PRELOAD_STATUS != 0 || TRACE_PROCESSOR_STATUS != 0 )); then
+            echo "::error::one or more pinned Perfetto downloads failed; retained provision evidence will be uploaded"
+            exit 1
+          fi
+
+      - name: Ensure llvm-symbolizer prerequisite
+        id: symbolizer
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          INSTALL_STATUS=0
+          if ! command -v llvm-symbolizer >/dev/null 2>&1; then
+            set +e
+            sudo apt-get update
+            UPDATE_STATUS=$?
+            if (( UPDATE_STATUS == 0 )); then
+              sudo apt-get install -y --no-install-recommends llvm
+              INSTALL_STATUS=$?
+            else
+              INSTALL_STATUS=$UPDATE_STATUS
+            fi
+            set -e
+          fi
+
+          python3 - "$RUNNER_TEMP/perfetto-symbolizer.json" "$INSTALL_STATUS" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          output = pathlib.Path(sys.argv[1])
+          install_status = int(sys.argv[2])
+          path = shutil.which("llvm-symbolizer")
+          version_status = None
+          version_output = None
+          version = None
+          digest = None
+
+          if path is not None:
+              completed = subprocess.run(
+                  [path, "--version"],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              version_status = completed.returncode
+              version_output = (completed.stdout or completed.stderr).strip()
+              match = re.search(r"\bversion\s+([^\s]+)", version_output, re.IGNORECASE)
+              version = match.group(1) if match is not None else None
+              digest = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+          document = {
+              "schema": "oxide-batch-perfetto-symbolizer/v2",
+              "campaign": 266,
+              "install_exit_status": install_status,
+              "path": path,
+              "sha256": digest,
+              "version_exit_status": version_status,
+              "version_output": version_output,
+              "version": version,
+              "available": (
+                  install_status == 0
+                  and path is not None
+                  and digest is not None
+                  and version_status == 0
+                  and version is not None
+              ),
+              "upstream_requirement": (
+                  "Perfetto native symbolization requires llvm-symbolizer on PATH"
+              ),
+          }
+          output.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(document, sort_keys=True))
+          if not document["available"]:
+              raise SystemExit("llvm-symbolizer prerequisite unavailable")
+          PY
+
+      - name: Start PostgreSQL 18
+        id: postgres
+        if: steps.provision.outcome == 'success' && steps.symbolizer.outcome == 'success'
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run Perfetto heap workload producer
+        id: producer
+        if: steps.provision.outcome == 'success' && steps.symbolizer.outcome == 'success' && steps.postgres.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/perfetto_heap_profile.py             --base-database-url "$DATABASE_URL"             --output "$RUNNER_TEMP/perfetto-heap-profile-artifacts"             --heap-profile-script "$RUNNER_TEMP/perfetto-tools/heap_profile"             --tracebox-binary "$RUNNER_TEMP/perfetto-tools/tracebox"             --preload-library "$RUNNER_TEMP/perfetto-tools/libheapprofd_glibc_preload.so"             --trace-processor-binary "$RUNNER_TEMP/perfetto-tools/trace_processor_shell"             --profiler-timeout-seconds 600             --allocator system             --reader paging             --rows 2000             --seed 266             --chunk-size 200             --fetch-size 128             --page-size 128
+
+      - name: Validate retained Perfetto heap workload evidence
+        id: evidence
+        if: always()
+        continue-on-error: true
+        env:
+          PROVISION_OUTCOME: ${{ steps.provision.outcome }}
+          SYMBOLIZER_OUTCOME: ${{ steps.symbolizer.outcome }}
+          POSTGRES_OUTCOME: ${{ steps.postgres.outcome }}
+          PRODUCER_OUTCOME: ${{ steps.producer.outcome }}
+        run: |
+          set -euo pipefail
+          python3 -             "$RUNNER_TEMP/perfetto-workload-run-context.json"             "$RUNNER_TEMP/perfetto-provision.json"             "$RUNNER_TEMP/perfetto-symbolizer.json"             "$RUNNER_TEMP/perfetto-heap-profile-artifacts"             "$EXPECTED_SHA"             "$PROVISION_OUTCOME"             "$SYMBOLIZER_OUTCOME"             "$POSTGRES_OUTCOME"             "$PRODUCER_OUTCOME" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          context_path = pathlib.Path(sys.argv[1])
+          provision_path = pathlib.Path(sys.argv[2])
+          symbolizer_path = pathlib.Path(sys.argv[3])
+          root = pathlib.Path(sys.argv[4])
+          expected_sha = sys.argv[5]
+          provision_outcome = sys.argv[6]
+          symbolizer_outcome = sys.argv[7]
+          postgres_outcome = sys.argv[8]
+          producer_outcome = sys.argv[9]
+
+          assert context_path.is_file()
+          context = json.loads(context_path.read_text(encoding="utf-8"))
+          assert context["schema"] == "oxide-batch-perfetto-heap-workflow-context/v2"
+          assert context["campaign"] == 266
+          assert context["repository_sha"] == expected_sha
+          assert context["github_event_name"] == "workflow_dispatch"
+          assert context["runner_arch"] == "ARM64"
+          assert context["platform_machine"].lower() == "aarch64"
+          assert context["allocator"] == "system"
+          assert context["reader"] == "paging"
+          assert context["geometry"] == {
+              "rows": 2000,
+              "seed": 266,
+              "chunk_size": 200,
+              "fetch_size": 128,
+              "page_size": 128,
+          }
+          assert context["sampling"] == {
+              "interval_bytes": 4096,
+              "mode": "poisson-sampled-attribution",
+              "block_client": True,
+              "overflow_policy": "block-client",
+              "allocation_counter_claim": (
+                  "sampled-attribution-not-exact-allocation-event-count"
+              ),
+          }
+          assert context["profiler_timeout_seconds"] == 600
+
+          assert provision_path.is_file()
+          provision = json.loads(provision_path.read_text(encoding="utf-8"))
+          assert provision["schema"] == "oxide-batch-perfetto-provision/v1"
+          assert provision["campaign"] == 266
+          assert provision["perfetto_release"] == "v59.1"
+          assert provision["perfetto_commit"] == "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d"
+          assert provision["prebuilt_roll"] == "v58.2"
+          if provision_outcome == "success":
+              assert provision["matches_expected"] is True
+              assert all(
+                  record["matches_expected"]
+                  for record in provision["files"].values()
+              )
+
+          assert symbolizer_path.is_file()
+          symbolizer = json.loads(symbolizer_path.read_text(encoding="utf-8"))
+          assert symbolizer["schema"] == "oxide-batch-perfetto-symbolizer/v2"
+          assert symbolizer["campaign"] == 266
+          if symbolizer_outcome == "success":
+              assert symbolizer["available"] is True
+              assert symbolizer["path"]
+              assert symbolizer["sha256"]
+              assert symbolizer["version"]
+              assert symbolizer["version_exit_status"] == 0
+
+          process_path = root / "heap/profiler-process.json"
+          if process_path.is_file():
+              process = json.loads(process_path.read_text(encoding="utf-8"))
+              assert process["schema"] == "oxide-batch-perfetto-profiler-process/v1"
+              assert process["timeout_seconds"] == 600
+              assert process["process_group_isolated"] is True
+              for relative in (
+                  "heap/heap_profile.stdout.txt",
+                  "heap/heap_profile.stderr.txt",
+              ):
+                  assert (root / relative).is_file(), relative
+
+          if producer_outcome != "success":
+              print(
+                  "retained prerequisite/partial evidence validated: "
+                  f"provision={provision_outcome} symbolizer={symbolizer_outcome} "
+                  f"postgres={postgres_outcome} producer={producer_outcome} "
+                  f"profiler_process_retained={process_path.is_file()}"
+              )
+              raise SystemExit(0)
+
+          manifest_path = root / "manifest.json"
+          assert manifest_path.is_file()
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          assert manifest["schema"] == "oxide-batch-profile-manifest/v2"
+          assert manifest["campaign"] == 266
+          assert manifest["lane"] == "heap"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["subject"]["build_profile"] == "release"
+          assert manifest["subject"]["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
+          assert manifest["allocator"]["identity"] == "system"
+          assert manifest["workload"]["reader_mode"] == "paging"
+          assert manifest["workload"]["rows"] == 2000
+          assert manifest["workload"]["seed"] == 266
+          assert manifest["workload"]["chunk_size"] == 200
+          assert manifest["workload"]["fetch_size"] is None
+          assert manifest["workload"]["page_size"] == 128
+          assert manifest["instrumentation"]["profiler_attached"] is True
+          assert [tool["name"] for tool in manifest["instrumentation"]["tools"]] == [
+              "perfetto-heapprofd-host",
+              "trace_processor_shell",
+              "llvm-symbolizer",
+          ]
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == artifact["sha256"], path
+
+          required = (
+              "heap/profile/raw-trace",
+              "heap/profile/symbols",
+              "heap/profile/symbolized-trace",
+              "heap/allocation-stats.csv",
+              "heap/stack-summary.csv",
+              "heap/heapprofd-errors.csv",
+              "heap/allocation-stack-symbols.csv",
+              "heap/summary.json",
+              "heap/capability.json",
+              "heap/run.json",
+              "heap/profiler-process.json",
+              "heap/compat/traceconv-compat.py",
+              "correctness/verifier.json",
+              "binary/postgres-postgres-system",
+          )
+          for relative in required:
+              path = root / relative
+              assert path.is_file() and path.stat().st_size > 0, path
+
+          pprof = [
+              path
+              for path in (root / "heap/profile").glob("heap_dump.*.pb.gz")
+              if path.is_file() and path.stat().st_size > 0
+          ]
+          assert pprof, "no non-empty pprof projection retained"
+
+          capability = json.loads(
+              (root / "heap/capability.json").read_text(encoding="utf-8")
+          )
+          assert capability["schema"] == "oxide-batch-perfetto-heap-workload-tools/v2"
+          assert capability["campaign"] == 266
+          assert capability["supported"] is True
+          assert capability["perfetto"]["release"] == "v59.1"
+          assert capability["perfetto"]["commit"] == "1e9c61e9844affd7dccd3d42d9ea9f3a3d10cf6d"
+          assert capability["perfetto"]["prebuilt_roll"] == "v58.2"
+          assert capability["perfetto"]["sampling"] == context["sampling"]
+          assert capability["provenance"]["matches_expected"] is True
+          assert capability["allocator_boundary"]["identity"] == "system"
+          assert capability["allocator_boundary"]["allocator_semantics_preserved"] is True
+          assert capability["allocator_boundary"]["replacement_allocator_dependencies"] == []
+          observed_symbolizer = capability["symbolization"]["llvm_symbolizer"]
+          assert observed_symbolizer["available"] is True
+          assert observed_symbolizer["path"] == symbolizer["path"]
+          assert observed_symbolizer["sha256"] == symbolizer["sha256"]
+          assert observed_symbolizer["version"] == symbolizer["version"]
+
+          summary = json.loads(
+              (root / "heap/summary.json").read_text(encoding="utf-8")
+          )
+          assert summary["schema"] == "oxide-batch-perfetto-heap-profile-summary/v3"
+          assert summary["supported"] is True
+          assert summary["profiler_exit_status"] == 0
+          assert summary["raw_trace_bytes"] > 0
+          assert summary["symbol_packets_bytes"] > 0
+          assert summary["symbolized_trace_bytes"] > 0
+          assert summary["pprof_count"] > 0
+          assert summary["positive_allocation_count"] > 0
+          assert summary["positive_allocation_bytes"] > 0
+          assert summary["positive_allocation_callsite_count"] > 0
+          assert summary["frame_rows"] > 0
+          assert summary["named_frame_rows"] > 0
+          assert summary["rust_symbol_callsite_count"] > 0
+          assert summary["oxide_batch_callsite_count"] > 0
+          assert summary["workload_callsite_count"] > 0
+          assert summary["cross_boundary_callsite_count"] > 0
+          assert summary["symbol_projection_rows"] > 0
+          assert summary["heapprofd_error_count"] == 0
+          assert summary["sampling"] == context["sampling"]
+          expected_rust_symbols = {
+              "mode": "demangled-or-rust-v0",
+              "demangled_separator": "::",
+              "rust_v0_prefix": "_R",
+              "crate_identity_markers": ["postgres_postgres", "oxide_batch"],
+          }
+          assert summary["rust_symbol_classification"] == expected_rust_symbols
+          assert (
+              summary["allocation_stack_attribution"]
+              == "symbolized-rust-workload-to-oxide-batch"
+          )
+          assert summary["coverage_scope"] == "system-allocator-malloc-family-interposition"
+          assert summary["timing_claim"] == "attribution-only"
+
+          process = json.loads(
+              (root / "heap/profiler-process.json").read_text(encoding="utf-8")
+          )
+          assert process["schema"] == "oxide-batch-perfetto-profiler-process/v1"
+          assert process["exit_status"] == 0
+          assert process["timed_out"] is False
+          assert process["termination"] == "natural"
+          assert process["timeout_seconds"] == 600
+          assert process["process_group_isolated"] is True
+
+          run = json.loads((root / "heap/run.json").read_text(encoding="utf-8"))
+          binary = root / "binary/postgres-postgres-system"
+          binary_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          assert run["schema"] == "oxide-batch-perfetto-heap-profile-run/v3"
+          assert run["allocator"] == "system"
+          assert run["reader_mode"] == "paging"
+          assert run["rows"] == 2000
+          assert run["seed"] == 266
+          assert run["build_flags"] == ["CARGO_PROFILE_RELEASE_DEBUG=1"]
+          assert run["profiled_binary_sha256"] == binary_digest
+          assert run["profiler_exit_status"] == 0
+          assert run["profiler_process"] == process
+          assert run["profiler"]["sampling"] == context["sampling"]
+          assert run["rust_symbol_classification"] == expected_rust_symbols
+          assert run["timing_claim"] == "attribution-only"
+          assert run["coverage_scope"] == "system-allocator-malloc-family-interposition"
+          assert run["profiler"]["llvm_symbolizer"]["sha256"] == symbolizer["sha256"]
+          assert run["profiler"]["llvm_symbolizer"]["version"] == symbolizer["version"]
+
+          print(
+              "validated Perfetto heap workload evidence: "
+              f"sha={expected_sha} sampled_allocations={summary['positive_allocation_count']} "
+              f"cross_boundary_callsites={summary['cross_boundary_callsite_count']}"
+          )
+          PY
+
+      - name: Upload Perfetto heap workload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-perfetto-heap-system-paging-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/perfetto-heap-profile-artifacts
+            ${{ runner.temp }}/perfetto-provision.json
+            ${{ runner.temp }}/perfetto-symbolizer.json
+            ${{ runner.temp }}/perfetto-workload-run-context.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if provisioning, symbolization, PostgreSQL, producer, or evidence validation failed
+        if: steps.provision.outcome != 'success' || steps.symbolizer.outcome != 'success' || steps.postgres.outcome != 'success' || steps.producer.outcome != 'success' || steps.evidence.outcome != 'success'
+        run: |
+          echo "::error::Perfetto heap workload qualification failed; inspect retained provision/symbolizer/workload evidence artifact"
+          exit 1

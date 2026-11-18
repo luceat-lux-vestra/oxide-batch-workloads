@@ -639,18 +639,21 @@ run_raw_sqlx_database_checks() {
 }
 
 run_allocator_variant_smoke() {
-  echo "allocator smoke: system/jemalloc/mimalloc preserve the same paging workload + verifier"
+  echo "allocator smoke: target-qualified registry candidates preserve the same paging workload + verifier"
   cargo run --locked -q -p postgres-postgres -- reset
   cargo run --locked -q -p postgres-postgres -- seed --rows 127 --seed 266
 
-  local allocator feature import_name
+  local allocator feature import_name left_feature right_feature target
   local -a cargo_args
-  for allocator in system jemalloc mimalloc; do
-    case "$allocator" in
-      system) feature="" ;;
-      jemalloc) feature="allocator-jemalloc" ;;
-      mimalloc) feature="allocator-mimalloc" ;;
-    esac
+  target="$(rustc -vV | sed -n 's/^host: //p')"
+  [[ -n "$target" ]] || {
+    echo "::error::rustc -vV did not report host target" >&2
+    exit 1
+  }
+
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" ]] || continue
+    [[ "$feature" == "-" ]] && feature=""
     import_name="ci_allocator_${allocator}"
 
     cargo_args=(--locked -q -p postgres-postgres --no-default-features)
@@ -661,12 +664,22 @@ run_allocator_variant_smoke() {
     cargo test "${cargo_args[@]}" --lib allocator::tests::selected_allocator_matches_build_feature
     cargo run "${cargo_args[@]}" -- run --import-name "$import_name" --chunk-size 32 --reader paging --page-size 17
     cargo run "${cargo_args[@]}" -- verify --import-name "$import_name"
-  done
+  done < <(python3 benchmark/allocator_registry.py --active-lines --target "$target")
 
-  if cargo check --locked -p postgres-postgres --no-default-features --features allocator-jemalloc,allocator-mimalloc >/dev/null 2>&1; then
-    echo "::error::allocator features must be mutually exclusive" >&2
-    exit 1
-  fi
+  while IFS='|' read -r left_feature right_feature; do
+    [[ -n "$left_feature" && -n "$right_feature" ]] || continue
+    if cargo check --locked -p postgres-postgres --no-default-features --features "$left_feature,$right_feature" >/dev/null 2>&1; then
+      echo "::error::allocator features must be mutually exclusive: $left_feature,$right_feature" >&2
+      exit 1
+    fi
+  done < <(python3 benchmark/allocator_registry.py --replacement-pairs-lines --target "$target")
+
+  echo "allocator native telemetry smoke: wired registry features execute their native snapshot API"
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" && -n "$feature" ]] || continue
+    cargo test --locked -q -p postgres-postgres --no-default-features --features "$feature" \
+      --lib allocator_telemetry::tests::selected_native_snapshot_is_structured
+  done < <(python3 benchmark/allocator_registry.py --telemetry-lines --target "$target")
 }
 
 run_ci_stage() {
@@ -674,17 +687,47 @@ run_ci_stage() {
   cargo clippy --locked --workspace --all-targets -- -D warnings
   cargo build --locked --workspace --all-targets
 
-  echo "guard: no unguarded unwrap/expect on the production path"
-  if grep -rnE '\.(unwrap|expect)\(' src/; then
-    echo "::error::found .unwrap()/.expect() in src/" >&2
-    exit 1
-  fi
+  echo "production panic guard contract tests"
+  python3 ci/test-production-panic-guard.py
+
+  echo "guard: no unwrap/expect on compiled production Rust targets"
+  python3 ci/validate-production-panics.py \
+    --manifest-path Cargo.toml \
+    --package postgres-postgres
 
   run_raw_sqlx_static_guards
   run_raw_jdbc_static_guards
 
+  echo "allocator registry contract tests"
+  python3 benchmark/test_allocator_registry.py
+
   echo "profile manifest contract tests"
   python3 benchmark/test_profile_manifest.py
+
+  echo "profile smoke producer tests"
+  python3 benchmark/test_profile_smoke.py
+
+  echo "allocator benchmark producer tests"
+  python3 benchmark/test_allocator_benchmark.py
+
+  echo "CPU attribution producer tests"
+  python3 benchmark/test_cpu_profile.py
+  python3 benchmark/test_cpu_profile_gperftools.py
+
+  echo "Heap attribution producer tests"
+  python3 benchmark/test_heap_profile.py
+
+  echo "Perfetto heap capability producer tests"
+  python3 benchmark/test_perfetto_heap_probe.py
+
+  echo "Perfetto heap workload producer tests"
+  python3 benchmark/test_perfetto_heap_profile.py
+
+  echo "Timeline attribution producer tests"
+  python3 benchmark/test_timeline_profile.py
+
+  echo "Allocator-native telemetry producer tests"
+  python3 benchmark/test_allocator_telemetry_profile.py
 
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
@@ -717,12 +760,27 @@ run_ci_stage() {
 }
 
 run_msrv_stage() {
-  # Both workspace members declare the same MSRV. The locked workspace build
-  # proves the raw comparison crate cannot silently escape the workload's
-  # published toolchain contract.
+  # All workspace members declare the same MSRV. The locked workspace build
+  # proves comparison crates cannot silently escape the workload contract.
   cargo build --locked --workspace --all-targets
-  cargo check --locked -p postgres-postgres --no-default-features --features allocator-jemalloc
-  cargo check --locked -p postgres-postgres --no-default-features --features allocator-mimalloc
+
+  local allocator feature target
+  target="$(rustc -vV | sed -n 's/^host: //p')"
+  [[ -n "$target" ]] || {
+    echo "::error::rustc -vV did not report host target" >&2
+    exit 1
+  }
+
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" ]] || continue
+    [[ "$feature" == "-" ]] && continue
+    cargo check --locked -p postgres-postgres --no-default-features --features "$feature"
+  done < <(python3 benchmark/allocator_registry.py --active-lines --target "$target")
+
+  while IFS='|' read -r allocator feature; do
+    [[ -n "$allocator" && -n "$feature" ]] || continue
+    cargo check --locked -p postgres-postgres --no-default-features --features "$feature"
+  done < <(python3 benchmark/allocator_registry.py --telemetry-lines --target "$target")
 }
 
 case "$stage" in

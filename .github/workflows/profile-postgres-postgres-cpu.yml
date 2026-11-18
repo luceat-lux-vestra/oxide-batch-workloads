@@ -1,0 +1,285 @@
+name: Profile PostgreSQL CPU attribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      allocator:
+        description: Registry-qualified allocator to profile
+        required: true
+        default: system
+        type: choice
+        options:
+          - system
+          - jemalloc
+          - mimalloc
+          - snmalloc
+          - tcmalloc
+      reader:
+        description: PostgreSQL reader mode to profile
+        required: true
+        default: paging
+        type: choice
+        options:
+          - paging
+          - cursor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-postgres-postgres-cpu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cpu-profile:
+    name: postgres-postgres-cpu-profile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
+      RUST_LOG: error
+      PROFILE_ALLOCATOR: ${{ inputs.allocator }}
+      PROFILE_READER: ${{ inputs.reader }}
+      EXPECTED_SHA: ${{ github.sha }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: postgres-postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: postgres-postgres
+
+      - name: Validate CPU profile producers
+        run: |
+          set -euo pipefail
+          python3 benchmark/test_profile_manifest.py
+          python3 benchmark/test_cpu_profile.py
+          python3 benchmark/test_cpu_profile_gperftools.py
+
+      - name: Probe Linux perf capability
+        id: perf
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/cpu-profile-perf-capability.json" "$RUNNER_TEMP/perf-capability.data" <<'PY'
+          import json
+          import pathlib
+          import shutil
+          import subprocess
+          import sys
+
+          output = pathlib.Path(sys.argv[1])
+          probe_data = pathlib.Path(sys.argv[2])
+          perf = shutil.which("perf")
+          paranoid_path = pathlib.Path("/proc/sys/kernel/perf_event_paranoid")
+          paranoid = (
+              paranoid_path.read_text(encoding="utf-8").strip()
+              if paranoid_path.is_file()
+              else None
+          )
+
+          version = None
+          version_status = None
+          probe_status = None
+          probe_stderr = None
+          if perf is not None:
+              version_run = subprocess.run(
+                  [perf, "--version"],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              version_status = version_run.returncode
+              version = (version_run.stdout or version_run.stderr).strip() or None
+              probe = subprocess.run(
+                  [
+                      perf,
+                      "record",
+                      "--quiet",
+                      "--freq",
+                      "99",
+                      "--call-graph",
+                      "dwarf",
+                      "--output",
+                      str(probe_data),
+                      "--",
+                      "sleep",
+                      "0.05",
+                  ],
+                  check=False,
+                  text=True,
+                  capture_output=True,
+              )
+              probe_status = probe.returncode
+              probe_stderr = probe.stderr[-4000:]
+
+          document = {
+              "schema": "oxide-batch-cpu-profiler-capability/v1",
+              "profiler": "perf",
+              "path": perf,
+              "version": version,
+              "version_exit_status": version_status,
+              "perf_event_paranoid": paranoid,
+              "record_probe_exit_status": probe_status,
+              "record_probe_stderr": probe_stderr,
+              "supported": (
+                  perf is not None
+                  and version_status == 0
+                  and probe_status == 0
+                  and probe_data.is_file()
+                  and probe_data.stat().st_size > 0
+              ),
+          }
+          output.write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          probe_data.unlink(missing_ok=True)
+          print(json.dumps(document, sort_keys=True))
+          if not document["supported"]:
+              raise SystemExit("Linux perf record capability probe failed")
+          PY
+
+      - name: Install gperftools CPU profiler fallback
+        id: install-gperftools
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            google-perftools \
+            libgoogle-perftools-dev
+
+      - name: Probe gperftools allocator-safe capability
+        id: gperftools
+        if: steps.install-gperftools.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/cpu_profile_gperftools.py \
+            --probe-output "$RUNNER_TEMP/cpu-profile-gperftools-capability.json"
+
+      - name: Start PostgreSQL 18
+        if: steps.gperftools.outcome == 'success'
+        run: docker compose up -d --wait --wait-timeout 60
+
+      - name: Run CPU attribution producer
+        id: producer
+        if: steps.gperftools.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 benchmark/cpu_profile_gperftools.py \
+            --base-database-url "$DATABASE_URL" \
+            --output "$RUNNER_TEMP/cpu-profile-artifacts" \
+            --allocator "$PROFILE_ALLOCATOR" \
+            --reader "$PROFILE_READER" \
+            --rows 100000 \
+            --seed 266 \
+            --chunk-size 1000 \
+            --fetch-size 500 \
+            --page-size 750 \
+            --frequency-hz 99
+
+      - name: Validate retained CPU evidence
+        if: steps.producer.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 benchmark/profile_manifest.py "$RUNNER_TEMP/cpu-profile-artifacts/manifest.json" > /dev/null
+          python3 - "$RUNNER_TEMP/cpu-profile-artifacts" "$PROFILE_ALLOCATOR" "$PROFILE_READER" "$EXPECTED_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          allocator = sys.argv[2]
+          reader = sys.argv[3]
+          expected_sha = sys.argv[4]
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          assert manifest["lane"] == "cpu"
+          assert manifest["subject"]["workload_sha"] == expected_sha
+          assert manifest["subject"]["oxide_batch"]["version"] == "0.6.0"
+          assert manifest["allocator"]["identity"] == allocator
+          assert manifest["workload"]["reader_mode"] == reader
+          assert manifest["workload"]["rows"] == 100000
+          assert manifest["workload"]["seed"] == 266
+          assert manifest["instrumentation"]["profiler_attached"] is True
+          tool = manifest["instrumentation"]["tools"][0]
+          assert tool["name"] == "gperftools-libprofiler"
+          assert "ITIMER_PROF/SIGPROF" in tool["role"]
+          assert "benchmark_timing" not in manifest
+          assert manifest["correctness"]["verdict"] == "PASS"
+          assert (
+              manifest["correctness"]["expected_digest_sha256"]
+              == manifest["correctness"]["actual_digest_sha256"]
+          )
+
+          for artifact in manifest["artifacts"]:
+              path = root / artifact["path"]
+              assert path.is_file(), path
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == artifact["sha256"], path
+
+          for required in (
+              "cpu/gperftools.prof",
+              "cpu/pprof-text.txt",
+              "cpu/pprof-callgrind.txt",
+              "cpu/run.json",
+              "cpu/capability.json",
+              "correctness/verifier.json",
+              f"binary/postgres-postgres-{allocator}",
+          ):
+              path = root / required
+              assert path.is_file() and path.stat().st_size > 0, path
+
+          capability = json.loads(
+              (root / "cpu/capability.json").read_text(encoding="utf-8")
+          )
+          assert capability["supported"] is True
+          assert capability["allocator_semantics_preserved"] is True
+          assert not any(
+              "tcmalloc" in line.lower()
+              for line in capability["dynamic_dependencies"]
+          )
+
+          print(
+              f"validated gperftools CPU attribution evidence: allocator={allocator} "
+              f"reader={reader} sha={expected_sha}"
+          )
+          PY
+
+      - name: Upload CPU profile evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: postgres-postgres-cpu-profile-${{ inputs.allocator }}-${{ inputs.reader }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/cpu-profile-artifacts
+            ${{ runner.temp }}/cpu-profile-perf-capability.json
+            ${{ runner.temp }}/cpu-profile-gperftools-capability.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
+
+      - name: Fail if fallback profiler or producer failed
+        if: steps.install-gperftools.outcome != 'success' || steps.gperftools.outcome != 'success' || steps.producer.outcome != 'success'
+        run: |
+          echo "::error::gperftools CPU fallback or producer failed; inspect retained capability/evidence artifact"
+          exit 1
