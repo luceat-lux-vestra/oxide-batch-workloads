@@ -65,7 +65,7 @@ pub(super) async fn close_settlement(
              settlement_state,
              closed_at
          )
-         VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, 'CLOSED', NOW())
+         VALUES ($1, $2, $3, $4::text::date, $5, $6, $7, $8, $9, 'CLOSED', NOW())
          ON CONFLICT DO NOTHING",
     )
     .bind(&request.statement_id)
@@ -129,7 +129,7 @@ pub(super) async fn close_settlement(
          WHERE statement_id = $1
             OR (
                 provider_account_id = $2
-                AND settlement_date = $3::date
+                AND settlement_date = $3::text::date
                 AND currency = $4
             )
          FOR UPDATE",
