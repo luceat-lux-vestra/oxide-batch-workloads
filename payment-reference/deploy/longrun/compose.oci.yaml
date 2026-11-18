@@ -1,0 +1,148 @@
+name: oxide-payment-reference
+
+services:
+  killbill-db:
+    image: ${PAYMENT_REFERENCE_IMAGE_KILLBILL_DB:?PAYMENT_REFERENCE_IMAGE_KILLBILL_DB must be an immutable digest reference}
+    environment:
+      POSTGRES_DB: killbill
+      POSTGRES_USER: killbill
+      POSTGRES_PASSWORD: killbill
+    volumes:
+      - killbill-db:/var/lib/postgresql
+    networks:
+      - payment-reference
+
+  gateway-db:
+    image: ${PAYMENT_REFERENCE_IMAGE_POSTGRES:?PAYMENT_REFERENCE_IMAGE_POSTGRES must be an immutable digest reference}
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway-local-only
+    volumes:
+      - gateway-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 20
+    networks:
+      - payment-reference
+
+  merchant-db:
+    image: ${PAYMENT_REFERENCE_IMAGE_POSTGRES:?PAYMENT_REFERENCE_IMAGE_POSTGRES must be an immutable digest reference}
+    environment:
+      POSTGRES_DB: merchant
+      POSTGRES_USER: merchant
+      POSTGRES_PASSWORD: merchant-local-only
+    volumes:
+      - merchant-db:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${MERCHANT_DB_PORT:-15435}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U merchant -d merchant"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 20
+    networks:
+      - payment-reference
+
+  payment-sandbox:
+    image: ${PAYMENT_REFERENCE_IMAGE_PAYMENT_SANDBOX:?PAYMENT_REFERENCE_IMAGE_PAYMENT_SANDBOX must be an immutable digest reference}
+    environment:
+      PAYMENT_SANDBOX_HTTP_ADDRESS: ":8080"
+      PAYMENT_SANDBOX_LOG_FORMAT: json
+      PAYMENT_SANDBOX_ADMIN_TOKEN: payment-reference-local-only
+    volumes:
+      - payment-sandbox-data:/var/lib/payment-sandbox
+    expose:
+      - "8080"
+    ports:
+      - "127.0.0.1:${PAYMENT_SANDBOX_DIRECT_PORT:-18084}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 20
+    networks:
+      - payment-reference
+
+  payment-sandbox-fault-proxy:
+    image: ${PAYMENT_REFERENCE_IMAGE_FAULT_PROXY:?PAYMENT_REFERENCE_IMAGE_FAULT_PROXY must be an immutable digest reference}
+    environment:
+      UPSTREAM_HOST: payment-sandbox
+      UPSTREAM_PORT: "8080"
+    depends_on:
+      payment-sandbox:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PAYMENT_SANDBOX_FAULT_PROXY_PORT:-18081}:8080"
+    networks:
+      - payment-reference
+
+  killbill:
+    image: ${PAYMENT_REFERENCE_IMAGE_KILLBILL:?PAYMENT_REFERENCE_IMAGE_KILLBILL must be an immutable digest reference}
+    environment:
+      KILLBILL_DAO_URL: jdbc:postgresql://killbill-db:5432/killbill
+      KILLBILL_DAO_USER: killbill
+      KILLBILL_DAO_PASSWORD: killbill
+      KILLBILL_CATALOG_URI: SpyCarAdvanced.xml
+      KILLBILL_SERVER_TEST_MODE: "true"
+      KB_org_killbill_billing_plugin_paymentSandbox_baseUri: http://payment-sandbox-fault-proxy:8080/
+    depends_on:
+      killbill-db:
+        condition: service_healthy
+      payment-sandbox-fault-proxy:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${KILLBILL_PORT:-8080}:8080"
+    networks:
+      - payment-reference
+
+  gateway:
+    image: ${PAYMENT_REFERENCE_IMAGE_GATEWAY:?PAYMENT_REFERENCE_IMAGE_GATEWAY must be an immutable digest reference}
+    environment:
+      GATEWAY_DATABASE_URL: postgres://gateway:gateway-local-only@gateway-db:5432/gateway?sslmode=disable
+      GATEWAY_BIND: 0.0.0.0:8080
+      KILLBILL_BASE_URL: http://killbill:8080/
+      KILLBILL_USERNAME: ${KILLBILL_USERNAME:-}
+      KILLBILL_PASSWORD: ${KILLBILL_PASSWORD:-}
+      KILLBILL_API_KEY: ${KILLBILL_API_KEY:-}
+      KILLBILL_API_SECRET: ${KILLBILL_API_SECRET:-}
+    depends_on:
+      gateway-db:
+        condition: service_healthy
+      killbill:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-18082}:8080"
+    networks:
+      - payment-reference
+
+  merchant:
+    image: ${PAYMENT_REFERENCE_IMAGE_MERCHANT:?PAYMENT_REFERENCE_IMAGE_MERCHANT must be an immutable digest reference}
+    environment:
+      MERCHANT_DATABASE_URL: postgres://merchant:merchant-local-only@merchant-db:5432/merchant?sslmode=disable
+      MERCHANT_GATEWAY_BASE_URL: http://gateway:8080/
+      MERCHANT_BIND: 0.0.0.0:8080
+    depends_on:
+      merchant-db:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${MERCHANT_PORT:-18083}:8080"
+    networks:
+      - payment-reference
+
+volumes:
+  killbill-db:
+  gateway-db:
+  merchant-db:
+  payment-sandbox-data:
+
+networks:
+  payment-reference:
+    driver: bridge
