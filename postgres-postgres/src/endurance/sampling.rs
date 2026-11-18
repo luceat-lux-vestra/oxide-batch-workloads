@@ -722,14 +722,12 @@ fn process_observation_linux(pid: u32, role: &str) -> Result<ProcessObservation>
             }
             (Some(count), None)
         }
-        Err(error) if is_process_gone_error(&error) => (
-            None,
-            Some("process-exited-before-fd-sample".to_owned()),
-        ),
-        Err(error) if is_procfs_permission_error(&error) => (
-            None,
-            Some("fd-directory-permission-denied".to_owned()),
-        ),
+        Err(error) if is_process_gone_error(&error) => {
+            (None, Some("process-exited-before-fd-sample".to_owned()))
+        }
+        Err(error) if is_procfs_permission_error(&error) => {
+            (None, Some("fd-directory-permission-denied".to_owned()))
+        }
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("read process fd directory {}", fd_path.display()));
