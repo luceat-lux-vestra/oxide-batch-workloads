@@ -24,6 +24,28 @@ class AllocatorRegistryTests(unittest.TestCase):
             allocator_registry.replacement_features(self.registry),
             ("allocator-jemalloc", "allocator-mimalloc", "allocator-snmalloc", "allocator-tcmalloc"),
         )
+        self.assertEqual(
+            [
+                candidate["identity"]
+                for candidate in allocator_registry.wired_telemetry_candidates(
+                    self.registry, "aarch64-unknown-linux-gnu"
+                )
+            ],
+            ["jemalloc", "mimalloc", "snmalloc"],
+        )
+        self.assertEqual(
+            [
+                allocator_registry.telemetry_feature(candidate)
+                for candidate in allocator_registry.wired_telemetry_candidates(
+                    self.registry, "aarch64-unknown-linux-gnu"
+                )
+            ],
+            [
+                "allocator-jemalloc-telemetry",
+                "allocator-mimalloc-telemetry",
+                "allocator-snmalloc-telemetry",
+            ],
+        )
 
     def test_remaining_candidates_do_not_activate_before_qualification(self) -> None:
         self.assertEqual(
@@ -72,6 +94,56 @@ class AllocatorRegistryTests(unittest.TestCase):
             candidate["lock_packages"],
             [{"name": "libtcmalloc-sys", "version": "0.1.14"}],
         )
+
+    def test_allocator_native_telemetry_contract_is_allocator_specific(self) -> None:
+        jemalloc = allocator_registry.candidate_by_id(self.registry, "jemalloc")
+        self.assertEqual(
+            jemalloc["telemetry"]["capabilities"],
+            [
+                "stats.allocated",
+                "stats.active",
+                "stats.metadata",
+                "stats.resident",
+                "stats.mapped",
+                "stats.retained",
+            ],
+        )
+
+        mimalloc = allocator_registry.candidate_by_id(self.registry, "mimalloc")
+        self.assertEqual(mimalloc["telemetry"]["capabilities"], ["mi_stats_get_json"])
+
+        snmalloc = allocator_registry.candidate_by_id(self.registry, "snmalloc")
+        self.assertEqual(
+            snmalloc["telemetry"]["capabilities"],
+            ["current_memory_usage", "peak_memory_usage"],
+        )
+
+        tcmalloc = allocator_registry.candidate_by_id(self.registry, "tcmalloc")
+        self.assertEqual(tcmalloc["telemetry"]["status"], "not-wired")
+        self.assertEqual(tcmalloc["telemetry"]["capabilities"], [])
+        self.assertIn("no numeric allocator statistics", tcmalloc["telemetry"]["reason"])
+
+    def test_wired_telemetry_requires_separate_feature_and_capability(self) -> None:
+        document = copy.deepcopy(self.registry)
+        document["candidates"][1]["telemetry"]["cargo_feature"] = None
+        with self.assertRaisesRegex(
+            allocator_registry.RegistryError, "telemetry.cargo_feature"
+        ):
+            allocator_registry.validate_registry(document)
+
+        document = copy.deepcopy(self.registry)
+        document["candidates"][1]["telemetry"]["capabilities"] = []
+        with self.assertRaisesRegex(
+            allocator_registry.RegistryError, "capabilities must not be empty"
+        ):
+            allocator_registry.validate_registry(document)
+
+        document = copy.deepcopy(self.registry)
+        document["candidates"][1]["telemetry"]["cargo_feature"] = "allocator-jemalloc"
+        with self.assertRaisesRegex(
+            allocator_registry.RegistryError, "separate from benchmark cargo_feature"
+        ):
+            allocator_registry.validate_registry(document)
 
     def test_target_qualification_filters_active_candidates(self) -> None:
         self.assertEqual(
