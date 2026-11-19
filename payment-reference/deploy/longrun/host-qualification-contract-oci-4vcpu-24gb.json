@@ -1,0 +1,36 @@
+{
+  "allowed_guest_architectures": [
+    "aarch64",
+    "arm64"
+  ],
+  "campaign_admission": {
+    "maximum_swap_used_bytes": 536870912,
+    "minimum_memory_available_bytes": 7516192768
+  },
+  "campaign_contract": "payment-reference-longrun-v1",
+  "campaign_issue": 318,
+  "disk_guard": {
+    "minimum_free_bytes": 21474836480,
+    "minimum_free_percent": 20
+  },
+  "host_profile": "oci-shared-arm64-linux-4vcpu-24gb-v1",
+  "minimum_disk_free_bytes": 42949672960,
+  "minimum_disk_total_bytes": 128849018880,
+  "minimum_memory_bytes": 24696061952,
+  "minimum_vcpu": 4,
+  "qualification": {
+    "consecutive_smoke_runs": 3,
+    "pre_campaign_quiescence_seconds": 1800,
+    "stack_restart_smoke_runs": 1,
+    "unexpected_container_restart_limit": 0,
+    "unexpected_oom_limit": 0
+  },
+  "required_provenance_files": [
+    "host.json",
+    "runtime.json",
+    "container-images.json",
+    "toolchains.json"
+  ],
+  "schema": "oxide-batch-workloads.payment-reference-host-qualification-contract",
+  "schema_version": 2
+}

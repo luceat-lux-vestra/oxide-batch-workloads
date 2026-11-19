@@ -111,6 +111,47 @@ class HostQualificationTests(unittest.TestCase):
         self.assertNotIn("post_reboot_smoke_runs", contract["qualification"])
         self.assertEqual(contract["qualification"]["pre_campaign_quiescence_seconds"], 1800)
 
+    def test_upgraded_oci_host_contract_preserves_acceptance(self) -> None:
+        original = capture.load_contract(HERE / "host-qualification-contract.json")
+        upgraded = capture.load_contract(
+            HERE / "host-qualification-contract-oci-4vcpu-24gb.json"
+        )
+        self.assertEqual(original["host_profile"], "oci-free-shared-arm64-linux-v1")
+        self.assertEqual(upgraded["host_profile"], "oci-shared-arm64-linux-4vcpu-24gb-v1")
+        self.assertEqual(upgraded["minimum_vcpu"], 4)
+        self.assertEqual(upgraded["minimum_memory_bytes"], 23 * GIB)
+        for key in set(original) - {"host_profile", "minimum_vcpu", "minimum_memory_bytes"}:
+            self.assertEqual(upgraded[key], original[key], key)
+
+        qualified = dict(
+            architecture="aarch64",
+            vcpu=4,
+            memory_total_bytes=23 * GIB,
+            disk_total_bytes=120 * GIB,
+            disk_free_bytes=40 * GIB,
+            host_sleep_disabled_attested=True,
+        )
+        capture.validate_host_resources(upgraded, **qualified)
+        for modified in (dict(vcpu=2), dict(memory_total_bytes=12 * GIB)):
+            with self.subTest(modified=modified):
+                with self.assertRaises(capture.QualificationError):
+                    capture.validate_host_resources(upgraded, **(qualified | modified))
+
+        result = admission.evaluate(
+            upgraded,
+            architecture="aarch64",
+            vcpu=4,
+            memory_total_bytes=23 * GIB,
+            memory_available_bytes=8 * GIB,
+            swap_total_bytes=0,
+            swap_free_bytes=0,
+            disk_total_bytes=150 * GIB,
+            disk_free_bytes=80 * GIB,
+            data_path="/srv/oxide-batch-workloads",
+        )
+        self.assertEqual(result["decision"], "ALLOW")
+        self.assertEqual(result["host_profile"], upgraded["host_profile"])
+
     def test_resource_contract_is_fail_closed(self) -> None:
         contract = capture.load_contract(HERE / "host-qualification-contract.json")
         capture.validate_host_resources(
