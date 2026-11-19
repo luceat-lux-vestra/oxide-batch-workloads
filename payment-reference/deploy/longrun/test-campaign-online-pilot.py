@@ -104,7 +104,7 @@ class OnlinePilotTests(unittest.TestCase):
         self.assertTrue(r["independent_financial_verification_required"])
         self.assertEqual(r["requests"], 2 + len(self.fake.row["mutations"]))
         self.assertEqual(len(self.fake.requests), 4 + len(self.fake.row["mutations"]))
-        self.assertEqual(pilot.read_object(self.day() / "slot-%03d" % self.slot / "result.json") if False else r["slot"], self.slot)
+        self.assertEqual(r["slot"], self.slot)
         item_dir = self.day() / f"slot-{self.slot:03}"
         for ordinal in range(1, 3 + len(self.fake.row["mutations"])):
             intent, response = pilot.step_files(item_dir, ordinal)
