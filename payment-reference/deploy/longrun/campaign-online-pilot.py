@@ -31,6 +31,7 @@ NORMAL = {
     "auth_capture_refund": ("PAID", "PARTIALLY_REFUNDED", "REFUNDED"),
 }
 PROVENANCE_FILES = ("host.json", "runtime.json", "container-images.json", "toolchains.json")
+COMPOSE_SERVICES = {"merchant", "gateway", "killbill", "payment-sandbox", "payment-sandbox-fault-proxy", "merchant-db", "gateway-db", "killbill-db"}
 BASE = "http://127.0.0.1:18083"
 
 
@@ -110,7 +111,7 @@ def qualified_source(expected_sha: str, provenance_dir: Path) -> dict[str, str]:
     host = read_object(provenance_dir / "host.json")
     require(host.get("host_profile") == "oci-shared-arm64-linux-4vcpu-24gb-v1", "upgraded OCI host profile required")
     runtime = read_object(provenance_dir / "runtime.json")
-    require(len(runtime.get("compose_services", [])) == 8, "eight-service Compose provenance required")
+    require(isinstance(runtime.get("compose_services"), list) and set(runtime["compose_services"]) == COMPOSE_SERVICES and len(runtime["compose_services"]) == len(COMPOSE_SERVICES), "exact eight-service Compose provenance required")
     return hashes
 
 
