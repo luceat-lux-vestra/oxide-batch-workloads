@@ -46,8 +46,10 @@ the upgraded host profile, and eight Compose service names. Immediately
 before any POST the CLI also compares **all eight live Docker container IDs,
 image IDs, Compose labels, running/healthy status, zero restart counts and
 zero OOM-killed flags** against the recorded immutable container-image
-provenance; each image reference must be digest-pinned. A mismatch blocks
-all payment mutation attempts.
+provenance; each image reference must be digest-pinned. The live
+Merchant container must also publish container port `8080/tcp` **only**
+on `127.0.0.1:18083`, matching the pilot's hard-coded Merchant HTTP target.
+A mismatch blocks all payment mutation attempts.
 
 This is a point-in-time read-only topology guard, **not an atomic freeze of
 Docker against another host operator's concurrent restart**. The operator
@@ -56,6 +58,9 @@ admission, other services' isolation and actual financial acceptance;
 this pilot guard does not substitute for those gates.
 
 ## Durable request semantics
+
+The evidence root must exist as a real operator-chosen directory;
+a symlink as the evidence-root argument is rejected before network I/O.
 
 The pilot uses a distinct evidence root, not the canonical campaign
 `campaign.json / events.jsonl / days` acceptance directory. Each logical
