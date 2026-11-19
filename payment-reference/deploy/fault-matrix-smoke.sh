@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+here="$(cd "$(dirname "$0")" && pwd)"
+
 [ "$#" -ge 2 ] || { echo "usage: fault-matrix-smoke.sh <fault-proxy-base> <output-path> [logical-business-time]" >&2; exit 2; }
 fault_proxy_base="$1"
 output_path="$2"
@@ -102,28 +104,14 @@ stats() {
 }
 
 mkdir -p "$(dirname "$output_path")"
+fault_catalog_cli="$here/longrun/campaign_fault_catalog.py"
+python3 "$fault_catalog_cli" validate >/dev/null
 
 pre_id="$(qualified_id provider-fault-plan-503)"
 reset_faults
 provider_create "$pre_id" 503 /tmp/pr-fault-pre-create.json
 reset_faults
-pre_plan="$(jq -nc --arg time "$logical_business_time" --arg path "/payments/$pre_id/authorize" '{
-  fault_plan_version:1,
-  scenario_version:1,
-  seed:26301,
-  logical_business_time:$time,
-  scenario_case:"fault-plan-pre-side-effect-503",
-  expected_provider_truth:"PENDING",
-  expected_canonical_outcome:"RETRYABLE_FAILURE",
-  steps:[{
-    step_id:"provider-503",
-    sequence:1,
-    offset_ms:0,
-    point:"REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
-    request_match:{method:"POST",path_suffix:$path},
-    action:{kind:"HTTP_FAILURE",status:503}
-  }]
-}')"
+pre_plan="$(python3 "$fault_catalog_cli" render --fault-class plan-503-before-side-effect --payment-id "$pre_id" --logical-business-time "$logical_business_time")"
 load_plan "$pre_plan"
 advance_to 0 /tmp/pr-fault-pre-advance.json
 provider_authorize "$pre_id" 503 /tmp/pr-fault-pre-response.json
@@ -136,23 +124,7 @@ drop_id="$(qualified_id provider-fault-plan-drop)"
 reset_faults
 provider_create "$drop_id" 701 /tmp/pr-fault-drop-create.json
 reset_faults
-drop_plan="$(jq -nc --arg time "$logical_business_time" --arg path "/payments/$drop_id/authorize" '{
-  fault_plan_version:1,
-  scenario_version:1,
-  seed:26302,
-  logical_business_time:$time,
-  scenario_case:"fault-plan-post-commit-response-loss",
-  expected_provider_truth:"AUTHORIZED",
-  expected_canonical_outcome:"UNKNOWN",
-  steps:[{
-    step_id:"commit-drop",
-    sequence:1,
-    offset_ms:0,
-    point:"REQUEST_AFTER_PROVIDER_COMMIT",
-    request_match:{method:"POST",path_suffix:$path},
-    action:{kind:"COMMIT_THEN_DROP_RESPONSE"}
-  }]
-}')"
+drop_plan="$(python3 "$fault_catalog_cli" render --fault-class post-commit-response-loss --payment-id "$drop_id" --logical-business-time "$logical_business_time")"
 load_plan "$drop_plan"
 advance_to 0 /tmp/pr-fault-drop-advance.json
 if curl --silent --show-error --max-time 5 --output /tmp/pr-fault-drop-response.json --request POST --header 'Accept: application/json' --header "Idempotency-Key: authorize-$drop_id" --header "X-Correlation-ID: fault-matrix-authorize-$drop_id" --data '' "$fault_proxy_base/payments/$drop_id/authorize"; then
@@ -167,48 +139,7 @@ async_success_id="$(qualified_id provider-fault-async-success)"
 reset_faults
 provider_create "$async_success_id" 811 /tmp/pr-fault-async-success-create.json
 reset_faults
-async_success_plan="$(jq -nc --arg time "$logical_business_time" --arg mutation "/payments/$async_success_id/authorize" --arg status "/payments/$async_success_id" '{
-  fault_plan_version:1,
-  scenario_version:1,
-  seed:26303,
-  logical_business_time:$time,
-  scenario_case:"fault-plan-async-success-stale-convergence",
-  expected_provider_truth:"AUTHORIZED",
-  expected_canonical_outcome:"ACCEPTED_THEN_CONVERGED",
-  steps:[
-    {
-      step_id:"defer-authorize",
-      sequence:1,
-      offset_ms:0,
-      point:"REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
-      request_match:{method:"POST",path_suffix:$mutation},
-      action:{kind:"DEFER_ASYNC",operation_id:"async-success-auth"}
-    },
-    {
-      step_id:"stale-status",
-      sequence:2,
-      offset_ms:50,
-      point:"STATUS_INQUIRY",
-      request_match:{method:"GET",path_suffix:$status},
-      action:{kind:"STATUS_VISIBILITY",visibility:"STALE"}
-    },
-    {
-      step_id:"authorize-success",
-      sequence:3,
-      offset_ms:100,
-      point:"PROVIDER_TRANSITION",
-      action:{kind:"PROVIDER_TRANSITION",operation_id:"async-success-auth",outcome:"SUCCEEDED"}
-    },
-    {
-      step_id:"status-converges",
-      sequence:4,
-      offset_ms:200,
-      point:"STATUS_INQUIRY",
-      request_match:{method:"GET",path_suffix:$status},
-      action:{kind:"STATUS_VISIBILITY",visibility:"IMMEDIATE"}
-    }
-  ]
-}')"
+async_success_plan="$(python3 "$fault_catalog_cli" render --fault-class async-success-stale-convergence --payment-id "$async_success_id" --logical-business-time "$logical_business_time")"
 load_plan "$async_success_plan"
 advance_to 0 /tmp/pr-fault-async-success-0.json
 provider_authorize "$async_success_id" 200 /tmp/pr-fault-async-success-accepted.json
@@ -227,32 +158,7 @@ async_failure_id="$(qualified_id provider-fault-async-failure)"
 reset_faults
 provider_create "$async_failure_id" 812 /tmp/pr-fault-async-failure-create.json
 reset_faults
-async_failure_plan="$(jq -nc --arg time "$logical_business_time" --arg mutation "/payments/$async_failure_id/authorize" '{
-  fault_plan_version:1,
-  scenario_version:1,
-  seed:26304,
-  logical_business_time:$time,
-  scenario_case:"fault-plan-async-failure",
-  expected_provider_truth:"FAILED",
-  expected_canonical_outcome:"ACCEPTED_THEN_FAILED",
-  steps:[
-    {
-      step_id:"defer-authorize",
-      sequence:1,
-      offset_ms:0,
-      point:"REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
-      request_match:{method:"POST",path_suffix:$mutation},
-      action:{kind:"DEFER_ASYNC",operation_id:"async-failure-auth"}
-    },
-    {
-      step_id:"authorize-failed",
-      sequence:2,
-      offset_ms:100,
-      point:"PROVIDER_TRANSITION",
-      action:{kind:"PROVIDER_TRANSITION",operation_id:"async-failure-auth",outcome:"FAILED"}
-    }
-  ]
-}')"
+async_failure_plan="$(python3 "$fault_catalog_cli" render --fault-class async-failure --payment-id "$async_failure_id" --logical-business-time "$logical_business_time")"
 load_plan "$async_failure_plan"
 advance_to 0 /tmp/pr-fault-async-failure-0.json
 provider_authorize "$async_failure_id" 200 /tmp/pr-fault-async-failure-accepted.json
@@ -264,22 +170,7 @@ stats /tmp/pr-fault-async-failure-stats.json
 jq -e --arg key "POST /payments/$async_failure_id/authorize" '((.forwarded_by_path[$key] // 0) == 0) and (.transition_history | length == 1) and .transition_history[0].outcome == "FAILED" and .transition_history[0].provider_side_effect == false and (.plan.consumed_request_steps | map(.step_id)) == ["defer-authorize"] and (.plan.dispatched_timeline_steps | map(.step_id)) == ["authorize-failed"]' /tmp/pr-fault-async-failure-stats.json >/dev/null
 
 reset_faults
-webhook_plan="$(jq -nc --arg time "$logical_business_time" '{
-  fault_plan_version:1,
-  scenario_version:1,
-  seed:26305,
-  logical_business_time:$time,
-  scenario_case:"fault-plan-webhook-delivery",
-  expected_provider_truth:"AUTHORIZED",
-  expected_canonical_outcome:"DELIVERY_SEQUENCE_REPRODUCED",
-  steps:[
-    {step_id:"authorized-first",sequence:2,offset_ms:100,point:"WEBHOOK_DELIVERY",action:{kind:"WEBHOOK",delivery:"DELIVER",event_id:"event-authorized",attempt:1}},
-    {step_id:"created-late",sequence:1,offset_ms:200,point:"WEBHOOK_DELIVERY",action:{kind:"WEBHOOK",delivery:"DELIVER",event_id:"event-created",attempt:1}},
-    {step_id:"authorized-duplicate",sequence:3,offset_ms:300,point:"WEBHOOK_DELIVERY",action:{kind:"WEBHOOK",delivery:"DELIVER",event_id:"event-authorized",attempt:2}},
-    {step_id:"created-drop",sequence:4,offset_ms:400,point:"WEBHOOK_DELIVERY",action:{kind:"WEBHOOK",delivery:"DROP",event_id:"event-created",attempt:2}},
-    {step_id:"created-retry",sequence:5,offset_ms:500,point:"WEBHOOK_DELIVERY",action:{kind:"WEBHOOK",delivery:"DELIVER",event_id:"event-created",attempt:3}}
-  ]
-}')"
+webhook_plan="$(python3 "$fault_catalog_cli" render --fault-class webhook-ordering-duplicate-drop-retry --logical-business-time "$logical_business_time")"
 load_plan "$webhook_plan"
 request_json POST /__fault/webhook-events '{"event_id":"event-created","payload":{"type":"payment.created"}}' 201 /tmp/pr-fault-webhook-created.json
 request_json POST /__fault/webhook-events '{"event_id":"event-authorized","payload":{"type":"payment.authorized"}}' 201 /tmp/pr-fault-webhook-authorized.json

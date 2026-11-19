@@ -3,7 +3,7 @@
 This is the **pure planning** part of the next bounded two-logical-day
 payment-reference campaign smoke. The source of day identity, date, seed and
 the 100-primary-per-day category counts is the already merged
-`campaign-contract-v1.json` / `campaign-evidence.py`.
+`campaign-contract-v1.json` / `campaign_core.py`.
 
 ## Operator-neutral plan
 
@@ -46,10 +46,13 @@ the v1 fault matrix, twice per logical day:
 4. Async failure
 5. Webhook ordering/duplicate/drop/retry
 
-These are **selection labels**. The actual immutable fault plans, semantic
-markers, real kill/recovery and financial side-effect verification must be
-bound by the subsequent controller implementation before any overlay is sent.
-The planner deliberately makes no terminal-state claim for an overlay.
+The mapping is now frozen in `fault-catalog-v1.json`. The catalog owns each
+class's exact scenario case, seed, fault-engine steps, caller outcome, expected
+provider/canonical outcome and reconciliation requirements. Both the runtime
+fault-matrix smoke and the campaign planner consume this catalog, so a future
+controller must render the same catalog entry rather than re-declare fault
+semantics. The planner records the catalog SHA-256 and still makes no terminal
+state claim for an overlay.
 
 Planning order is SHA-256 rank over the frozen day seed, kind and
 kind-local ordinal, avoiding wall-clock or host-random ordering. The plan
@@ -80,6 +83,7 @@ identity has been reconciled.
 ## Tests
 
 ```bash
+python3 payment-reference/deploy/longrun/test-campaign-fault-catalog.py
 python3 payment-reference/deploy/longrun/test-campaign-traffic-plan.py
 ```
 

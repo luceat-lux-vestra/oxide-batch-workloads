@@ -129,6 +129,8 @@ class TrafficPlanTests(unittest.TestCase):
     def test_only_planner_pure_functions_no_runtime_network(self):
         a = traffic.build("smoke318", 1)
         self.assertEqual(a["plan_contract_sha256"], traffic.evidence.sha256(traffic.evidence.CONTRACT_PATH))
+        self.assertEqual(tuple(a["fault_counts"]), traffic.fault_catalog.classes())
+        self.assertEqual(a["fault_catalog_sha256"], traffic.fault_catalog.catalog_sha256())
         self.assertEqual([r["slot"] for r in a["slots"]], list(range(1, 101)))
         self.assertEqual({row["kind"] for row in a["slots"]}, set(traffic.KINDS))
         self.assertEqual(sum(1 for row in a["slots"] if row["fault_class"]), 10)
