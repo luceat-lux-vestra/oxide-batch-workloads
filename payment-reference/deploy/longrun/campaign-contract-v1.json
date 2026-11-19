@@ -1,0 +1,29 @@
+{
+  "schema": "oxide-batch-workloads.payment-reference-campaign-contract",
+  "schema_version": 1,
+  "contract": "payment-reference-longrun-v1",
+  "base_seed": 20261118,
+  "first_logical_business_date": "2026-11-18",
+  "primary_lifecycles_per_day": 100,
+  "traffic": {
+    "auth_capture_purchase": 40,
+    "authorize_capture": 25,
+    "authorize_cancel": 10,
+    "auth_capture_refund": 15,
+    "fault_overlay": 10
+  },
+  "crash_schedule_modulo_10": {
+    "3": "reconciliation-during-write",
+    "6": "reconciliation-after-business-commit",
+    "8": "recovery-after-external-convergence-before-local-commit",
+    "0": "reconciliation-finalize-after-commit"
+  },
+  "quiet_seconds_each_day": 60,
+  "quiet_seconds_every_tenth_day": 600,
+  "quiet_seconds_after_final_day": 1800,
+  "acceptance": {
+    "minimum_elapsed_seconds": 86400,
+    "minimum_completed_logical_days": 30,
+    "minimum_primary_lifecycles": 3000
+  }
+}
