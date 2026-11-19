@@ -64,6 +64,13 @@ class OciDeploymentTests(unittest.TestCase):
         self.assertIn("127.0.0.1:${KILLBILL_PORT:-8080}:8080", text)
         self.assertIn("127.0.0.1:${GATEWAY_PORT:-18082}:8080", text)
         self.assertIn("127.0.0.1:${MERCHANT_PORT:-18083}:8080", text)
+        for credential in (
+            "KILLBILL_USERNAME",
+            "KILLBILL_PASSWORD",
+            "KILLBILL_API_KEY",
+            "KILLBILL_API_SECRET",
+        ):
+            self.assertIn(f"${{{credential}:?", text)
 
     def test_manifest_assembly_requires_exact_seven_service_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,6 +142,13 @@ class OciDeploymentTests(unittest.TestCase):
         self.assertIn('if "build" in service:', deploy)
         self.assertIn("pull", deploy)
         self.assertIn("up -d --no-build --pull never", deploy)
+        self.assertIn("--wait --wait-timeout 120", deploy)
+        self.assertIn("required_runtime_env=(", deploy)
+        self.assertIn("required OCI runtime environment variable is blank", deploy)
+        self.assertIn("OCI Compose service set mismatch", deploy)
+        self.assertIn("expected_services=(", deploy)
+        self.assertIn("docker inspect --format", deploy)
+        self.assertIn("RestartCount", deploy)
         self.assertIn("PAYMENT_REFERENCE_COMPOSE_FILE:-compose.yaml", smoke)
         self.assertIn("PAYMENT_REFERENCE_COMPOSE_ENV_FILE:-", smoke)
         self.assertIn("up -d --no-build --pull never", smoke)
