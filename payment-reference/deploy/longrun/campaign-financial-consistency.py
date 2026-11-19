@@ -141,12 +141,29 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise Block(f"GET redirect refused: HTTP {code}")
 
 
+def compose_exec() -> list[str]:
+    compose_file = os.environ.get(
+        "PAYMENT_REFERENCE_COMPOSE_FILE",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "compose.yaml")),
+    )
+    demand(os.path.isfile(compose_file), "payment-reference Compose file missing")
+    command = ["docker", "compose"]
+    compose_env_file = os.environ.get("PAYMENT_REFERENCE_COMPOSE_ENV_FILE", "")
+    if compose_env_file:
+        demand(os.path.isfile(compose_env_file), "payment-reference Compose env file missing")
+        command.extend(["--env-file", compose_env_file])
+    command.extend(["-f", compose_file, "exec", "-T", "payment-sandbox"])
+    return command
+
+
 def provider_json(provider_id: str) -> dict[str, Any]:
-    # One read-only request inside the known existing Compose project service.
+    # Read through the Compose service name; do not depend on generated container names.
     result = subprocess.run(
-        ["docker", "exec", "oxide-payment-reference-payment-sandbox-1",
-         "curl", "--fail", "--silent", "--show-error", "--max-time", "8",
-         f"http://127.0.0.1:8080/payments/{provider_id}"],
+        [
+            *compose_exec(),
+            "curl", "--fail", "--silent", "--show-error", "--max-time", "8",
+            f"http://127.0.0.1:8080/payments/{provider_id}",
+        ],
         capture_output=True, timeout=12, check=False,
     )
     demand(result.returncode == 0 and len(result.stdout) <= 2_000_000, "provider GET failed/oversized")
