@@ -192,36 +192,69 @@ def initialize(root: Path, identity: dict[str, Any], provenance_dir: Path) -> Pa
     return campaign_path
 
 
+def validate_event(event: Any, ordinal: int, campaign_id: str) -> None:
+    require(isinstance(event, dict) and set(event) == {"schema", "schema_version", "ordinal", "campaign_id", "logical_day_sequence", "phase", "detail"}, f"event {ordinal}: wrong fields")
+    require(event["schema"] == EVENT_SCHEMA and event["schema_version"] == 1, f"event {ordinal}: wrong schema")
+    require(type(event["ordinal"]) is int and event["ordinal"] == ordinal and event["campaign_id"] == campaign_id, f"event {ordinal}: ordinal/campaign mismatch")
+    require(type(event["logical_day_sequence"]) is int and event["logical_day_sequence"] >= 0, f"event {ordinal}: bad day index")
+    require(event["phase"] in CAMPAIGN_PHASES | DAY_PHASES, f"event {ordinal}: unknown phase")
+    require(isinstance(event["detail"], dict), f"event {ordinal}: detail must be JSON object")
+
+
+def iter_events(path: Path, campaign_id: str):
+    """Stream bounded-size JSONL records without loading a long-run journal."""
+    with path.open("rb") as source:
+        ordinal = 0
+        while raw := source.readline(65537):
+            ordinal += 1
+            require(len(raw) <= 65536 and raw.endswith(b"\n"), f"event {ordinal}: oversized or torn JSONL line")
+            event = json.loads(raw)
+            validate_event(event, ordinal, campaign_id)
+            yield event
+
+
 def read_events(path: Path, campaign_id: str) -> list[dict[str, Any]]:
-    events = []
-    raw = path.read_bytes()
-    require(not raw or raw.endswith(b"\n"), "truncated JSONL terminal line")
-    for idx, line in enumerate(raw.splitlines(), 1):
-        event = json.loads(line)
-        require(isinstance(event, dict) and set(event) == {"schema", "schema_version", "ordinal", "campaign_id", "logical_day_sequence", "phase", "detail"}, f"event {idx}: wrong fields")
-        require(event["schema"] == EVENT_SCHEMA and event["schema_version"] == 1, f"event {idx}: wrong schema")
-        require(event["ordinal"] == idx and event["campaign_id"] == campaign_id, f"event {idx}: ordinal/campaign mismatch")
-        require(type(event["logical_day_sequence"]) is int and event["logical_day_sequence"] >= 0, f"event {idx}: bad day index")
-        require(event["phase"] in CAMPAIGN_PHASES | DAY_PHASES, f"event {idx}: unknown phase")
-        require(isinstance(event["detail"], dict), f"event {idx}: detail must be JSON object")
-        events.append(event)
-    return events
+    """Small-fixture compatibility helper; production scan uses iter_events."""
+    return list(iter_events(path, campaign_id))
+
+
+def last_event_ordinal(file, campaign_id: str) -> int:
+    """Read only the bounded terminal record under the append writer lock."""
+    file.seek(0, os.SEEK_END)
+    size = file.tell()
+    if size == 0:
+        return 0
+    window = min(size, 65536)
+    file.seek(size - window)
+    tail = file.read(window)
+    require(tail.endswith(b"\n"), "truncated JSONL terminal line")
+    cut = tail.rfind(b"\n", 0, len(tail) - 1)
+    require(cut >= 0 or size <= window, "oversized JSONL terminal line")
+    last = tail[cut + 1:-1]
+    require(len(last) <= 65535, "oversized JSONL terminal line")
+    event = json.loads(last)
+    require(isinstance(event, dict) and type(event.get("ordinal")) is int and event["ordinal"] > 0, "invalid last event ordinal")
+    validate_event(event, event["ordinal"], campaign_id)
+    return event["ordinal"]
 
 
 def append_event(campaign_path: Path, sequence: int, phase: str, detail: dict[str, Any]) -> None:
-    """Append and fsync an event; scan will block incomplete/crash-torn lifecycle."""
+    """Append and fsync one bounded event; full scan blocks inconsistent history."""
     require(phase in CAMPAIGN_PHASES | DAY_PHASES, "unrecognized event phase")
     require(type(sequence) is int and sequence >= 0, "invalid event day index")
+    require(isinstance(detail, dict), "event detail must be an object")
     campaign_id = campaign_path.name
     path = campaign_path / "events.jsonl"
     with path.open("r+b") as file:
         fcntl.flock(file, fcntl.LOCK_EX)
-        events = read_events(path, campaign_id)
-        event = {"schema": EVENT_SCHEMA, "schema_version": 1, "ordinal": len(events) + 1,
+        next_ordinal = last_event_ordinal(file, campaign_id) + 1
+        event = {"schema": EVENT_SCHEMA, "schema_version": 1, "ordinal": next_ordinal,
                  "campaign_id": campaign_id, "logical_day_sequence": sequence,
                  "phase": phase, "detail": detail}
+        raw = json.dumps(event, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        require(len(raw) <= 65536, "event record exceeds 64KiB")
         file.seek(0, os.SEEK_END)
-        file.write(json.dumps(event, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+        file.write(raw)
         file.flush()
         os.fsync(file.fileno())
 
@@ -269,15 +302,15 @@ def inspect(campaign_path: Path) -> dict[str, Any]:
     for name in ARTIFACTS:
         require(sha256(campaign_path / "provenance" / name) == identity["provenance_sha256"][name], f"provenance changed: {name}")
     validate_provenance(identity, {name: load_json(campaign_path / "provenance" / name) for name in ARTIFACTS})
-    events = read_events(campaign_path / "events.jsonl", identity["campaign_id"])
-    require(len(events) >= 1 and events[0]["phase"] == "campaign-initialized" and events[0]["logical_day_sequence"] == 0, "missing first initialization event")
-    require(sum(e["phase"] == "campaign-initialized" for e in events) == 1, "duplicate campaign initialization")
+    events = iter_events(campaign_path / "events.jsonl", identity["campaign_id"])
+    first = next(events, None)
+    require(first is not None and first["phase"] == "campaign-initialized" and first["logical_day_sequence"] == 0, "missing first initialization event")
     days, verifications = _day_files(campaign_path)
     failures = tuple((campaign_path / "failures").iterdir())
     frontier = 0
     active = None
     completed = set()
-    for event in events[1:]:
+    for event in events:
         s = event["logical_day_sequence"]
         phase = event["phase"]
         if phase in CAMPAIGN_PHASES - {"campaign-initialized"}:
