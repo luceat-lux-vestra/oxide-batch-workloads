@@ -49,7 +49,7 @@ class FakeMerchant:
             }
             return 201, json.dumps(data).encode()
         for index, request in enumerate(self.row["mutations"]):
-            if request["path"] == path:
+            if request["path"] == path and request["body"] == body:
                 data = {
                     "merchantPaymentId": self.row["merchant_payment_id"],
                     "merchantOrderId": self.row["merchant_order_id"],
@@ -115,6 +115,32 @@ class OnlinePilotTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.execute()
         self.assertEqual(len(self.fake.requests), 4 + len(self.fake.row["mutations"]))
+
+    def test_each_of_four_normal_lifecycle_sequences(self):
+        seen = set()
+        for kind in sorted(pilot.NORMAL):
+            slot = next(row["slot"] for row in self.plan["slots"] if row["kind"] == kind)
+            self.assertNotIn(slot, seen)
+            seen.add(slot)
+            fake = FakeMerchant(self.plan, slot)
+            result = self.execute(slot=slot, fake=fake)
+            self.assertEqual(result["kind"], kind)
+            self.assertEqual(result["requests"], 2 + len(fake.row["mutations"]))
+            expected = 2 + len(fake.row["mutations"]) + (2 if len(seen) == 1 else 0)
+            self.assertEqual(len(fake.requests), expected)
+            slot_folder = self.day() / f"slot-{slot:03}"
+            for ordinal, mutation in enumerate(fake.row["mutations"], start=3):
+                acknowledgement = pilot.read_object(pilot.step_files(slot_folder, ordinal)[1])
+                self.assertEqual(acknowledgement["status"], 200)
+                self.assertEqual(
+                    acknowledgement["json_body"]["operationId"],
+                    mutation["body"]["operationId"],
+                )
+                self.assertEqual(
+                    acknowledgement["json_body"]["paymentState"],
+                    pilot.NORMAL[kind][ordinal - 3],
+                )
+        self.assertEqual(seen.__len__(), 4)
 
     def test_next_slot_reuses_only_complete_day_setup(self):
         self.execute()
