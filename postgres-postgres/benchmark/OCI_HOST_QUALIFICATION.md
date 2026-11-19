@@ -53,6 +53,7 @@ allocator matrix:
 
 - stable Rust via `rustc` and `cargo`;
 - `cmake` and a C++ compiler (`c++`) for native allocator builds;
+- GNU `time` at the exact path `/usr/bin/time` for resource measurements;
 - `git`;
 - Docker plus the `docker compose` plugin;
 - permission for the qualification user to reach the Docker daemon
