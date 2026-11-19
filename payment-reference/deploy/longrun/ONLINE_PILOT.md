@@ -42,10 +42,18 @@ The CLI accepts the exact loopback Merchant endpoint
 `http://127.0.0.1:18083` only, with HTTP proxies and redirects disabled.
 Execution first checks a clean Git HEAD equal to the explicitly supplied SHA,
 the same `repository_sha` in all four host provenance documents,
-the upgraded host profile, and eight Compose service names. The operator
-must separately verify image release/signatures, container identities,
-quiescence, host admission, other services' isolation and actual financial
-acceptance; this initial source check does not substitute for those gates.
+the upgraded host profile, and eight Compose service names. Immediately
+before any POST the CLI also compares **all eight live Docker container IDs,
+image IDs, Compose labels, running/healthy status, zero restart counts and
+zero OOM-killed flags** against the recorded immutable container-image
+provenance; each image reference must be digest-pinned. A mismatch blocks
+all payment mutation attempts.
+
+This is a point-in-time read-only topology guard, **not an atomic freeze of
+Docker against another host operator's concurrent restart**. The operator
+must separately verify image release/signatures, quiescence, memory/disk
+admission, other services' isolation and actual financial acceptance;
+this pilot guard does not substitute for those gates.
 
 ## Durable request semantics
 
