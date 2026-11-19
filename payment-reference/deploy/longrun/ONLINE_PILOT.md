@@ -9,7 +9,7 @@ financial verifier, a long-running controller, or a campaign acceptance tool.
 
 ```bash
 python3 payment-reference/deploy/longrun/campaign-online-pilot.py \
-  --campaign-id pilot318 --day 1 --slot 1
+  --campaign-id pilot318 --day 1 --slot 2
 ```
 
 Without `--execute-one`, the script prints the deterministic slot plan.
