@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""#318 frozen campaign identity, deterministic day plan and fail-closed evidence scanner.
+
+No online payment, settlement, recovery or batch workload is run by this module.
+A completed day can only be claimed by a future independently verified runner.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+from typing import Any
+
+CONTRACT_PATH = Path(__file__).with_name("campaign-contract-v1.json")
+SCHEMA = "oxide-batch-workloads.payment-reference-campaign"
+EVENT_SCHEMA = "oxide-batch-workloads.payment-reference-campaign-event"
+DAY_SCHEMA = "oxide-batch-workloads.payment-reference-campaign-day"
+SCHEMA_VERSION = 1
+CAMPAIGN_PHASES = {"campaign-initialized", "controller-started", "controller-stopped"}
+DAY_PHASES = {
+    "day-started", "traffic", "fault", "batch", "crash", "recovery",
+    "reconciliation", "statement", "close", "quiescence",
+    "day-terminal-success", "day-terminal-failure",
+}
+ARTIFACTS = ("host.json", "runtime.json", "container-images.json", "toolchains.json")
+BINARIES = ("postgres-postgres", "payment-reconciliation-postgres", "payment-recovery-postgres")
+HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+HEX40 = re.compile(r"[0-9a-f]{40}\Z")
+CAMPAIGN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+
+class EvidenceError(ValueError):
+    pass
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise EvidenceError(message)
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    require(isinstance(value, dict), f"{path}: expected JSON object")
+    return value
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def sha256(path: Path) -> str:
+    return digest(path.read_bytes())
+
+
+def contract() -> dict[str, Any]:
+    value = load_json(CONTRACT_PATH)
+    require(value.get("schema") == "oxide-batch-workloads.payment-reference-campaign-contract", "wrong contract schema")
+    require(value.get("schema_version") == 1, "wrong contract version")
+    require(value.get("contract") == "payment-reference-longrun-v1", "wrong contract identity")
+    require(type(value.get("base_seed")) is int and value["base_seed"] == 20261118, "wrong base seed")
+    require(sum(value["traffic"].values()) == value["primary_lifecycles_per_day"] == 100, "wrong daily traffic geometry")
+    require(value["traffic"] == {"auth_capture_purchase": 40, "authorize_capture": 25, "authorize_cancel": 10, "auth_capture_refund": 15, "fault_overlay": 10}, "wrong canonical traffic")
+    require(value["crash_schedule_modulo_10"] == {"3": "reconciliation-during-write", "6": "reconciliation-after-business-commit", "8": "recovery-after-external-convergence-before-local-commit", "0": "reconciliation-finalize-after-commit"}, "wrong canonical crash schedule")
+    require(value["acceptance"] == {"minimum_elapsed_seconds": 86400, "minimum_completed_logical_days": 30, "minimum_primary_lifecycles": 3000}, "wrong campaign acceptance floors")
+    require((value["quiet_seconds_each_day"], value["quiet_seconds_every_tenth_day"], value["quiet_seconds_after_final_day"]) == (60, 600, 1800), "wrong quiet windows")
+    require(value["first_logical_business_date"] == "2026-11-18", "wrong logical business date anchor")
+    return value
+
+
+def plan_day(sequence: int) -> dict[str, Any]:
+    require(type(sequence) is int and 1 <= sequence <= 100000, "day sequence must be 1..100000")
+    c = contract()
+    epoch = dt.date.fromisoformat(c["first_logical_business_date"])
+    day_seed = int.from_bytes(hashlib.sha256(f'{c["contract"]}:{c["base_seed"]}:{sequence}'.encode("ascii")).digest()[:8], "big")
+    return {
+        "schema": "oxide-batch-workloads.payment-reference-day-plan",
+        "schema_version": 1,
+        "contract": c["contract"],
+        "base_seed": c["base_seed"],
+        "logical_day_sequence": sequence,
+        "logical_business_date": (epoch + dt.timedelta(days=sequence - 1)).isoformat(),
+        "day_seed": day_seed,
+        "primary_lifecycles": 100,
+        "traffic": c["traffic"],
+        "fault_overlay_rotation_offset": (sequence - 1) % 5,
+        "scheduled_hard_crash": c["crash_schedule_modulo_10"].get(str(sequence % 10)),
+        "minimum_quiet_seconds": 600 if sequence % 10 == 0 else 60,
+    }
+
+
+def verify_identity(identity: dict[str, Any]) -> None:
+    require(set(identity) == {"campaign_id", "source_revision", "oxide_batch", "batch_binaries", "images", "provenance_sha256"}, "campaign identity fields mismatch")
+    require(isinstance(identity["campaign_id"], str) and CAMPAIGN_ID.fullmatch(identity["campaign_id"]) is not None, "unsafe campaign id")
+    require(isinstance(identity["source_revision"], str) and HEX40.fullmatch(identity["source_revision"]) is not None, "source SHA must be exact")
+    oxide = identity["oxide_batch"]
+    require(isinstance(oxide, dict) and set(oxide) == {"version", "registry", "lockfile_sha256", "artifact_sha256"}, "OxideBatch identity fields mismatch")
+    require(oxide["version"] == "0.7.0" and oxide["registry"] == "crates.io", "OxideBatch must be published 0.7.0")
+    for name in ("lockfile_sha256", "artifact_sha256"):
+        require(isinstance(oxide[name], str) and HEX64.fullmatch(oxide[name]) is not None, f"invalid {name}")
+    binaries = identity["batch_binaries"]
+    require(isinstance(binaries, dict) and set(binaries) == set(BINARIES), "batch binary set mismatch")
+    for name, b in binaries.items():
+        require(isinstance(b, dict) and set(b) == {"sha256", "size_bytes"}, f"{name}: binary identity mismatch")
+        require(isinstance(b["sha256"], str) and HEX64.fullmatch(b["sha256"]) is not None, f"{name}: bad SHA")
+        require(type(b["size_bytes"]) is int and b["size_bytes"] > 0, f"{name}: bad binary size")
+    images = identity["images"]
+    require(isinstance(images, dict) and set(images) == {"manifest_sha256", "compose_sha256", "services"}, "image identity fields mismatch")
+    for key in ("manifest_sha256", "compose_sha256"):
+        require(isinstance(images[key], str) and HEX64.fullmatch(images[key]) is not None, f"bad {key}")
+    services = images["services"]
+    expected = {"merchant", "gateway", "killbill", "merchant-db", "gateway-db", "killbill-db", "payment-sandbox", "payment-sandbox-fault-proxy"}
+    require(isinstance(services, dict) and set(services) == expected, "wrong image service set")
+    for name, ref in services.items():
+        require(isinstance(ref, str) and re.fullmatch(r"ghcr\.io/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}", ref) is not None, f"{name}: image reference not immutable")
+    hashes = identity["provenance_sha256"]
+    require(isinstance(hashes, dict) and set(hashes) == set(ARTIFACTS), "wrong provenance file set")
+    require(all(isinstance(x, str) and HEX64.fullmatch(x) for x in hashes.values()), "bad provenance hash")
+
+
+def validate_provenance(identity: dict[str, Any], documents: dict[str, Any]) -> None:
+    for name, document in documents.items():
+        require(isinstance(document, dict) and document.get("repository_sha") == identity["source_revision"], f"{name}: repository SHA does not match")
+    images = documents["container-images.json"].get("images")
+    require(isinstance(images, list) and len(images) == 8, "provenance must contain 8 service images")
+    refs = {}
+    for value in images:
+        require(isinstance(value, dict) and isinstance(value.get("service"), str) and isinstance(value.get("image_ref"), str), "malformed image provenance")
+        require(value["service"] not in refs, "duplicate service in image provenance")
+        refs[value["service"]] = value["image_ref"]
+    require(refs == identity["images"]["services"], "images differ from immutable provenance")
+    runtime = documents["runtime.json"]
+    require(sorted(runtime.get("compose_services", [])) == sorted(refs), "runtime compose service identity mismatch")
+
+
+def create_only(path: Path, raw: bytes) -> None:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    with os.fdopen(os.open(path, flags, 0o600), "wb") as f:
+        f.write(raw)
+        f.flush()
+        os.fsync(f.fileno())
+    sync_dir(path.parent)
+
+
+def sync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def initialize(root: Path, identity: dict[str, Any], provenance_dir: Path) -> Path:
+    """Create-only skeleton: no campaign execution or acceptance implied."""
+    verify_identity(identity)
+    c = contract()
+    source_bytes = {}
+    for name in ARTIFACTS:
+        src = provenance_dir / name
+        raw = src.read_bytes()
+        require(digest(raw) == identity["provenance_sha256"][name], f"provenance digest mismatch: {name}")
+        source_bytes[name] = raw
+    validate_provenance(identity, {name: json.loads(raw) for name, raw in source_bytes.items()})
+    campaign_path = root / identity["campaign_id"]
+    campaign_record = {
+        "schema": SCHEMA, "schema_version": SCHEMA_VERSION,
+        "contract": c["contract"], "contract_sha256": sha256(CONTRACT_PATH),
+        "identity": identity, "acceptance": c["acceptance"],
+        "traffic": c["traffic"], "crash_schedule_modulo_10": c["crash_schedule_modulo_10"],
+    }
+    campaign_path.mkdir(parents=True, exist_ok=False, mode=0o700)
+    for relative in ("provenance", "days", "statements", "failures"):
+        (campaign_path / relative).mkdir(mode=0o700)
+    for name, raw in source_bytes.items():
+        create_only(campaign_path / "provenance" / name, raw)
+    create_only(campaign_path / "campaign.json", canonical_bytes(campaign_record))
+    create_only(campaign_path / "samples.jsonl", b"")
+    create_only(campaign_path / "events.jsonl", b"")
+    append_event(campaign_path, 0, "campaign-initialized", {"contract_sha256": sha256(CONTRACT_PATH)})
+    sync_dir(campaign_path)
+    return campaign_path
+
+
+def validate_event(event: Any, ordinal: int, campaign_id: str) -> None:
+    require(isinstance(event, dict) and set(event) == {"schema", "schema_version", "ordinal", "campaign_id", "logical_day_sequence", "phase", "detail"}, f"event {ordinal}: wrong fields")
+    require(event["schema"] == EVENT_SCHEMA and event["schema_version"] == 1, f"event {ordinal}: wrong schema")
+    require(type(event["ordinal"]) is int and event["ordinal"] == ordinal and event["campaign_id"] == campaign_id, f"event {ordinal}: ordinal/campaign mismatch")
+    require(type(event["logical_day_sequence"]) is int and event["logical_day_sequence"] >= 0, f"event {ordinal}: bad day index")
+    require(event["phase"] in CAMPAIGN_PHASES | DAY_PHASES, f"event {ordinal}: unknown phase")
+    require(isinstance(event["detail"], dict), f"event {ordinal}: detail must be JSON object")
+
+
+def iter_events(path: Path, campaign_id: str):
+    """Stream bounded-size JSONL records without loading a long-run journal."""
+    with path.open("rb") as source:
+        ordinal = 0
+        while raw := source.readline(65537):
+            ordinal += 1
+            require(len(raw) <= 65536 and raw.endswith(b"\n"), f"event {ordinal}: oversized or torn JSONL line")
+            event = json.loads(raw)
+            validate_event(event, ordinal, campaign_id)
+            yield event
+
+
+def read_events(path: Path, campaign_id: str) -> list[dict[str, Any]]:
+    """Small-fixture compatibility helper; production scan uses iter_events."""
+    return list(iter_events(path, campaign_id))
+
+
+def last_event_ordinal(file, campaign_id: str) -> int:
+    """Read only the bounded terminal record under the append writer lock."""
+    file.seek(0, os.SEEK_END)
+    size = file.tell()
+    if size == 0:
+        return 0
+    window = min(size, 65536)
+    file.seek(size - window)
+    tail = file.read(window)
+    require(tail.endswith(b"\n"), "truncated JSONL terminal line")
+    cut = tail.rfind(b"\n", 0, len(tail) - 1)
+    require(cut >= 0 or size <= window, "oversized JSONL terminal line")
+    last = tail[cut + 1:-1]
+    require(len(last) <= 65535, "oversized JSONL terminal line")
+    event = json.loads(last)
+    require(isinstance(event, dict) and type(event.get("ordinal")) is int and event["ordinal"] > 0, "invalid last event ordinal")
+    validate_event(event, event["ordinal"], campaign_id)
+    return event["ordinal"]
+
+
+def append_event(campaign_path: Path, sequence: int, phase: str, detail: dict[str, Any]) -> None:
+    """Append and fsync one bounded event; full scan blocks inconsistent history."""
+    require(phase in CAMPAIGN_PHASES | DAY_PHASES, "unrecognized event phase")
+    require(type(sequence) is int and sequence >= 0, "invalid event day index")
+    require(isinstance(detail, dict), "event detail must be an object")
+    campaign_id = campaign_path.name
+    path = campaign_path / "events.jsonl"
+    with path.open("r+b") as file:
+        fcntl.flock(file, fcntl.LOCK_EX)
+        next_ordinal = last_event_ordinal(file, campaign_id) + 1
+        event = {"schema": EVENT_SCHEMA, "schema_version": 1, "ordinal": next_ordinal,
+                 "campaign_id": campaign_id, "logical_day_sequence": sequence,
+                 "phase": phase, "detail": detail}
+        raw = json.dumps(event, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        require(len(raw) <= 65536, "event record exceeds 64KiB")
+        file.seek(0, os.SEEK_END)
+        file.write(raw)
+        file.flush()
+        os.fsync(file.fileno())
+
+
+def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
+    days = {}
+    verifications = {}
+    for path in (campaign_path / "days").iterdir():
+        require(path.is_file() and not path.is_symlink(), f"unsafe day evidence path: {path}")
+        if re.fullmatch(r"[0-9]{6}\.json", path.name):
+            seq = int(path.stem)
+            require(seq > 0, "day zero terminal file invalid")
+            days[seq] = path
+        elif re.fullmatch(r"[0-9]{6}\.verification\.json", path.name):
+            seq = int(path.name[:6])
+            require(seq > 0, "day zero verification file invalid")
+            verifications[seq] = path
+        else:
+            raise EvidenceError(f"unexpected day evidence path: {path}")
+    return days, verifications
+
+
+def validate_verification(path: Path, campaign_id: str, sequence: int) -> str:
+    record = load_json(path)
+    require(set(record) == {"schema", "schema_version", "campaign_id", "logical_day_sequence", "verdict", "checks"}, "independent verification fields mismatch")
+    require(record["schema"] == "oxide-batch-workloads.payment-reference-day-independent-verification" and record["schema_version"] == 1, "independent verification schema mismatch")
+    require(record["campaign_id"] == campaign_id and record["logical_day_sequence"] == sequence and record["verdict"] == "PASS", "independent verification identity/verdict mismatch")
+    checks = record["checks"]
+    expected = {"recovery", "reconciliation", "settlement_roster", "settlement_close", "financial_invariants", "side_effect_cardinality"}
+    require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
+    for check, result in checks.items():
+        require(isinstance(result, dict) and set(result) == {"verdict", "artifact_sha256"} and result["verdict"] == "PASS" and isinstance(result["artifact_sha256"], str) and HEX64.fullmatch(result["artifact_sha256"]) is not None, f"{check}: incomplete independent verification")
+    return sha256(path)
+
+
+def inspect(campaign_path: Path) -> dict[str, Any]:
+    """Read-only frontier scan. READY is not campaign acceptance or financial proof."""
+    record = load_json(campaign_path / "campaign.json")
+    require(record.get("schema") == SCHEMA and record.get("schema_version") == SCHEMA_VERSION, "campaign schema drift")
+    require(record.get("contract_sha256") == sha256(CONTRACT_PATH), "campaign contract changed")
+    identity = record.get("identity")
+    require(isinstance(identity, dict), "campaign identity missing")
+    verify_identity(identity)
+    require(identity["campaign_id"] == campaign_path.name, "campaign directory identity mismatch")
+    for name in ARTIFACTS:
+        require(sha256(campaign_path / "provenance" / name) == identity["provenance_sha256"][name], f"provenance changed: {name}")
+    validate_provenance(identity, {name: load_json(campaign_path / "provenance" / name) for name in ARTIFACTS})
+    events = iter_events(campaign_path / "events.jsonl", identity["campaign_id"])
+    first = next(events, None)
+    require(first is not None and first["phase"] == "campaign-initialized" and first["logical_day_sequence"] == 0, "missing first initialization event")
+    days, verifications = _day_files(campaign_path)
+    failures = tuple((campaign_path / "failures").iterdir())
+    frontier = 0
+    active = None
+    completed = set()
+    for event in events:
+        s = event["logical_day_sequence"]
+        phase = event["phase"]
+        if phase in CAMPAIGN_PHASES - {"campaign-initialized"}:
+            require(s == 0, "controller event must have sequence zero")
+            continue
+        require(s > 0, "day lifecycle event on sequence zero")
+        if phase == "day-started":
+            require(active is None and s == frontier + 1, "day-start event gap/duplicate/out-of-order")
+            active = s
+            continue
+        require(active == s, "day event without matching start")
+        if phase in DAY_PHASES - {"day-started", "day-terminal-success", "day-terminal-failure"}:
+            continue
+        if phase == "day-terminal-failure":
+            return {"decision": "BLOCK", "reason": f"terminal failure on day {s}", "frontier_sequence": frontier}
+        require(phase == "day-terminal-success", "unknown day lifecycle event")
+        require(s in days and s not in completed, "terminal day missing or duplicated")
+        day = load_json(days[s])
+        require(set(day) == {"schema", "schema_version", "campaign_id", "logical_day_sequence", "plan", "verdict", "independent_verification_sha256"}, f"day {s}: record fields mismatch")
+        require(day["schema"] == DAY_SCHEMA and day["schema_version"] == 1 and day["campaign_id"] == identity["campaign_id"], f"day {s}: schema or campaign mismatch")
+        require(day["logical_day_sequence"] == s and day["plan"] == plan_day(s), f"day {s}: plan identity mismatch")
+        require(day["verdict"] == "PASS" and s in verifications, f"day {s}: verification file missing")
+        require(day["independent_verification_sha256"] == validate_verification(verifications[s], identity["campaign_id"], s), f"day {s}: verification digest mismatch")
+        require(event["detail"].get("day_sha256") == sha256(days[s]), f"day {s}: terminal digest mismatch")
+        frontier = s
+        active = None
+        completed.add(s)
+    require(set(days) == completed and set(verifications) == completed, "orphan/extra terminal day or verification file")
+    if failures:
+        return {"decision": "BLOCK", "reason": "failure artifacts retained", "frontier_sequence": frontier}
+    if active is not None:
+        return {"decision": "BLOCK", "reason": f"nonterminal day {active}", "frontier_sequence": frontier}
+    return {"decision": "READY", "frontier_sequence": frontier, "next_day": plan_day(frontier + 1)}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="#318 non-executing campaign evidence and day planning")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("plan")
+    p.add_argument("--day", type=int, required=True)
+    p = sub.add_parser("init")
+    p.add_argument("--identity", type=Path, required=True)
+    p.add_argument("--provenance-dir", type=Path, required=True)
+    p.add_argument("--evidence-root", type=Path, required=True)
+    p = sub.add_parser("status")
+    p.add_argument("--campaign-dir", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "plan":
+            output = plan_day(args.day)
+        elif args.command == "init":
+            path = initialize(args.evidence_root, load_json(args.identity), args.provenance_dir)
+            output = {"decision": "INITIALIZED_NOT_EXECUTED", "campaign_dir": str(path)}
+        else:
+            output = inspect(args.campaign_dir)
+        print(json.dumps(output, sort_keys=True))
+        return 0 if output.get("decision") != "BLOCK" else 75
+    except (OSError, ValueError, KeyError, TypeError, OverflowError, json.JSONDecodeError) as exc:
+        print(json.dumps({"decision": "BLOCK", "error": str(exc)}, sort_keys=True), file=sys.stderr)
+        return 75
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

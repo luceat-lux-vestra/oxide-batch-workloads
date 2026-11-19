@@ -251,6 +251,8 @@ python3 ../scenarios/v1/test_provider_settlement_statement.py
 
 python3 longrun/test-host-qualification.py
 
+python3 longrun/test-campaign-evidence.py
+
 python3 longrun/test-oci-deployment.py
 
 python3 longrun/lima/test-provisioning.py
