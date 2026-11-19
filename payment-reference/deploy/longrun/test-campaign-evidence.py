@@ -199,8 +199,8 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "gap/duplicate"):
             m.inspect(root2)
         (root2 / "events.jsonl").write_bytes((root2 / "events.jsonl").read_bytes() + b'{"truncated":')
-        with self.assertRaisesRegex(m.EvidenceError, "truncated JSONL"):
-            m.inspect(root2)
+        with self.assertRaisesRegex(m.EvidenceError, "torn"):
+            list(m.iter_events(root2 / "events.jsonl", root2.name))
 
     def test_lifecycle_phases_and_controller_restart_boundary(self):
         root = self.init()
@@ -225,6 +225,20 @@ class CampaignEvidenceTests(unittest.TestCase):
         root2 = m.initialize(other, {**self.identity, "campaign_id": "fail318"}, self.provenance)
         (root2 / "failures" / "000001.json").write_text("{}\n")
         self.assertEqual(m.inspect(root2)["decision"], "BLOCK")
+
+    def test_large_journal_streaming_and_terminal_append_guard(self):
+        root = self.init()
+        for _ in range(300):
+            m.append_event(root, 0, "controller-started", {"detail": "safe"})
+        self.assertEqual(len(list(m.iter_events(root / "events.jsonl", root.name))), 301)
+        self.assertEqual(m.inspect(root)["frontier_sequence"], 0)
+        events = root / "events.jsonl"
+        with events.open("ab") as out:
+            out.write(b"broken")
+        with self.assertRaisesRegex(m.EvidenceError, "truncated"):
+            m.append_event(root, 0, "controller-stopped", {})
+        with self.assertRaisesRegex(m.EvidenceError, "torn"):
+            list(m.iter_events(events, root.name))
 
     def test_cli_plan_output_is_not_runtime_execution(self):
         out = subprocess.run([sys.executable, str(HERE / "campaign-evidence.py"), "plan", "--day", "10"], text=True, capture_output=True, check=False)
