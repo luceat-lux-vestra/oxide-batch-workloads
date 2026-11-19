@@ -705,6 +705,9 @@ run_ci_stage() {
   python3 benchmark/test_profile_manifest.py
   python3 benchmark/test_current_campaign_contract.py
 
+  echo "OCI allocator host qualification contract tests"
+  python3 benchmark/test_oci_host_qualification.py
+
   echo "profile smoke producer tests"
   python3 benchmark/test_profile_smoke.py
 
