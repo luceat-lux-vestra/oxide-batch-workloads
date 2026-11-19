@@ -179,6 +179,23 @@ class FinancialConsistencyTests(unittest.TestCase):
         pg.assert_called_once_with("provider-318")
         self.assertNotIn("not-printed", str(result))
 
+    def test_provider_read_uses_compose_service_not_generated_container_name(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=b'{"status":"captured","authorized_amount":1000,"captured_amount":1000,"refunded_amount":0}',
+            stderr=b"",
+        )
+        with patch.object(financial.subprocess, "run", return_value=completed) as run:
+            result = financial.provider_json("provider-318")
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["docker", "compose"])
+        self.assertIn("-f", command)
+        self.assertIn("exec", command)
+        self.assertIn("-T", command)
+        self.assertIn("payment-sandbox", command)
+        self.assertNotIn("oxide-payment-reference-payment-sandbox-1", command)
+        self.assertEqual(result["status"], "captured")
+
     def test_missing_credential_blocks_without_network_mutation(self):
         merchant, gateway, _, _ = fixture("auth_capture_purchase")
         def fake_get(base, *_args, **_kwargs):

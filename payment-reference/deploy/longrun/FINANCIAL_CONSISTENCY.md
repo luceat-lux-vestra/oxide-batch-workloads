@@ -14,16 +14,19 @@ The command performs only these reads on the existing bound OCI Compose host:
 3. Kill Bill `GET /1.0/kb/payments/{killbillPaymentId}/?withPluginInfo=true`
    on loopback port 8080: verify payment identity and **exact expected
    transaction count/type/status**.
-4. Payment sandbox `GET /payments/{providerPaymentId}` through a read-only
-   `docker exec … curl` in the existing `oxide-payment-reference` project:
+4. Payment sandbox `GET /payments/{providerPaymentId}` through
+   `docker compose ... exec -T payment-sandbox curl`, using the Compose service
+   name rather than a generated container name:
    verify terminal provider state and exact authorized/captured/refunded minor
    amounts.
 
 All three HTTP base URLs must be local `127.0.0.1` and mapped to the expected
 ports; configured HTTP proxies and redirects are disabled. Kill Bill
 credentials are read from the environment, never embedded into a request URL
-or serialized into the result. No POST/PUT/DELETE or Docker control action is
-executed.
+or serialized into the result. No POST/PUT/DELETE request is executed and the
+probe does not start, stop, recreate or otherwise mutate containers; Compose
+`exec` is used only to issue the provider application's GET from inside the
+already-running sandbox service.
 
 ## Invocation
 
