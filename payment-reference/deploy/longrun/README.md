@@ -52,6 +52,43 @@ difference between OCI's configured memory and Linux `MemTotal`:
 
 A smaller host is not qualified.
 
+## Opt-in upgraded OCI host profile
+
+The original `oci-free-shared-arm64-linux-v1` contract remains the default
+for the 2 OCPU / 12 GB Always Free planning case. The selected operator OCI VM
+was intentionally upgraded and rebooted after the first qualification. For
+this **distinct** 4-vCPU / approximately 24-GB guest, select:
+
+```text
+payment-reference/deploy/longrun/host-qualification-contract-oci-4vcpu-24gb.json
+```
+
+Its observed-memory floor is 23 GiB, CPU floor is 4, and all existing
+admission/disk/qualification semantics are otherwise unchanged. This profile
+is **not an Always Free entitlement or billing claim**. Verify OCI shape,
+tenancy charges and total A1 allocation separately.
+
+Do not rewrite the previous host provenance. Each host/guest change requires a
+new evidence directory, with the selected contract SHA bound into the new
+create-only provenance. For example, with the complete stack already running
+and the immutable OCI `images.env` exported into the shell:
+
+```bash
+contract="$PWD/payment-reference/deploy/longrun/host-qualification-contract-oci-4vcpu-24gb.json"
+python3 payment-reference/deploy/longrun/check-admission.py \
+  --contract "$contract" --data-path /srv/oxide-batch-workloads
+python3 payment-reference/deploy/longrun/capture-provenance.py \
+  --contract "$contract" \
+  --compose-file payment-reference/deploy/longrun/compose.oci.yaml \
+  --evidence-dir /srv/oxide-batch-workloads/evidence/<new-host-qualification-id> \
+  --host-sleep-disabled-attested
+```
+
+The repository contract is an opt-in source of truth for **future** captures;
+it does not mutate or retroactively re-sign previously captured host evidence.
+A pre-campaign >=30-minute quiescent observation remains mandatory before
+activating the controller or long-running campaign.
+
 ## Shared-host resource policy
 
 The 12 GB host is budgeted approximately as follows:
