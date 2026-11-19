@@ -153,6 +153,30 @@ class OciDeploymentTests(unittest.TestCase):
         self.assertIn("PAYMENT_REFERENCE_COMPOSE_ENV_FILE:-", smoke)
         self.assertIn("up -d --no-build --pull never", smoke)
 
+    def test_deploy_versions_runtime_metadata_and_reuses_selected_admission_contract(self) -> None:
+        deploy = (HERE / "deploy-oci.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "usage: deploy-oci.sh --manifest <image-manifest.json> "
+            "--data-path <persistent-data-root> "
+            "[--contract <host-qualification-contract.json>]",
+            deploy,
+        )
+        self.assertIn(
+            'contract="${contract:-$script_dir/host-qualification-contract.json}"',
+            deploy,
+        )
+        self.assertIn('runtime_root="$data_path/payment-reference-runtime"', deploy)
+        self.assertIn('runtime_dir="$runtime_root/$source_sha"', deploy)
+        self.assertNotIn('runtime_dir="$data_path/payment-reference-runtime"\n', deploy)
+        self.assertEqual(
+            deploy.count(
+                'check-admission.py --data-path "$data_path" --contract "$contract"'
+            ),
+            2,
+        )
+        self.assertIn('echo "runtime_dir=$runtime_dir"', deploy)
+        self.assertIn('echo "contract=$contract"', deploy)
+
     def test_publish_script_uses_unique_run_attempt_tag_and_digest_output(self) -> None:
         script = (HERE / "publish-image.sh").read_text(encoding="utf-8")
         self.assertIn("sha-$source_sha-run-$GITHUB_RUN_ID-a$GITHUB_RUN_ATTEMPT", script)
