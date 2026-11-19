@@ -208,6 +208,65 @@ class OnlinePilotTests(unittest.TestCase):
         self.assertTrue(result["no_http_mutations"])
         self.assertFalse(list(self.root.iterdir()))
 
+    def test_qualified_source_requires_exact_profile_and_service_set(self):
+        prov_dir = self.root / "new-provenance"
+        prov_dir.mkdir()
+        documents = {
+            "host.json": {"repository_sha": self.source_sha, "host_profile": "oci-shared-arm64-linux-4vcpu-24gb-v1"},
+            "runtime.json": {"repository_sha": self.source_sha, "compose_services": sorted(pilot.COMPOSE_SERVICES)},
+            "container-images.json": {"repository_sha": self.source_sha},
+            "toolchains.json": {"repository_sha": self.source_sha},
+        }
+        for name, value in documents.items():
+            (prov_dir / name).write_bytes(pilot.stable(value))
+
+        def git(args, **kwargs):
+            output = self.source_sha + "\n" if args[-2:] == ["rev-parse", "HEAD"] else ""
+            return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+
+        with patch.object(pilot.subprocess, "run", side_effect=git):
+            qualified = pilot.qualified_source(self.source_sha, prov_dir)
+            self.assertEqual(set(qualified), set(pilot.PROVENANCE_FILES))
+            documents["runtime.json"]["compose_services"][-1] = "unexpected-service"
+            (prov_dir / "runtime.json").write_bytes(pilot.stable(documents["runtime.json"]))
+            with self.assertRaisesRegex(pilot.Block, "exact eight-service"):
+                pilot.qualified_source(self.source_sha, prov_dir)
+            (prov_dir / "runtime.json").write_bytes(pilot.stable({
+                "repository_sha": self.source_sha,
+                "compose_services": sorted(pilot.COMPOSE_SERVICES),
+            }))
+            documents["host.json"]["host_profile"] = "oci-free-shared-arm64-linux-v1"
+            (prov_dir / "host.json").write_bytes(pilot.stable(documents["host.json"]))
+            with self.assertRaisesRegex(pilot.Block, "upgraded OCI host"):
+                pilot.qualified_source(self.source_sha, prov_dir)
+
+    def test_completed_slot_cannot_replay_from_a_new_python_process(self):
+        self.execute()
+        script = """
+import importlib.util, pathlib, sys
+source, root, slot, revision = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('pilot_fresh', source)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+plan = module.traffic.build('pilot318', 1)
+def forbid(*args):
+    raise AssertionError('unexpected network on restart')
+try:
+    module.run_one(
+        plan=plan, slot=int(slot), evidence_root=pathlib.Path(root),
+        source_sha=revision, provenance_hashes={name: 'b'*64 for name in module.PROVENANCE_FILES},
+        post=forbid, get=forbid,
+    )
+except FileExistsError:
+    raise SystemExit(0)
+raise SystemExit(2)
+"""
+        r = subprocess.run([
+            sys.executable, "-c", script, str(HERE / "campaign-online-pilot.py"),
+            str(self.root), str(self.slot), self.source_sha,
+        ], text=True, capture_output=True, check=False)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_no_provenance_cannot_enable_execution(self):
         p = subprocess.run([
             sys.executable, str(HERE / "campaign-online-pilot.py"), "--campaign-id", "pilot318",
