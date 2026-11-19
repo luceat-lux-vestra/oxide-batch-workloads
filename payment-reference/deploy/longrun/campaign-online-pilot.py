@@ -40,7 +40,15 @@ def load_traffic():
     if spec is None or spec.loader is None:
         raise ValueError("cannot load day traffic contract")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    search_path = str(HERE)
+    inserted = search_path not in sys.path
+    if inserted:
+        sys.path.insert(0, search_path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if inserted:
+            sys.path.remove(search_path)
     return module
 
 
