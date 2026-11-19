@@ -223,6 +223,18 @@ class OnlinePilotTests(unittest.TestCase):
             self.execute(slot=fault_slot)
         self.assertFalse(list(self.root.iterdir()))
 
+    def test_evidence_root_symlink_is_rejected_before_http(self):
+        linked = self.root / "redirect-evidence"
+        linked.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(pilot.Block, "must not be a symlink"):
+            pilot.run_one(
+                plan=self.plan, slot=self.slot, evidence_root=linked,
+                source_sha=self.source_sha, provenance_hashes=self.provenance,
+                post=self.fake.post, get=self.fake.get,
+            )
+        self.assertEqual(self.fake.requests, [])
+        self.assertFalse((self.root / "pilot318-day000001").exists())
+
     def test_plan_default_is_explicitly_nonexecuting(self):
         p = subprocess.run([
             sys.executable, str(HERE / "campaign-online-pilot.py"), "--campaign-id", "pilot318",
@@ -326,6 +338,10 @@ raise SystemExit(2)
                         "Health": {"Status": "healthy"},
                     },
                 }
+                if name == "merchant":
+                    entry["NetworkSettings"] = {"Ports": {
+                        "8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18083"}],
+                    }}
                 entry.update(overrides.get(name, {}))
                 values.append(entry)
             return values
@@ -355,6 +371,9 @@ raise SystemExit(2)
             {"merchant": {"RestartCount": 1}},
             {"merchant": {"State": {"Running": True, "OOMKilled": True, "Health": {"Status": "healthy"}}}},
             {"gateway-db": {"State": {"Running": True, "OOMKilled": False, "Health": {"Status": "unhealthy"}}}},
+            {"merchant": {"NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "18083"}]}}}},
+            {"merchant": {"NetworkSettings": {"Ports": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18084"}]}}}},
+            {"merchant": {"NetworkSettings": {"Ports": {"8080/tcp": []}}}},
             {"merchant": {"Id": "foreign-container"}},
             {"merchant": {"Config": {"Labels": {
                 "com.docker.compose.project": "unrelated-project",
