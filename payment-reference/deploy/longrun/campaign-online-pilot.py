@@ -115,6 +115,54 @@ def qualified_source(expected_sha: str, provenance_dir: Path) -> dict[str, str]:
     return hashes
 
 
+def attest_live_topology(provenance_dir: Path) -> dict[str, str]:
+    """Read-only Docker identity lease; reject a stale or mixed Compose runtime."""
+    record = read_object(provenance_dir / "container-images.json")
+    raw = record.get("images")
+    require(type(raw) is list and len(raw) == len(COMPOSE_SERVICES), "exact image provenance set required")
+    expected: dict[str, dict[str, Any]] = {}
+    for entry in raw:
+        require(type(entry) is dict and entry.get("service") in COMPOSE_SERVICES, "invalid provenance service")
+        service = entry["service"]
+        require(service not in expected, "duplicate provenance service")
+        require(isinstance(entry.get("container_id"), str) and entry["container_id"], "missing provenance container id")
+        require(isinstance(entry.get("image_id"), str) and entry["image_id"].startswith("sha256:"), "missing provenance image id")
+        image_ref = entry.get("image_ref")
+        require(isinstance(image_ref, str) and re.search(r"@sha256:[0-9a-f]{64}\Z", image_ref) is not None, "mutable provenance image reference")
+        expected[service] = entry
+    require(set(expected) == COMPOSE_SERVICES, "image provenance service set mismatch")
+
+    ids = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=oxide-payment-reference"],
+        capture_output=True, text=True, timeout=10, check=True,
+    ).stdout.split()
+    require(len(ids) == len(COMPOSE_SERVICES) and len(set(ids)) == len(ids), "wrong Docker project container count")
+    result = subprocess.run(
+        ["docker", "inspect", *ids],
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    observed = json.loads(result.stdout)
+    require(isinstance(observed, list) and len(observed) == len(COMPOSE_SERVICES), "invalid Docker inspection set")
+    identities: dict[str, str] = {}
+    health_required = {"payment-sandbox", "merchant-db", "gateway-db", "killbill-db"}
+    for container in observed:
+        require(isinstance(container, dict), "invalid Docker inspection record")
+        labels = container.get("Config", {}).get("Labels", {})
+        require(type(labels) is dict and labels.get("com.docker.compose.project") == "oxide-payment-reference", "foreign Docker project")
+        service = labels.get("com.docker.compose.service")
+        require(service in expected and service not in identities, "unexpected or duplicate live service")
+        state = container.get("State")
+        require(type(state) is dict and state.get("Running") is True, f"{service}: not running")
+        require(state.get("OOMKilled") is False and type(container.get("RestartCount")) is int and container["RestartCount"] == 0, f"{service}: restarted or OOM")
+        status = (state.get("Health") or {}).get("Status")
+        require(status == "healthy" if service in health_required else status in (None, "healthy"), f"{service}: unhealthy")
+        source = expected[service]
+        require(container.get("Id") == source["container_id"] and container.get("Image") == source["image_id"], f"{service}: live container/image drift")
+        identities[service] = container["Id"]
+    require(set(identities) == COMPOSE_SERVICES, "missing live Compose service")
+    return identities
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, url):
         raise Block("redirect is not a qualified Merchant mutation outcome")
@@ -318,6 +366,7 @@ def main() -> int:
         require(args.provenance_dir is not None and args.evidence_root is not None, "execution requires provenance and evidence root")
         require(args.expected_source_sha is not None, "execution requires exact expected source SHA")
         hashes = qualified_source(args.expected_source_sha, args.provenance_dir)
+        attest_live_topology(args.provenance_dir)
         result = run_one(
             plan=plan, slot=args.slot, evidence_root=args.evidence_root,
             source_sha=args.expected_source_sha, provenance_hashes=hashes,
