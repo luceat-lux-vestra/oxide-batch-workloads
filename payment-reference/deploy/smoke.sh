@@ -257,6 +257,8 @@ python3 longrun/test-campaign-traffic-plan.py
 
 python3 longrun/test-campaign-financial-consistency.py
 
+python3 longrun/test-campaign-online-pilot.py
+
 python3 longrun/test-oci-deployment.py
 
 python3 longrun/lima/test-provisioning.py
