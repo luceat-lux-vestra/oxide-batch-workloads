@@ -31,6 +31,11 @@ class OciHostQualificationTests(unittest.TestCase):
             ("cargo", "cmake", "c++", "docker", "git", "rustc"),
         )
 
+        self.assertEqual(
+            qualification.REQUIRED_PATHS,
+            (pathlib.Path("/usr/bin/time"),),
+        )
+
     def test_missing_prerequisites_fail_before_qualification(self) -> None:
         old_which = qualification.shutil.which
         qualification.shutil.which = lambda command: None if command in {"rustc", "cargo"} else f"/usr/bin/{command}"
@@ -42,6 +47,30 @@ class OciHostQualificationTests(unittest.TestCase):
                 qualification.validate_prerequisites()
         finally:
             qualification.shutil.which = old_which
+
+    def test_missing_gnu_time_fails_before_qualification(self) -> None:
+        old_which = qualification.shutil.which
+        old_is_file = qualification.pathlib.Path.is_file
+        old_access = qualification.os.access
+        qualification.shutil.which = lambda command: f"/usr/bin/{command}"
+
+        def fake_is_file(path):
+            if str(path) == "/usr/bin/time":
+                return False
+            return old_is_file(path)
+
+        qualification.pathlib.Path.is_file = fake_is_file
+        qualification.os.access = lambda path, mode: True
+        try:
+            with self.assertRaisesRegex(
+                qualification.QualificationError,
+                r"missing required host executables: /usr/bin/time",
+            ):
+                qualification.validate_prerequisites()
+        finally:
+            qualification.shutil.which = old_which
+            qualification.pathlib.Path.is_file = old_is_file
+            qualification.os.access = old_access
 
     def test_docker_daemon_access_is_required(self) -> None:
         old_which = qualification.shutil.which

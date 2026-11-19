@@ -36,6 +36,11 @@ REQUIRED_COMMANDS = (
 )
 
 
+REQUIRED_PATHS = (
+    pathlib.Path("/usr/bin/time"),
+)
+
+
 def validate_prerequisites() -> None:
     missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
     if missing:
@@ -43,6 +48,18 @@ def validate_prerequisites() -> None:
             "missing required host commands: "
             + ", ".join(missing)
             + "; install the stable Rust toolchain and native allocator build prerequisites before qualification"
+        )
+
+    missing_paths = [
+        str(path)
+        for path in REQUIRED_PATHS
+        if not path.is_file() or not os.access(path, os.X_OK)
+    ]
+    if missing_paths:
+        raise QualificationError(
+            "missing required host executables: "
+            + ", ".join(missing_paths)
+            + "; install GNU time before qualification"
         )
 
     compose = subprocess.run(
