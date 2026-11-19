@@ -162,6 +162,19 @@ def attest_live_topology(provenance_dir: Path) -> dict[str, str]:
         require(status == "healthy" if service in health_required else status in (None, "healthy"), f"{service}: unhealthy")
         source = expected[service]
         require(container.get("Id") == source["container_id"] and container.get("Image") == source["image_id"], f"{service}: live container/image drift")
+        if service == "merchant":
+            networks = container.get("NetworkSettings")
+            require(type(networks) is dict, "Merchant Docker network settings missing")
+            ports = networks.get("Ports")
+            require(type(ports) is dict, "Merchant Docker port map missing")
+            bindings = ports.get("8080/tcp")
+            require(
+                type(bindings) is list and len(bindings) == 1
+                and type(bindings[0]) is dict
+                and bindings[0].get("HostIp") == "127.0.0.1"
+                and bindings[0].get("HostPort") == "18083",
+                "Merchant live loopback 18083 binding differs from planned HTTP target",
+            )
         identities[service] = container["Id"]
     require(set(identities) == COMPOSE_SERVICES, "missing live Compose service")
     return identities
@@ -282,8 +295,9 @@ def run_one(
     item = plan["slots"][slot - 1]
     require(item["slot"] == slot and item["kind"] in NORMAL, "fault overlay is not eligible for normal pilot")
     require(not plan["executable"] and plan["external_verification_required"], "planner claim boundary changed")
+    require(not evidence_root.is_symlink(), "operator evidence root must not be a symlink")
     root = evidence_root.resolve()
-    require(root.exists() and root.is_dir() and not root.is_symlink(), "operator evidence root must exist")
+    require(root.exists() and root.is_dir(), "operator evidence root must exist")
     day = root / f'{plan["campaign_id"]}-day{plan["logical_day_sequence"]:06}'
     identity = {
         "schema": "payment-reference-pilot-day-v1",
