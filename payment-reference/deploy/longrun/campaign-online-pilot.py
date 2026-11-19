@@ -147,14 +147,18 @@ def attest_live_topology(provenance_dir: Path) -> dict[str, str]:
     health_required = {"payment-sandbox", "merchant-db", "gateway-db", "killbill-db"}
     for container in observed:
         require(isinstance(container, dict), "invalid Docker inspection record")
-        labels = container.get("Config", {}).get("Labels", {})
+        config = container.get("Config")
+        require(type(config) is dict, "invalid Docker Config")
+        labels = config.get("Labels")
         require(type(labels) is dict and labels.get("com.docker.compose.project") == "oxide-payment-reference", "foreign Docker project")
         service = labels.get("com.docker.compose.service")
         require(service in expected and service not in identities, "unexpected or duplicate live service")
         state = container.get("State")
         require(type(state) is dict and state.get("Running") is True, f"{service}: not running")
         require(state.get("OOMKilled") is False and type(container.get("RestartCount")) is int and container["RestartCount"] == 0, f"{service}: restarted or OOM")
-        status = (state.get("Health") or {}).get("Status")
+        health = state.get("Health")
+        require(health is None or type(health) is dict, f"{service}: malformed health")
+        status = health.get("Status") if health is not None else None
         require(status == "healthy" if service in health_required else status in (None, "healthy"), f"{service}: unhealthy")
         source = expected[service]
         require(container.get("Id") == source["container_id"] and container.get("Image") == source["image_id"], f"{service}: live container/image drift")
