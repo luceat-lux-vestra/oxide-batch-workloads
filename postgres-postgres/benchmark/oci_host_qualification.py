@@ -59,6 +59,22 @@ def validate_prerequisites() -> None:
         )
 
 
+    daemon = subprocess.run(
+        ["docker", "info", "--format", "{{.ServerVersion}}"],
+        cwd=WORKLOAD_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if daemon.returncode != 0:
+        detail = (daemon.stderr or daemon.stdout).strip()[-2000:]
+        raise QualificationError(
+            "docker daemon must be reachable by the qualification user "
+            "(check /var/run/docker.sock access or Docker service state): "
+            + detail
+        )
+
+
 def run(command: list[str], *, cwd: pathlib.Path = WORKLOAD_ROOT) -> str:
     completed = subprocess.run(
         command,

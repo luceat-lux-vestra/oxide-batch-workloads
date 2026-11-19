@@ -54,10 +54,13 @@ allocator matrix:
 - stable Rust via `rustc` and `cargo`;
 - `cmake` and a C++ compiler (`c++`) for native allocator builds;
 - `git`;
-- Docker plus the `docker compose` plugin.
+- Docker plus the `docker compose` plugin;
+- permission for the qualification user to reach the Docker daemon
+  (for the default rootful Docker socket, access to `/var/run/docker.sock`).
 
-Qualification does not install or mutate those host tools. Missing
-prerequisites fail before the create-only evidence output directory is created.
+Qualification does not install or mutate those host tools or permissions.
+Missing prerequisites or Docker-daemon access fail before the create-only
+evidence output directory is created.
 
 ## Run
 

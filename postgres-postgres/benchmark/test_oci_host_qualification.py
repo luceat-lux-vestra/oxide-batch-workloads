@@ -43,6 +43,42 @@ class OciHostQualificationTests(unittest.TestCase):
         finally:
             qualification.shutil.which = old_which
 
+    def test_docker_daemon_access_is_required(self) -> None:
+        old_which = qualification.shutil.which
+        old_run = qualification.subprocess.run
+
+        class Result:
+            def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if command[:3] == ["docker", "compose", "version"]:
+                return Result(0, "Docker Compose version v5.8.0")
+            if command[:2] == ["docker", "info"]:
+                return Result(
+                    1,
+                    stderr="permission denied while trying to connect to the docker API at unix:///var/run/docker.sock",
+                )
+            raise AssertionError(command)
+
+        qualification.shutil.which = lambda command: f"/usr/bin/{command}"
+        qualification.subprocess.run = fake_run
+        try:
+            with self.assertRaisesRegex(
+                qualification.QualificationError,
+                "docker daemon must be reachable",
+            ):
+                qualification.validate_prerequisites()
+            self.assertIn(["docker", "info", "--format", "{{.ServerVersion}}"], calls)
+        finally:
+            qualification.shutil.which = old_which
+            qualification.subprocess.run = old_run
+
     def test_contract_freezes_current_campaign_subject_and_candidates(self) -> None:
         self.assertEqual(self.contract["campaign"], 323)
         self.assertEqual(self.contract["subject"]["version"], "0.7.0")
