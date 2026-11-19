@@ -8,24 +8,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
-from pathlib import Path
 import sys
 from typing import Any
 
-
-def load_campaign_evidence():
-    path = Path(__file__).with_name("campaign-evidence.py")
-    spec = importlib.util.spec_from_file_location("payment_reference_campaign_evidence", path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"cannot import campaign day planner: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+import campaign_core as evidence
 
 
-evidence = load_campaign_evidence()
 SCHEMA = "oxide-batch-workloads.payment-reference-online-traffic-plan"
 SCHEMA_VERSION = 1
 AMOUNT_MINOR = 1000
