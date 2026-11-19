@@ -1,0 +1,41 @@
+{
+  "schema": "oxide-batch-allocator-oci-host-qualification-contract/v1",
+  "campaign": 323,
+  "subject": {
+    "crate": "oxide-batch",
+    "version": "0.7.0",
+    "checksum": "cb884d99629b92fc6740a187a2ebb65350f8924a57f0c8103bad26192f17652e",
+    "target": "aarch64-unknown-linux-gnu"
+  },
+  "oci": {
+    "required_shape": "VM.Standard.A1.Flex",
+    "min_ocpus": 4,
+    "min_memory_gbs": 24
+  },
+  "host": {
+    "required_machine": "aarch64",
+    "required_root_filesystem": "ext4",
+    "min_root_disk_bytes": 193273528320,
+    "max_swap_bytes": 0
+  },
+  "allocators": [
+    "system",
+    "jemalloc",
+    "mimalloc",
+    "snmalloc",
+    "tcmalloc"
+  ],
+  "smoke": {
+    "reader": "paging",
+    "rows": 127,
+    "seed": 323,
+    "chunk_size": 32,
+    "fetch_size": 17,
+    "page_size": 17
+  },
+  "claim_boundary": [
+    "host qualification and allocator correctness only",
+    "profile-smoke elapsed time is diagnostic and not claim-bearing allocator performance evidence",
+    "billing or Always Free eligibility is not inferred from instance shape or resource size"
+  ]
+}
