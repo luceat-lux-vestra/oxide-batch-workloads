@@ -293,6 +293,83 @@ raise SystemExit(2)
         ], text=True, capture_output=True, check=False)
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_live_topology_rejects_stale_images_restarts_and_unhealthy(self):
+        prov_dir = self.root / "live-provenance"
+        prov_dir.mkdir()
+        services = sorted(pilot.COMPOSE_SERVICES)
+        expected = [
+            {
+                "service": name,
+                "container_id": f"container-{name}",
+                "image_id": f"sha256:{i+1:064x}",
+                "image_ref": f"ghcr.io/test/{name}@sha256:{i+101:064x}",
+            }
+            for i, name in enumerate(services)
+        ]
+        (prov_dir / "container-images.json").write_bytes(
+            pilot.stable({"images": expected})
+        )
+        def inspection(overrides=None):
+            overrides = overrides or {}
+            values = []
+            for source in expected:
+                name = source["service"]
+                entry = {
+                    "Id": source["container_id"], "Image": source["image_id"],
+                    "RestartCount": 0,
+                    "Config": {"Labels": {
+                        "com.docker.compose.project": "oxide-payment-reference",
+                        "com.docker.compose.service": name,
+                    }},
+                    "State": {
+                        "Running": True, "OOMKilled": False,
+                        "Health": {"Status": "healthy"},
+                    },
+                }
+                entry.update(overrides.get(name, {}))
+                values.append(entry)
+            return values
+
+        def run_for(containers):
+            calls = []
+            def fake_run(args, **kwargs):
+                calls.append(args)
+                if args[:3] == ["docker", "ps", "-aq"]:
+                    return subprocess.CompletedProcess(args, 0, stdout="\n".join(
+                        f"container-{name}" for name in services
+                    ), stderr="")
+                if args[:2] == ["docker", "inspect"]:
+                    return subprocess.CompletedProcess(args, 0, stdout=json.dumps(containers), stderr="")
+                raise AssertionError("unexpected docker command")
+            with patch.object(pilot.subprocess, "run", side_effect=fake_run):
+                result = pilot.attest_live_topology(prov_dir)
+            return result, calls
+
+        identities, calls = run_for(inspection())
+        self.assertEqual(set(identities), set(services))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][-1], "label=com.docker.compose.project=oxide-payment-reference")
+        self.assertEqual(calls[1][:2], ["docker", "inspect"])
+        for scenario in (
+            {"merchant": {"Image": "sha256:" + "e"*64}},
+            {"merchant": {"RestartCount": 1}},
+            {"merchant": {"State": {"Running": True, "OOMKilled": True, "Health": {"Status": "healthy"}}}},
+            {"gateway-db": {"State": {"Running": True, "OOMKilled": False, "Health": {"Status": "unhealthy"}}}},
+            {"merchant": {"Id": "foreign-container"}},
+            {"merchant": {"Config": {"Labels": {
+                "com.docker.compose.project": "unrelated-project",
+                "com.docker.compose.service": "merchant",
+            }}}},
+        ):
+            with self.subTest(scenario=scenario), self.assertRaises(pilot.Block):
+                run_for(inspection(scenario))
+
+        bad = json.loads((prov_dir / "container-images.json").read_text())
+        bad["images"][-1]["image_ref"] = "unversioned:latest"
+        (prov_dir / "container-images.json").write_bytes(pilot.stable(bad))
+        with self.assertRaisesRegex(pilot.Block, "mutable provenance image"):
+            pilot.attest_live_topology(prov_dir)
+
     def test_no_provenance_cannot_enable_execution(self):
         p = subprocess.run([
             sys.executable, str(HERE / "campaign-online-pilot.py"), "--campaign-id", "pilot318",
