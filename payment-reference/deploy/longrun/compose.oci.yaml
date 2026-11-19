@@ -107,10 +107,10 @@ services:
       GATEWAY_DATABASE_URL: postgres://gateway:gateway-local-only@gateway-db:5432/gateway?sslmode=disable
       GATEWAY_BIND: 0.0.0.0:8080
       KILLBILL_BASE_URL: http://killbill:8080/
-      KILLBILL_USERNAME: ${KILLBILL_USERNAME:-}
-      KILLBILL_PASSWORD: ${KILLBILL_PASSWORD:-}
-      KILLBILL_API_KEY: ${KILLBILL_API_KEY:-}
-      KILLBILL_API_SECRET: ${KILLBILL_API_SECRET:-}
+      KILLBILL_USERNAME: ${KILLBILL_USERNAME:?KILLBILL_USERNAME must be non-empty}
+      KILLBILL_PASSWORD: ${KILLBILL_PASSWORD:?KILLBILL_PASSWORD must be non-empty}
+      KILLBILL_API_KEY: ${KILLBILL_API_KEY:?KILLBILL_API_KEY must be non-empty}
+      KILLBILL_API_SECRET: ${KILLBILL_API_SECRET:?KILLBILL_API_SECRET must be non-empty}
     depends_on:
       gateway-db:
         condition: service_healthy

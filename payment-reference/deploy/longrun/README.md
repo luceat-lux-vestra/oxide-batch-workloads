@@ -152,9 +152,17 @@ not public, authenticate Docker on the OCI host with a read-only registry
 credential before running the deployment entrypoint. No registry credential is
 stored in this repository or in `images.env`.
 
-The OCI deployment entrypoint is:
+The OCI deployment entrypoint requires one explicit Kill Bill credential set
+to be exported before Compose rendering. The same values are reused by the
+qualification smoke; blank values are a configuration error, not a runtime
+default:
 
 ```bash
+export KILLBILL_USERNAME='admin'
+export KILLBILL_PASSWORD='password'
+export KILLBILL_API_KEY='hostq-318'
+export KILLBILL_API_SECRET='hostq-318-local-only'
+
 bash payment-reference/deploy/longrun/deploy-oci.sh \
   --manifest /path/to/image-manifest.json \
   --data-path /srv/oxide-batch-workloads
@@ -162,17 +170,24 @@ bash payment-reference/deploy/longrun/deploy-oci.sh \
 
 It fail-closes unless:
 
+- all four Kill Bill credential variables are non-blank;
 - the manifest source SHA equals the exact clean repository checkout;
 - all seven image references are GHCR digest references;
-- the resolved OCI Compose model contains zero `build` configuration;
+- the resolved OCI Compose model contains exactly the eight expected services
+  and zero `build` configuration;
 - every service image ends in an exact `@sha256:<64-hex>`;
 - the shared-host admission gate passes before image pull;
-- the admission gate still passes after the image pull.
+- the admission gate still passes after the image pull;
+- Compose reaches the running/healthy wait boundary without building or
+  pulling another image;
+- every expected service is still running with restart count 0 and
+  `OOMKilled=false`.
 
-The final process start is exactly a no-build/no-pull operation:
+The final process start is exactly a no-build/no-pull operation with a bounded
+runtime-state wait:
 
 ```text
-docker compose ... up -d --no-build --pull never
+docker compose ... up -d --no-build --pull never --wait --wait-timeout 120
 ```
 
 The manifest and generated digest-only `images.env` are retained
@@ -203,9 +218,21 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
 4. Download the `payment-reference-arm64-images-<source-sha>` bundle for the
    exact selected protected-main revision.
 5. Authenticate to GHCR when the package visibility requires it.
-6. Run `deploy-oci.sh`. It performs admission -> digest-pinned pull ->
-   admission -> no-build start.
-7. Run the full runtime smoke three consecutive times against the same running
+6. Export one stable local-only Kill Bill credential set for the complete
+   qualification window. Do not rely on smoke-script defaults for the initial
+   OCI runtime start:
+
+   ```bash
+   export KILLBILL_USERNAME='admin'
+   export KILLBILL_PASSWORD='password'
+   export KILLBILL_API_KEY='hostq-318'
+   export KILLBILL_API_SECRET='hostq-318-local-only'
+   ```
+
+7. Run `deploy-oci.sh`. It performs admission -> digest-pinned pull ->
+   admission -> no-build/no-pull start -> bounded wait -> exact eight-service
+   runtime-state verification.
+8. Run the full runtime smoke three consecutive times against the same running
    Compose project and persistent volumes. Use the retained OCI Compose/env
    pair and unique safe business namespace per run:
 
@@ -215,8 +242,7 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
    export PAYMENT_REFERENCE_COMPOSE_FILE="$PWD/payment-reference/deploy/longrun/compose.oci.yaml"
    export PAYMENT_REFERENCE_COMPOSE_ENV_FILE="$runtime/images.env"
    export PAYMENT_REFERENCE_SKIP_BUILD=true
-   export KILLBILL_API_KEY='hostq-318'
-   export KILLBILL_API_SECRET='hostq-318-local-only'
+   # KILLBILL_USERNAME/PASSWORD/API_KEY/API_SECRET remain exported from step 6.
 
    for run in 1 2 3; do
      if [ "$run" = 1 ]; then
@@ -233,7 +259,7 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
    With `PAYMENT_REFERENCE_SKIP_BUILD=true`, the smoke uses
    `up -d --no-build --pull never`; it cannot compile or fetch an alternative
    image.
-8. Capture immutable provenance using the OCI Compose model and its digest env:
+9. Capture immutable provenance using the OCI Compose model and its digest env:
 
    ```bash
    set -a
@@ -249,21 +275,21 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
    For OCI, the attestation means the VM is intentionally kept running for the
    qualification/campaign window; it does not assert control of Oracle's
    physical host.
-9. Run the disk guard against the durable data/evidence filesystem:
+10. Run the disk guard against the durable data/evidence filesystem:
 
    ```bash
    python3 payment-reference/deploy/longrun/disk-guard.py \
      --path /srv/oxide-batch-workloads
    ```
 
-10. Stop and restart the **payment-reference stack only**, without deleting
+11. Stop and restart the **payment-reference stack only**, without deleting
     volumes, then run one additional persistence smoke with the same OCI
     Compose/env pair and `PAYMENT_REFERENCE_REUSE_TENANT=true`. Whole-VM
     reboot is not a v1 qualification requirement for the shared public host.
-11. With the complete payment-reference topology running and no business
+12. With the complete payment-reference topology running and no business
     mutation/batch work, retain at least 30 minutes of quiescent host/container
     observations.
-12. Only after all #318 host gates pass may controller/evidence-schema work and
+13. Only after all #318 host gates pass may controller/evidence-schema work and
     the bounded two-logical-day campaign smoke begin.
 
 Do not reduce or remove payment-reference modules merely to fit the host. If
