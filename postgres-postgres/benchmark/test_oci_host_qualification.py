@@ -25,6 +25,24 @@ class OciHostQualificationTests(unittest.TestCase):
             "available_bytes": 150 * 1024**3,
         }
 
+    def test_prerequisite_contract_covers_allocator_build_toolchain(self) -> None:
+        self.assertEqual(
+            qualification.REQUIRED_COMMANDS,
+            ("cargo", "cmake", "c++", "docker", "git", "rustc"),
+        )
+
+    def test_missing_prerequisites_fail_before_qualification(self) -> None:
+        old_which = qualification.shutil.which
+        qualification.shutil.which = lambda command: None if command in {"rustc", "cargo"} else f"/usr/bin/{command}"
+        try:
+            with self.assertRaisesRegex(
+                qualification.QualificationError,
+                "missing required host commands: cargo, rustc",
+            ):
+                qualification.validate_prerequisites()
+        finally:
+            qualification.shutil.which = old_which
+
     def test_contract_freezes_current_campaign_subject_and_candidates(self) -> None:
         self.assertEqual(self.contract["campaign"], 323)
         self.assertEqual(self.contract["subject"]["version"], "0.7.0")

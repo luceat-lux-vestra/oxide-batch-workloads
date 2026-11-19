@@ -48,6 +48,17 @@ Durable campaign evidence is stored under:
 Before running qualification, update the checkout to the exact protected-main
 revision selected for the campaign. Do not run from a dirty worktree.
 
+The host must already provide the build/runtime prerequisites used by the
+allocator matrix:
+
+- stable Rust via `rustc` and `cargo`;
+- `cmake` and a C++ compiler (`c++`) for native allocator builds;
+- `git`;
+- Docker plus the `docker compose` plugin.
+
+Qualification does not install or mutate those host tools. Missing
+prerequisites fail before the create-only evidence output directory is created.
+
 ## Run
 
 From `postgres-postgres/`:

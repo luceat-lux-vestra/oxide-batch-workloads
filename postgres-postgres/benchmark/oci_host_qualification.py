@@ -26,6 +26,39 @@ class QualificationError(RuntimeError):
     pass
 
 
+REQUIRED_COMMANDS = (
+    "cargo",
+    "cmake",
+    "c++",
+    "docker",
+    "git",
+    "rustc",
+)
+
+
+def validate_prerequisites() -> None:
+    missing = [command for command in REQUIRED_COMMANDS if shutil.which(command) is None]
+    if missing:
+        raise QualificationError(
+            "missing required host commands: "
+            + ", ".join(missing)
+            + "; install the stable Rust toolchain and native allocator build prerequisites before qualification"
+        )
+
+    compose = subprocess.run(
+        ["docker", "compose", "version"],
+        cwd=WORKLOAD_ROOT,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if compose.returncode != 0:
+        raise QualificationError(
+            "docker compose plugin is required before qualification: "
+            + (compose.stderr or compose.stdout).strip()[-2000:]
+        )
+
+
 def run(command: list[str], *, cwd: pathlib.Path = WORKLOAD_ROOT) -> str:
     completed = subprocess.run(
         command,
@@ -220,13 +253,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    validate_prerequisites()
+    validate_repository(args.expected_sha)
+
     if args.output.exists():
         raise QualificationError(f"output already exists: {args.output}")
     args.output.mkdir(parents=True)
     smoke_root = args.output / "smoke"
 
     contract = load_contract()
-    validate_repository(args.expected_sha)
 
     instance = fetch_json(f"{IMDS_BASE}/")
     shape = fetch_json(f"{IMDS_BASE}/shapeConfig")
