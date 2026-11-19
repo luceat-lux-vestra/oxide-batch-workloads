@@ -39,6 +39,20 @@ data_path="$(realpath "$data_path")"
 [ -f "$manifest" ] || { echo "manifest not found: $manifest" >&2; exit 66; }
 [ -d "$data_path" ] || { echo "data path not found: $data_path" >&2; exit 66; }
 
+required_runtime_env=(
+  KILLBILL_USERNAME
+  KILLBILL_PASSWORD
+  KILLBILL_API_KEY
+  KILLBILL_API_SECRET
+)
+for name in "${required_runtime_env[@]}"; do
+  value="${!name:-}"
+  if [ -z "${value//[[:space:]]/}" ]; then
+    echo "required OCI runtime environment variable is blank: $name" >&2
+    exit 64
+  fi
+done
+
 source_sha="$(python3 - "$manifest" <<'PY'
 import json
 import sys
@@ -96,6 +110,22 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 services = config.get("services")
 if not isinstance(services, dict) or not services:
     raise SystemExit("OCI Compose config contains no services")
+expected_services = {
+    "killbill-db",
+    "gateway-db",
+    "merchant-db",
+    "payment-sandbox",
+    "payment-sandbox-fault-proxy",
+    "killbill",
+    "gateway",
+    "merchant",
+}
+observed_services = set(services)
+if observed_services != expected_services:
+    raise SystemExit(
+        "OCI Compose service set mismatch: "
+        f"expected={sorted(expected_services)!r} observed={sorted(observed_services)!r}"
+    )
 for name, service in services.items():
     if "build" in service:
         raise SystemExit(f"OCI Compose service {name!r} unexpectedly contains build configuration")
@@ -112,7 +142,43 @@ docker compose --env-file "$env_file" -f "$compose_file" pull
 # immediately before process creation.
 python3 payment-reference/deploy/longrun/check-admission.py --data-path "$data_path"
 
-docker compose   --env-file "$env_file"   -f "$compose_file"   up -d --no-build --pull never
+if ! docker compose \
+  --env-file "$env_file" \
+  -f "$compose_file" \
+  up -d --no-build --pull never --wait --wait-timeout 120
+then
+  echo "OCI payment-reference runtime failed to reach running/healthy state" >&2
+  docker compose --env-file "$env_file" -f "$compose_file" ps --all >&2 || true
+  docker compose --env-file "$env_file" -f "$compose_file" logs --no-color --tail=250 >&2 || true
+  exit 69
+fi
+
+expected_services=(
+  killbill-db
+  gateway-db
+  merchant-db
+  payment-sandbox
+  payment-sandbox-fault-proxy
+  killbill
+  gateway
+  merchant
+)
+for service in "${expected_services[@]}"; do
+  container_id="$(docker compose --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+  if [ -z "$container_id" ]; then
+    echo "OCI payment-reference service is not running: $service" >&2
+    docker compose --env-file "$env_file" -f "$compose_file" ps --all >&2 || true
+    docker compose --env-file "$env_file" -f "$compose_file" logs --no-color --tail=250 "$service" >&2 || true
+    exit 69
+  fi
+  read -r running oom_killed restart_count < <(
+    docker inspect --format '{{.State.Running}} {{.State.OOMKilled}} {{.RestartCount}}' "$container_id"
+  )
+  if [ "$running" != "true" ] || [ "$oom_killed" != "false" ] || [ "$restart_count" != "0" ]; then
+    echo "OCI payment-reference service failed runtime-state gate: service=$service running=$running oom_killed=$oom_killed restart_count=$restart_count" >&2
+    exit 69
+  fi
+done
 
 echo "OCI payment-reference runtime started without host-side image builds."
 echo "compose_file=$compose_file"
