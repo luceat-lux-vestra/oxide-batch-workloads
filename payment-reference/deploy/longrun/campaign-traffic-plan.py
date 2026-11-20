@@ -13,20 +13,15 @@ import sys
 from typing import Any
 
 import campaign_core as evidence
+import campaign_fault_catalog as fault_catalog
 
 
 SCHEMA = "oxide-batch-workloads.payment-reference-online-traffic-plan"
 SCHEMA_VERSION = 1
 AMOUNT_MINOR = 1000
 CURRENCY = "USD"
-# These are existing deterministic fault-matrix classes, not newly invented chaos.
-FAULT_CLASSES = (
-    "plan-503-before-side-effect",
-    "post-commit-response-loss",
-    "async-success-stale-convergence",
-    "async-failure",
-    "webhook-ordering-duplicate-drop-retry",
-)
+# Catalog order is canonical for deterministic daily rotation.
+FAULT_CLASSES = fault_catalog.classes()
 KINDS = (
     "auth_capture_purchase",
     "authorize_capture",
@@ -157,6 +152,7 @@ def build(campaign_id: str, sequence: int) -> dict[str, Any]:
         "logical_business_date": day["logical_business_date"],
         "day_seed": day["day_seed"],
         "plan_contract_sha256": evidence.sha256(evidence.CONTRACT_PATH),
+        "fault_catalog_sha256": fault_catalog.catalog_sha256(),
         "primary_lifecycles": len(result),
         "traffic_counts": contract_counts,
         "fault_counts": fault_counts,

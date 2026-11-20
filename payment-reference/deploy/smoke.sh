@@ -253,6 +253,7 @@ python3 longrun/test-host-qualification.py
 
 python3 longrun/test-campaign-evidence.py
 python3 longrun/test-campaign-core.py
+python3 longrun/test-campaign-fault-catalog.py
 
 python3 longrun/test-campaign-traffic-plan.py
 

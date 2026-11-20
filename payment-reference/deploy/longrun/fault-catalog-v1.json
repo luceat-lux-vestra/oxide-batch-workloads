@@ -1,0 +1,276 @@
+{
+  "schema": "oxide-batch-workloads.payment-reference-campaign-fault-catalog",
+  "schema_version": 1,
+  "fault_plan_version": 1,
+  "faults": [
+    {
+      "fault_class": "plan-503-before-side-effect",
+      "scenario_case": "fault-plan-pre-side-effect-503",
+      "scenario_version": 1,
+      "seed": 26301,
+      "expected_provider_truth": "PENDING",
+      "expected_canonical_outcome": "RETRYABLE_FAILURE",
+      "caller_outcome": "HTTP_503",
+      "reconciliation": {
+        "classification": "RETRYABLE_PRE_SIDE_EFFECT",
+        "requires_read_before_mutation_retry": false,
+        "mutation_retry_policy": "SAME_IDENTITY_ONLY",
+        "requirements": [
+          "PRESERVE_OPERATION_ID",
+          "PRESERVE_IDEMPOTENCY_KEY"
+        ]
+      },
+      "steps": [
+        {
+          "step_id": "provider-503",
+          "sequence": 1,
+          "offset_ms": 0,
+          "point": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+          "request_match": {
+            "method": "POST",
+            "path_suffix": "/payments/{provider_payment_id}/authorize"
+          },
+          "action": {
+            "kind": "HTTP_FAILURE",
+            "status": 503
+          }
+        }
+      ]
+    },
+    {
+      "fault_class": "post-commit-response-loss",
+      "scenario_case": "fault-plan-post-commit-response-loss",
+      "scenario_version": 1,
+      "seed": 26302,
+      "expected_provider_truth": "AUTHORIZED",
+      "expected_canonical_outcome": "UNKNOWN",
+      "caller_outcome": "CONNECTION_DROP",
+      "reconciliation": {
+        "classification": "AMBIGUOUS_POST_COMMIT",
+        "requires_read_before_mutation_retry": true,
+        "mutation_retry_policy": "BLOCK_UNTIL_READ_RECONCILIATION",
+        "requirements": [
+          "READ_PROVIDER_TRUTH_BEFORE_RETRY",
+          "PRESERVE_OPERATION_ID",
+          "PRESERVE_IDEMPOTENCY_KEY"
+        ]
+      },
+      "steps": [
+        {
+          "step_id": "commit-drop",
+          "sequence": 1,
+          "offset_ms": 0,
+          "point": "REQUEST_AFTER_PROVIDER_COMMIT",
+          "request_match": {
+            "method": "POST",
+            "path_suffix": "/payments/{provider_payment_id}/authorize"
+          },
+          "action": {
+            "kind": "COMMIT_THEN_DROP_RESPONSE"
+          }
+        }
+      ]
+    },
+    {
+      "fault_class": "async-success-stale-convergence",
+      "scenario_case": "fault-plan-async-success-stale-convergence",
+      "scenario_version": 1,
+      "seed": 26303,
+      "expected_provider_truth": "AUTHORIZED",
+      "expected_canonical_outcome": "ACCEPTED_THEN_CONVERGED",
+      "caller_outcome": "HTTP_200_PENDING_ACCEPTED",
+      "reconciliation": {
+        "classification": "ASYNC_PENDING_CONVERGENCE",
+        "requires_read_before_mutation_retry": true,
+        "mutation_retry_policy": "NO_MUTATION_RETRY_WHILE_PENDING",
+        "requirements": [
+          "READ_UNTIL_TERMINAL",
+          "PRESERVE_OPERATION_ID",
+          "PRESERVE_IDEMPOTENCY_KEY"
+        ]
+      },
+      "steps": [
+        {
+          "step_id": "defer-authorize",
+          "sequence": 1,
+          "offset_ms": 0,
+          "point": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+          "request_match": {
+            "method": "POST",
+            "path_suffix": "/payments/{provider_payment_id}/authorize"
+          },
+          "action": {
+            "kind": "DEFER_ASYNC",
+            "operation_id": "async-success-auth"
+          }
+        },
+        {
+          "step_id": "stale-status",
+          "sequence": 2,
+          "offset_ms": 50,
+          "point": "STATUS_INQUIRY",
+          "request_match": {
+            "method": "GET",
+            "path_suffix": "/payments/{provider_payment_id}"
+          },
+          "action": {
+            "kind": "STATUS_VISIBILITY",
+            "visibility": "STALE"
+          }
+        },
+        {
+          "step_id": "authorize-success",
+          "sequence": 3,
+          "offset_ms": 100,
+          "point": "PROVIDER_TRANSITION",
+          "action": {
+            "kind": "PROVIDER_TRANSITION",
+            "operation_id": "async-success-auth",
+            "outcome": "SUCCEEDED"
+          }
+        },
+        {
+          "step_id": "status-converges",
+          "sequence": 4,
+          "offset_ms": 200,
+          "point": "STATUS_INQUIRY",
+          "request_match": {
+            "method": "GET",
+            "path_suffix": "/payments/{provider_payment_id}"
+          },
+          "action": {
+            "kind": "STATUS_VISIBILITY",
+            "visibility": "IMMEDIATE"
+          }
+        }
+      ]
+    },
+    {
+      "fault_class": "async-failure",
+      "scenario_case": "fault-plan-async-failure",
+      "scenario_version": 1,
+      "seed": 26304,
+      "expected_provider_truth": "FAILED",
+      "expected_canonical_outcome": "ACCEPTED_THEN_FAILED",
+      "caller_outcome": "HTTP_200_PENDING_ACCEPTED",
+      "reconciliation": {
+        "classification": "ASYNC_TERMINAL_FAILURE",
+        "requires_read_before_mutation_retry": true,
+        "mutation_retry_policy": "NO_MUTATION_RETRY_BEFORE_TERMINAL_READ",
+        "requirements": [
+          "READ_UNTIL_TERMINAL",
+          "PRESERVE_OPERATION_ID",
+          "PRESERVE_IDEMPOTENCY_KEY"
+        ]
+      },
+      "steps": [
+        {
+          "step_id": "defer-authorize",
+          "sequence": 1,
+          "offset_ms": 0,
+          "point": "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+          "request_match": {
+            "method": "POST",
+            "path_suffix": "/payments/{provider_payment_id}/authorize"
+          },
+          "action": {
+            "kind": "DEFER_ASYNC",
+            "operation_id": "async-failure-auth"
+          }
+        },
+        {
+          "step_id": "authorize-failed",
+          "sequence": 2,
+          "offset_ms": 100,
+          "point": "PROVIDER_TRANSITION",
+          "action": {
+            "kind": "PROVIDER_TRANSITION",
+            "operation_id": "async-failure-auth",
+            "outcome": "FAILED"
+          }
+        }
+      ]
+    },
+    {
+      "fault_class": "webhook-ordering-duplicate-drop-retry",
+      "scenario_case": "fault-plan-webhook-delivery",
+      "scenario_version": 1,
+      "seed": 26305,
+      "expected_provider_truth": "AUTHORIZED",
+      "expected_canonical_outcome": "DELIVERY_SEQUENCE_REPRODUCED",
+      "caller_outcome": "WEBHOOK_SCHEDULE_REPLAYED",
+      "reconciliation": {
+        "classification": "WEBHOOK_REPLAY_DELIVERY",
+        "requires_read_before_mutation_retry": false,
+        "mutation_retry_policy": "NOT_APPLICABLE",
+        "requirements": [
+          "DEDUPE_BY_EVENT_ID",
+          "TOLERATE_OUT_OF_ORDER",
+          "AUDIT_RETRY_ATTEMPTS"
+        ]
+      },
+      "steps": [
+        {
+          "step_id": "authorized-first",
+          "sequence": 2,
+          "offset_ms": 100,
+          "point": "WEBHOOK_DELIVERY",
+          "action": {
+            "kind": "WEBHOOK",
+            "delivery": "DELIVER",
+            "event_id": "event-authorized",
+            "attempt": 1
+          }
+        },
+        {
+          "step_id": "created-late",
+          "sequence": 1,
+          "offset_ms": 200,
+          "point": "WEBHOOK_DELIVERY",
+          "action": {
+            "kind": "WEBHOOK",
+            "delivery": "DELIVER",
+            "event_id": "event-created",
+            "attempt": 1
+          }
+        },
+        {
+          "step_id": "authorized-duplicate",
+          "sequence": 3,
+          "offset_ms": 300,
+          "point": "WEBHOOK_DELIVERY",
+          "action": {
+            "kind": "WEBHOOK",
+            "delivery": "DELIVER",
+            "event_id": "event-authorized",
+            "attempt": 2
+          }
+        },
+        {
+          "step_id": "created-drop",
+          "sequence": 4,
+          "offset_ms": 400,
+          "point": "WEBHOOK_DELIVERY",
+          "action": {
+            "kind": "WEBHOOK",
+            "delivery": "DROP",
+            "event_id": "event-created",
+            "attempt": 2
+          }
+        },
+        {
+          "step_id": "created-retry",
+          "sequence": 5,
+          "offset_ms": 500,
+          "point": "WEBHOOK_DELIVERY",
+          "action": {
+            "kind": "WEBHOOK",
+            "delivery": "DELIVER",
+            "event_id": "event-created",
+            "attempt": 3
+          }
+        }
+      ]
+    }
+  ]
+}
