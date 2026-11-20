@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{bail, Result};
 use serde::Serialize;
 
-use super::progress::execute_next_sampled_recorded_iteration;
+use super::progress::execute_next_sampled_recorded_iteration_with_quiescence;
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
 
 const RUN_BATCH_SCHEMA: &str = "oxide-batch-workloads.endurance-run-batch";
@@ -30,6 +30,27 @@ pub async fn execute_bounded_batch(
     requested_iterations: u64,
     sample_interval: Duration,
 ) -> Result<RunBatchResult> {
+    execute_bounded_batch_with_quiescence(
+        workload_binary,
+        database_url,
+        evidence_root,
+        campaign_id,
+        requested_iterations,
+        sample_interval,
+        Duration::ZERO,
+    )
+    .await
+}
+
+pub async fn execute_bounded_batch_with_quiescence(
+    workload_binary: &Path,
+    database_url: &str,
+    evidence_root: &Path,
+    campaign_id: &str,
+    requested_iterations: u64,
+    sample_interval: Duration,
+    post_terminal_quiescence: Duration,
+) -> Result<RunBatchResult> {
     if requested_iterations == 0 {
         bail!("requested iterations must be greater than zero");
     }
@@ -39,12 +60,13 @@ pub async fn execute_bounded_batch(
     let mut terminal_resume_status = None;
 
     for _ in 0..requested_iterations {
-        let step = execute_next_sampled_recorded_iteration(
+        let step = execute_next_sampled_recorded_iteration_with_quiescence(
             workload_binary,
             database_url,
             evidence_root,
             campaign_id,
             sample_interval,
+            post_terminal_quiescence,
         )
         .await?;
 

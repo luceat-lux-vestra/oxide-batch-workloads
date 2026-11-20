@@ -350,6 +350,33 @@ New allocator/profiling runs must create new evidence and must distinguish:
 
 Rising RSS alone is not a leak verdict.
 
+### Explicit post-terminal quiescence sampling
+
+The existing #203 resource sampler is also the Phase 5 quiescence primitive.
+The endurance control surface accepts an optional bounded
+`--post-terminal-quiescence-ms` for `run-sampled`, `run-next`, and
+`run-batch`. The default is zero, so historical #203/S10 behavior is unchanged.
+
+When enabled for a successful iteration, the same append-only sampler remains
+alive after the workload/verifier/cleanup path has completed. It records:
+
+- `terminal-success`;
+- `quiescence-start`;
+- zero or more `quiescence-periodic` observations;
+- `quiescence-end`.
+
+Quiescence samples intentionally carry no fabricated workload process after the
+child exits. They continue to retain PostgreSQL connection/database occupancy,
+OxideBatch metadata counts/table sizes, and evidence-filesystem capacity. This
+makes the process-restart boundary explicit: process-local allocator state ends
+with the child process, while database/metadata/filesystem state remains
+observable through the idle interval.
+
+The quiescence interval is bounded to at most 600,000 ms. A later campaign #323
+producer will combine this primitive with repeated allocator-specific child
+executions and allocator-native post-success snapshots where wired. Rising RSS
+alone remains insufficient for a leak verdict.
+
 ## Claim boundary
 
 This Phase 0 rehearsal may establish that:

@@ -7,7 +7,9 @@ use serde::Serialize;
 
 use super::evidence::EvidenceStore;
 use super::resume::{reconcile_resume_status, ResumeState, ResumeStatus};
-use super::sampling::{execute_sampled_recorded_iteration, SampledRecordedIterationOutput};
+use super::sampling::{
+    execute_sampled_recorded_iteration_with_quiescence, SampledRecordedIterationOutput,
+};
 use super::IterationPlan;
 
 const RUN_NEXT_SCHEMA: &str = "oxide-batch-workloads.endurance-run-next";
@@ -46,15 +48,35 @@ pub async fn execute_next_sampled_recorded_iteration(
     campaign_id: &str,
     sample_interval: Duration,
 ) -> Result<RunNextResult> {
+    execute_next_sampled_recorded_iteration_with_quiescence(
+        workload_binary,
+        database_url,
+        evidence_root,
+        campaign_id,
+        sample_interval,
+        Duration::ZERO,
+    )
+    .await
+}
+
+pub async fn execute_next_sampled_recorded_iteration_with_quiescence(
+    workload_binary: &Path,
+    database_url: &str,
+    evidence_root: &Path,
+    campaign_id: &str,
+    sample_interval: Duration,
+    post_terminal_quiescence: Duration,
+) -> Result<RunNextResult> {
     initialize_campaign_if_absent(evidence_root, campaign_id, workload_binary)?;
     let pre_execution = reconcile_resume_status(evidence_root, campaign_id, workload_binary)?;
-    execute_selected_sampled_recorded_iteration(
+    execute_selected_sampled_recorded_iteration_with_quiescence(
         workload_binary,
         database_url,
         evidence_root,
         campaign_id,
         pre_execution,
         sample_interval,
+        post_terminal_quiescence,
     )
     .await
 }
@@ -67,14 +89,36 @@ pub async fn execute_selected_sampled_recorded_iteration(
     pre_execution: ResumeStatus,
     sample_interval: Duration,
 ) -> Result<RunNextResult> {
+    execute_selected_sampled_recorded_iteration_with_quiescence(
+        workload_binary,
+        database_url,
+        evidence_root,
+        campaign_id,
+        pre_execution,
+        sample_interval,
+        Duration::ZERO,
+    )
+    .await
+}
+
+pub async fn execute_selected_sampled_recorded_iteration_with_quiescence(
+    workload_binary: &Path,
+    database_url: &str,
+    evidence_root: &Path,
+    campaign_id: &str,
+    pre_execution: ResumeStatus,
+    sample_interval: Duration,
+    post_terminal_quiescence: Duration,
+) -> Result<RunNextResult> {
     execute_selected_with(pre_execution, campaign_id, |plan| async move {
-        execute_sampled_recorded_iteration(
+        execute_sampled_recorded_iteration_with_quiescence(
             workload_binary,
             database_url,
             evidence_root,
             campaign_id,
             plan.sequence,
             sample_interval,
+            post_terminal_quiescence,
         )
         .await
     })
