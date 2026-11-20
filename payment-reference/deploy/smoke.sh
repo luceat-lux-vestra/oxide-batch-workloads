@@ -258,6 +258,7 @@ python3 longrun/test-campaign-fault-catalog.py
 python3 longrun/test-campaign-traffic-plan.py
 
 python3 longrun/test-campaign-financial-consistency.py
+python3 longrun/test-campaign-provider-cardinality.py
 
 python3 longrun/test-campaign-online-pilot.py
 
@@ -521,6 +522,15 @@ jq -e '
   and .refunded_amount == 1000
 ' /tmp/pr-provider-lifecycle.json >/dev/null
 
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$lifecycle_provider_id" \
+  --expected-effective-mutations 5 \
+  --expected-status refunded \
+  --expected-authorized 1000 \
+  --expected-captured 1000 \
+  --expected-refunded 1000 \
+  >/tmp/pr-provider-cardinality-lifecycle-before.json
+
 killbill_payment "$lifecycle_kb_id" /tmp/pr-kb-lifecycle.json
 jq -e '
   (.transactions | length) == 5
@@ -549,6 +559,17 @@ after_replay_count="$(jq -er '.transactions | length' /tmp/pr-kb-lifecycle-after
 [ "$before_replay_count" = "$after_replay_count" ] ||
   fail "idempotency replay/conflict created a new Kill Bill transaction"
 
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$lifecycle_provider_id" \
+  --expected-effective-mutations 5 \
+  --expected-status refunded \
+  --expected-authorized 1000 \
+  --expected-captured 1000 \
+  --expected-refunded 1000 \
+  >/tmp/pr-provider-cardinality-lifecycle-after.json
+[ "$(jq -er '.timeline_sha256' /tmp/pr-provider-cardinality-lifecycle-before.json)" = "$(jq -er '.timeline_sha256' /tmp/pr-provider-cardinality-lifecycle-after.json)" ] ||
+  fail "idempotency replay/conflict changed provider effective-side-effect ledger"
+
 # Happy path B: AUTH_CAPTURE -> PURCHASE semantics.
 purchase="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-purchase","merchantPaymentId":"payment-purchase","operationId":"op-purchase-001","amountMinor":500,"currency":"USD","paymentMethodToken":"tok-purchase","idempotencyKey":"idem-purchase-001"}')"
 post_gateway "/payments/auth-capture" "$purchase" 200 /tmp/pr-purchase.json
@@ -562,6 +583,15 @@ jq -e '
   and .captured_amount == 500
 ' /tmp/pr-provider-purchase.json >/dev/null
 
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$purchase_provider_id" \
+  --expected-effective-mutations 2 \
+  --expected-status captured \
+  --expected-authorized 500 \
+  --expected-captured 500 \
+  --expected-refunded 0 \
+  >/tmp/pr-provider-cardinality-purchase.json
+
 # Happy path C: AUTHORIZE -> CANCEL / VOID.
 cancel_authorize="$(namespace_request '{"merchantId":"merchant-smoke","merchantOrderId":"order-cancel","merchantPaymentId":"payment-cancel","operationId":"op-cancel-auth","amountMinor":700,"currency":"USD","paymentMethodToken":"tok-cancel","idempotencyKey":"idem-cancel-auth"}')"
 post_gateway "/payments/authorize" "$cancel_authorize" 200 /tmp/pr-cancel-auth.json
@@ -574,6 +604,15 @@ assert_view /tmp/pr-cancel.json CANCELLED SUCCEEDED
 cancel_provider_id="$(jq -er '.mapping.providerPaymentId' /tmp/pr-cancel.json)"
 provider_payment "$cancel_provider_id" /tmp/pr-provider-cancel.json
 jq -e '.status == "cancelled"' /tmp/pr-provider-cancel.json >/dev/null
+
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$cancel_provider_id" \
+  --expected-effective-mutations 2 \
+  --expected-status cancelled \
+  --expected-authorized 700 \
+  --expected-captured 0 \
+  --expected-refunded 0 \
+  >/tmp/pr-provider-cardinality-cancel.json
 
 # Negative ambiguity: provider AUTHORIZE commits, but its HTTP response is
 # dropped once. The plugin first exposes UNKNOWN; the next withPluginInfo read
@@ -640,6 +679,15 @@ jq -e '
   and .authorized_amount == 777
 ' /tmp/pr-provider-ambiguous.json >/dev/null
 
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$ambiguous_provider_id" \
+  --expected-effective-mutations 1 \
+  --expected-status authorized \
+  --expected-authorized 777 \
+  --expected-captured 0 \
+  --expected-refunded 0 \
+  >/tmp/pr-provider-cardinality-ambiguous-before.json
+
 curl --fail --silent --show-error \
   "${fault_proxy_base}/__fault/stats" >/tmp/pr-fault-stats-before-replay.json
 jq -e '
@@ -678,6 +726,17 @@ jq -e '
   .status == "authorized"
   and .authorized_amount == 777
 ' /tmp/pr-provider-ambiguous-after-replay.json >/dev/null
+
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$ambiguous_provider_id" \
+  --expected-effective-mutations 1 \
+  --expected-status authorized \
+  --expected-authorized 777 \
+  --expected-captured 0 \
+  --expected-refunded 0 \
+  >/tmp/pr-provider-cardinality-ambiguous-after.json
+[ "$(jq -er '.timeline_sha256' /tmp/pr-provider-cardinality-ambiguous-before.json)" = "$(jq -er '.timeline_sha256' /tmp/pr-provider-cardinality-ambiguous-after.json)" ] ||
+  fail "post-commit response-loss replay changed provider effective-side-effect ledger"
 
 # ---------------------------------------------------------------------------
 # Integrated Merchant -> Gateway negative: provider 503 before any provider
@@ -726,6 +785,11 @@ provider_503_status="$(provider_payment_status "$provider_503_id")"
 [ "$provider_503_status" = "404" ] ||
   fail "provider 503-before-side-effect unexpectedly created payment ${provider_503_id}: HTTP ${provider_503_status}"
 
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$provider_503_id" \
+  --expect-absent \
+  >/tmp/pr-provider-cardinality-503-before.json
+
 # Exact Merchant replay must retain the same retryable canonical operation and
 # still must not forward a provider create.
 post_merchant   "/payments/$(qualified_id payment-provider-503)/authorize"   "$merchant_503_authorize"   202   /tmp/pr-merchant-provider-503-replay.json
@@ -742,6 +806,17 @@ jq -e '
   and (.responded_by_path["POST /payments"] == 1)
   and ((.forwarded_by_path["POST /payments"] // 0) == 0)
 ' /tmp/pr-fault-stats-provider-503-after-replay.json >/dev/null
+
+python3 longrun/campaign-provider-cardinality.py \
+  --provider-payment-id "$provider_503_id" \
+  --expect-absent \
+  >/tmp/pr-provider-cardinality-503-after.json
+jq -e '
+  .provider_exists == false
+  and .creation_event_count == 0
+  and .effective_mutation_count == 0
+  and .payment_status == "ABSENT"
+' /tmp/pr-provider-cardinality-503-after.json >/dev/null
 
 # Run the deterministic #263 fault/async matrix against the real payment-sandbox
 # proxy runtime. This writes compact evidence consumed by the retained suite
