@@ -372,10 +372,60 @@ makes the process-restart boundary explicit: process-local allocator state ends
 with the child process, while database/metadata/filesystem state remains
 observable through the idle interval.
 
-The quiescence interval is bounded to at most 600,000 ms. A later campaign #323
-producer will combine this primitive with repeated allocator-specific child
-executions and allocator-native post-success snapshots where wired. Rising RSS
-alone remains insufficient for a leak verdict.
+The quiescence interval is bounded to at most 600,000 ms. Campaign #323's
+allocator memory producer combines this primitive with repeated allocator-specific
+child executions and allocator-native post-success snapshots where wired. Rising
+RSS alone remains insufficient for a leak verdict.
+
+### Repeated allocator memory/quiescence producer
+
+`benchmark/allocator_memory_quiescence.py` is the Phase 5 retained-evidence
+producer for repeated process churn and explicit idle observation on one
+qualified host. It is memory/resource evidence, not benchmark timing.
+
+The default bounded geometry is:
+
+- every registry-qualified active allocator on the exact host target;
+- 10 fresh controller invocations per allocator, selecting sequences 1 through
+  10 from one durable campaign;
+- 5 cursor and 5 paging iterations under the frozen #203 endurance geometry
+  (200,000 source rows, seed 20,260,904, chunk size 1,000, cursor fetch size
+  500, paging page size 750);
+- 50 ms resource sampling and 1,000 ms post-terminal quiescence per iteration.
+
+The producer deliberately caps selectable iterations at 22 and requires an
+even count. This keeps the retained repeated-run lane away from the scheduled
+crash slots at sequences 24 and 49 while preserving equal cursor/paging
+coverage. Crash/recovery evidence remains a separate endurance concern.
+
+Each iteration starts a fresh `postgres-postgres-endurancectl run-next`
+process, which in turn launches a fresh workload child. The database, campaign
+evidence, and OxideBatch metadata persist across iterations. This creates an
+explicit restart control: process-local allocator state ends with the child,
+while PostgreSQL/metadata/filesystem state is sampled through the quiescence
+interval.
+
+For jemalloc, mimalloc, and snmalloc, the producer builds the registry-owned
+telemetry feature and assigns a unique
+`OXIDE_BATCH_ALLOCATOR_TELEMETRY_DIR` per sequence. Each successful workload
+therefore retains its own native `snapshot.json` instead of overwriting the
+previous iteration. System and tcmalloc remain explicitly non-wired for
+allocator-native numeric telemetry and are not given synthetic substitutes.
+
+The retained tree contains, per allocator, the exact workload/controller
+binaries, append-only endurance samples and iteration evidence, per-invocation
+controller stdout/stderr, independent verifier reports, allocator-native
+snapshots where wired, projection summaries, and Cargo/registry provenance.
+Database URLs are passed through the environment rather than command-line
+arguments and are redacted from retained controller logs.
+
+Acceptance is fail-closed on deterministic dataset identity, successful
+independent verification, clean reader geometry, complete sequence coverage,
+ordered terminal/quiescence boundaries, process-free quiescence samples, and
+valid allocator-native snapshots for every wired allocator iteration. The
+projection retains RSS/PSS/smaps, fault, context-switch, thread, FD, PostgreSQL,
+OxideBatch metadata, and filesystem observations, but it does not infer a leak
+or normalize allocator-native payloads into one fragmentation score.
 
 ## Claim boundary
 

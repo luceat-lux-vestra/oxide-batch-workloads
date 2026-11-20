@@ -737,6 +737,9 @@ run_ci_stage() {
   echo "OS/process telemetry producer tests"
   python3 benchmark/test_os_process_profile.py
 
+  echo "Allocator repeated memory/quiescence producer tests"
+  python3 benchmark/test_allocator_memory_quiescence.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
