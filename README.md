@@ -1,5 +1,7 @@
 # oxide-batch-workloads
 
+[![GitHub Stars](https://img.shields.io/github/stars/luceat-lux-vestra/oxide-batch-workloads?style=flat&label=Stars)](https://www.star-history.com/?repos=luceat-lux-vestra%2Foxide-batch-workloads&type=date)
+
 Independent, external consumer applications that validate published
 [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch) releases —
 real workloads built against the **crates.io artifact**, never a local
