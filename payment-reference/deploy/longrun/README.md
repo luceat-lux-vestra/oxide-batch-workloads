@@ -436,3 +436,15 @@ timeline as provider-side effective-mutation truth. See
 [PROVIDER_CARDINALITY.md](PROVIDER_CARDINALITY.md). Gateway/Kill Bill journals
 and fault-proxy forwarding counters remain separate attempt/harness evidence and
 are not promoted to provider financial truth.
+
+
+## Canonical provider settlement roster
+
+Per-day settlement membership is independently rebuilt from the deterministic
+100-slot day plan, Gateway's persisted provider mapping and direct
+payment-sandbox provider truth. The controller does not own this list.
+
+See [SETTLEMENT_ROSTER.md](SETTLEMENT_ROSTER.md). The builder emits the existing
+`settlement-roster-v1` contract plus an immutable 100-slot verification
+sidecar. The existing provider statement producer consumes that roster
+unchanged and re-reads provider amounts/version before statement creation.
