@@ -443,6 +443,12 @@ def validate_statement(
         raise SettlementStatementError(
             "source_roster_digest does not match input roster"
         )
+    if expected_roster is not None:
+        for field in ("provider_account_id", "settlement_date", "currency"):
+            if statement[field] != expected_roster[field]:
+                raise SettlementStatementError(
+                    f"statement {field} does not match input roster"
+                )
 
     lines = statement["lines"]
     if not isinstance(lines, list) or not lines:
@@ -550,6 +556,13 @@ def validate_statement(
     if len(observed_payment_ids) != len(set(observed_payment_ids)):
         raise SettlementStatementError(
             "statement lines must contain unique provider_payment_ids"
+        )
+    if (
+        expected_roster is not None
+        and observed_payment_ids != expected_roster["provider_payment_ids"]
+    ):
+        raise SettlementStatementError(
+            "statement provider payment membership does not match input roster"
         )
 
     line_count = checked_nonnegative_i64(

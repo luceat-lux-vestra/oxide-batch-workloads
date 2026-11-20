@@ -260,6 +260,7 @@ python3 longrun/test-campaign-traffic-plan.py
 python3 longrun/test-campaign-financial-consistency.py
 python3 longrun/test-campaign-provider-cardinality.py
 python3 longrun/test-campaign-settlement-roster.py
+python3 longrun/test-campaign-settlement-verification.py
 
 python3 longrun/test-campaign-online-pilot.py
 

@@ -155,6 +155,50 @@ class ProviderSettlementStatementTest(unittest.TestCase):
         self.assertEqual(observed_digest, producer.sha256_digest(unsigned))
         producer.validate_statement(first, self.roster)
 
+    def test_statement_validation_binds_exact_roster_identity_and_membership(self) -> None:
+        statement = self.produce()
+
+        wrong_identity = copy.deepcopy(statement)
+        wrong_identity["provider_account_id"] = "other-provider-account"
+        wrong_identity["statement_id"] = producer.deterministic_id(
+            "statement",
+            producer.statement_identity(wrong_identity),
+        )
+        for line in wrong_identity["lines"]:
+            line["line_id"] = producer.deterministic_id(
+                "line",
+                {
+                    "statement_id": wrong_identity["statement_id"],
+                    "provider_payment_id": line["provider_payment_id"],
+                },
+            )
+        unsigned = dict(wrong_identity)
+        unsigned.pop("statement_digest")
+        wrong_identity["statement_digest"] = producer.sha256_digest(unsigned)
+        with self.assertRaisesRegex(
+            producer.SettlementStatementError,
+            "provider_account_id does not match input roster",
+        ):
+            producer.validate_statement(wrong_identity, self.roster)
+
+        wrong_membership = copy.deepcopy(statement)
+        wrong_membership["lines"][0]["provider_payment_id"] = "provider-payment-0000"
+        wrong_membership["lines"][0]["line_id"] = producer.deterministic_id(
+            "line",
+            {
+                "statement_id": wrong_membership["statement_id"],
+                "provider_payment_id": "provider-payment-0000",
+            },
+        )
+        unsigned = dict(wrong_membership)
+        unsigned.pop("statement_digest")
+        wrong_membership["statement_digest"] = producer.sha256_digest(unsigned)
+        with self.assertRaisesRegex(
+            producer.SettlementStatementError,
+            "membership does not match input roster",
+        ):
+            producer.validate_statement(wrong_membership, self.roster)
+
     def test_ineligible_provider_member_fails_whole_statement(self) -> None:
         payments = provider_payments()
         payments["provider-payment-0002"]["status"] = "authorized"
