@@ -48,14 +48,144 @@ def fixture(root):
     return provenance, identity
 
 
+def settlement_artifacts(root, sequence):
+    plan = m.plan_day(sequence)
+    roster_digest = "sha256:" + ("1" * 64)
+    account = "payment-sandbox-default"
+    roster = {
+        "schema": m.SETTLEMENT_ROSTER_SCHEMA,
+        "schema_version": 1,
+        "decision": "SETTLEMENT_ROSTER_VERIFIED_NOT_DAY_ACCEPTED",
+        "campaign_id": root.name,
+        "logical_day_sequence": sequence,
+        "source_revision": SHA40,
+        "day_plan_sha256": "2" * 64,
+        "plan_contract_sha256": "3" * 64,
+        "fault_catalog_sha256": "4" * 64,
+        "provider_account_id": account,
+        "settlement_date": plan["logical_business_date"],
+        "currency": "USD",
+        "observed_slot_count": 100,
+        "eligible_payment_count": 80,
+        "roster_sha256": roster_digest,
+        "observations": [{"slot": slot} for slot in range(1, 101)],
+    }
+    roster_rel = f"statements/day-{sequence:06}.roster.verification.json"
+    roster_path = root / roster_rel
+    m.create_only(roster_path, m.canonical_bytes(roster))
+
+    statement_id = "statement-" + ("5" * 64)
+    statement_digest = "sha256:" + ("6" * 64)
+    settlement = {
+        "schema": m.SETTLEMENT_VERIFICATION_SCHEMA,
+        "schema_version": 1,
+        "decision": "SETTLEMENT_VERIFIED_NOT_DAY_ACCEPTED",
+        "campaign_id": root.name,
+        "logical_day_sequence": sequence,
+        "source_revision": SHA40,
+        "roster_sha256": roster_digest,
+        "roster_verification_sha256": m.compact_json_sha256(roster),
+        "statement": {
+            "statement_contract_version": "provider-settlement-statement-v1",
+            "statement_id": statement_id,
+            "statement_digest": statement_digest,
+            "statement_artifact_sha256": "sha256:" + ("7" * 64),
+            "source_roster_digest": roster_digest,
+            "provider_account_id": account,
+            "settlement_date": plan["logical_business_date"],
+            "currency": "USD",
+            "line_count": 80,
+            "captured_total_minor": 80_000,
+            "refunded_total_minor": 15_000,
+            "net_settlement_total_minor": 65_000,
+        },
+        "merchant_close": {
+            "settlement_state": "CLOSED",
+            "persisted_row": {
+                "statement_id": statement_id,
+                "statement_digest": statement_digest,
+                "provider_account_id": account,
+                "settlement_date": plan["logical_business_date"],
+                "currency": "USD",
+                "line_count": 80,
+                "captured_total_minor": 80_000,
+                "refunded_total_minor": 15_000,
+                "net_settlement_total_minor": 65_000,
+                "settlement_state": "CLOSED",
+            },
+            "business_event_count": 1,
+            "exact_replay_http_status": 200,
+            "digest_conflict_http_status": 409,
+            "totals_conflict_http_status": 409,
+            "authoritative_state_unchanged_after_conflicts": True,
+        },
+    }
+    settlement_rel = f"statements/day-{sequence:06}.settlement.verification.json"
+    settlement_path = root / settlement_rel
+    m.create_only(settlement_path, m.canonical_bytes(settlement))
+
+    roster_subject = {
+        "roster_sha256": roster_digest,
+        "provider_account_id": account,
+        "settlement_date": plan["logical_business_date"],
+        "currency": "USD",
+        "eligible_payment_count": 80,
+    }
+    settlement_subject = {
+        "roster_sha256": roster_digest,
+        "statement_id": statement_id,
+        "statement_digest": statement_digest,
+        "provider_account_id": account,
+        "settlement_date": plan["logical_business_date"],
+        "currency": "USD",
+        "line_count": 80,
+        "captured_total_minor": 80_000,
+        "refunded_total_minor": 15_000,
+        "net_settlement_total_minor": 65_000,
+    }
+    return {
+        "settlement_roster": {
+            "verdict": "PASS",
+            "artifact_schema": m.SETTLEMENT_ROSTER_SCHEMA,
+            "artifact_schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": roster_rel,
+            "artifact_sha256": m.sha256(roster_path),
+            "subject": roster_subject,
+        },
+        "settlement_close": {
+            "verdict": "PASS",
+            "artifact_schema": m.SETTLEMENT_VERIFICATION_SCHEMA,
+            "artifact_schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": settlement_rel,
+            "artifact_sha256": m.sha256(settlement_path),
+            "subject": settlement_subject,
+        },
+    }
+
+
 def write_terminal(root, sequence, *, started=True):
     if started:
         m.append_event(root, sequence, "day-started", {})
+    checks = {
+        c: {"verdict": "PASS", "artifact_sha256": SHA64}
+        for c in CHECKS
+        if c not in m.SETTLEMENT_CHECKS
+    }
+    checks.update(settlement_artifacts(root, sequence))
     verification = {
-        "schema": "oxide-batch-workloads.payment-reference-day-independent-verification",
-        "schema_version": 1, "campaign_id": root.name,
-        "logical_day_sequence": sequence, "verdict": "PASS",
-        "checks": {c: {"verdict": "PASS", "artifact_sha256": SHA64} for c in CHECKS}
+        "schema": m.DAY_VERIFICATION_SCHEMA,
+        "schema_version": m.DAY_VERIFICATION_VERSION,
+        "campaign_id": root.name,
+        "logical_day_sequence": sequence,
+        "source_revision": SHA40,
+        "verdict": "PASS",
+        "checks": checks,
     }
     path = root / "days" / f"{sequence:06}.verification.json"
     m.create_only(path, m.canonical_bytes(verification))
@@ -184,6 +314,104 @@ class CampaignEvidenceTests(unittest.TestCase):
         record["checks"].pop("settlement_close")
         verification_path.write_bytes(m.canonical_bytes(record))
         with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
+            m.inspect(root)
+
+    def test_v1_generic_settlement_pass_sha_can_no_longer_advance_frontier(self):
+        root = self.init()
+        m.append_event(root, 1, "day-started", {})
+        verification = {
+            "schema": m.DAY_VERIFICATION_SCHEMA,
+            "schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": 1,
+            "verdict": "PASS",
+            "checks": {
+                c: {"verdict": "PASS", "artifact_sha256": SHA64}
+                for c in CHECKS
+            },
+        }
+        path = root / "days/000001.verification.json"
+        m.create_only(path, m.canonical_bytes(verification))
+        day = {
+            "schema": m.DAY_SCHEMA,
+            "schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": 1,
+            "plan": m.plan_day(1),
+            "verdict": "PASS",
+            "independent_verification_sha256": m.sha256(path),
+        }
+        day_path = root / "days/000001.json"
+        m.create_only(day_path, m.canonical_bytes(day))
+        m.append_event(root, 1, "day-terminal-success", {"day_sha256": m.sha256(day_path)})
+        with self.assertRaisesRegex(m.EvidenceError, "independent verification fields mismatch"):
+            m.inspect(root)
+
+    def test_settlement_descriptor_must_bind_real_safe_artifact_file(self):
+        root = self.init()
+        write_terminal(root, 1)
+        verification_path = root / "days/000001.verification.json"
+        record = m.load_json(verification_path)
+        record["checks"]["settlement_roster"]["relative_path"] = "../outside.json"
+        verification_path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "unsafe artifact relative path"):
+            m.inspect(root)
+
+    def test_settlement_artifact_identity_and_file_sha_are_authoritative(self):
+        root = self.init()
+        write_terminal(root, 1)
+        roster_path = root / "statements/day-000001.roster.verification.json"
+        roster = m.load_json(roster_path)
+        roster["campaign_id"] = "other-campaign"
+        roster_path.write_bytes(m.canonical_bytes(roster))
+        with self.assertRaisesRegex(m.EvidenceError, "artifact file SHA mismatch"):
+            m.inspect(root)
+
+    def test_settlement_close_must_bind_exact_roster_verification_artifact(self):
+        root = self.init()
+        write_terminal(root, 1)
+        settlement_path = root / "statements/day-000001.settlement.verification.json"
+        settlement = m.load_json(settlement_path)
+        settlement["roster_verification_sha256"] = "sha256:" + ("f" * 64)
+        settlement_path.write_bytes(m.canonical_bytes(settlement))
+
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["settlement_close"]["artifact_sha256"] = m.sha256(settlement_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "does not bind exact settlement_roster"):
+            m.inspect(root)
+
+    def test_settlement_close_artifact_must_contain_exact_merchant_proof(self):
+        root = self.init()
+        write_terminal(root, 1)
+        settlement_path = root / "statements/day-000001.settlement.verification.json"
+        settlement = m.load_json(settlement_path)
+        settlement["merchant_close"]["business_event_count"] = 2
+        settlement_path.write_bytes(m.canonical_bytes(settlement))
+
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["settlement_close"]["artifact_sha256"] = m.sha256(settlement_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "merchant close proof mismatch"):
+            m.inspect(root)
+
+    def test_settlement_subjects_must_cross_bind_roster_identity_and_count(self):
+        root = self.init()
+        write_terminal(root, 1)
+        settlement_path = root / "statements/day-000001.settlement.verification.json"
+        settlement = m.load_json(settlement_path)
+        settlement["statement"]["line_count"] = 79
+        settlement["merchant_close"]["persisted_row"]["line_count"] = 79
+        settlement_path.write_bytes(m.canonical_bytes(settlement))
+
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["settlement_close"]["artifact_sha256"] = m.sha256(settlement_path)
+        verification["checks"]["settlement_close"]["subject"]["line_count"] = 79
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
             m.inspect(root)
 
     def test_out_of_order_gap_duplicate_terminal_and_truncated_jsonl_block(self):
