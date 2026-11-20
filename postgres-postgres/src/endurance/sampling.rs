@@ -25,6 +25,7 @@ const SAMPLE_SCHEMA: &str = "oxide-batch-workloads.endurance-sample";
 const SAMPLE_SCHEMA_VERSION: u32 = 1;
 const MIN_SAMPLE_INTERVAL_MILLIS: u64 = 10;
 const MAX_SAMPLE_INTERVAL_MILLIS: u64 = 60_000;
+const MAX_POST_TERMINAL_QUIESCENCE_MILLIS: u64 = 600_000;
 const SAMPLER_POLL_MILLIS: u64 = 5;
 
 #[derive(Debug, Serialize)]
@@ -32,6 +33,7 @@ pub struct SampledRecordedIterationOutput {
     pub recorded: RecordedIterationOutput,
     pub samples_path: String,
     pub sample_interval_millis: u64,
+    pub post_terminal_quiescence_millis: u64,
     pub samples_written: u64,
 }
 
@@ -152,6 +154,7 @@ struct SamplerState {
     boundaries: VecDeque<BoundaryRequest>,
     failure: Option<String>,
     started: bool,
+    quiescing: bool,
     stop: bool,
 }
 
@@ -190,6 +193,28 @@ impl SamplingObserver {
             },
             process: None,
         });
+        Ok(())
+    }
+
+    fn begin_quiescence(&self) -> Result<()> {
+        let mut state = lock_state(&self.state)?;
+        fail_if_sampler_failed(&state)?;
+        state.quiescing = true;
+        state.boundaries.push_back(BoundaryRequest {
+            kind: "quiescence-start",
+            process: None,
+        });
+        Ok(())
+    }
+
+    fn end_quiescence(&self) -> Result<()> {
+        let mut state = lock_state(&self.state)?;
+        fail_if_sampler_failed(&state)?;
+        state.boundaries.push_back(BoundaryRequest {
+            kind: "quiescence-end",
+            process: None,
+        });
+        state.quiescing = false;
         Ok(())
     }
 
@@ -337,14 +362,44 @@ pub async fn execute_sampled_recorded_iteration(
     sequence: u64,
     sample_interval: Duration,
 ) -> Result<SampledRecordedIterationOutput> {
-    execute_sampled_recorded_iteration_with_probe(
+    execute_sampled_recorded_iteration_with_quiescence(
         workload_binary,
         database_url,
         evidence_root,
         campaign_id,
         sequence,
         sample_interval,
-        Arc::new(LinuxResourceProbe),
+        Duration::ZERO,
+    )
+    .await
+}
+
+struct SampledIterationOptions {
+    sample_interval: Duration,
+    post_terminal_quiescence: Duration,
+    probe: Arc<dyn ResourceProbe>,
+}
+
+pub async fn execute_sampled_recorded_iteration_with_quiescence(
+    workload_binary: &Path,
+    database_url: &str,
+    evidence_root: &Path,
+    campaign_id: &str,
+    sequence: u64,
+    sample_interval: Duration,
+    post_terminal_quiescence: Duration,
+) -> Result<SampledRecordedIterationOutput> {
+    execute_sampled_recorded_iteration_with_options(
+        workload_binary,
+        database_url,
+        evidence_root,
+        campaign_id,
+        sequence,
+        SampledIterationOptions {
+            sample_interval,
+            post_terminal_quiescence,
+            probe: Arc::new(LinuxResourceProbe),
+        },
     )
     .await
 }
@@ -358,11 +413,47 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
     sample_interval: Duration,
     probe: Arc<dyn ResourceProbe>,
 ) -> Result<SampledRecordedIterationOutput> {
+    execute_sampled_recorded_iteration_with_options(
+        workload_binary,
+        database_url,
+        evidence_root,
+        campaign_id,
+        sequence,
+        SampledIterationOptions {
+            sample_interval,
+            post_terminal_quiescence: Duration::ZERO,
+            probe,
+        },
+    )
+    .await
+}
+
+async fn execute_sampled_recorded_iteration_with_options(
+    workload_binary: &Path,
+    database_url: &str,
+    evidence_root: &Path,
+    campaign_id: &str,
+    sequence: u64,
+    options: SampledIterationOptions,
+) -> Result<SampledRecordedIterationOutput> {
+    let SampledIterationOptions {
+        sample_interval,
+        post_terminal_quiescence,
+        probe,
+    } = options;
     let interval_millis =
         u64::try_from(sample_interval.as_millis()).context("sample interval does not fit u64")?;
     if !(MIN_SAMPLE_INTERVAL_MILLIS..=MAX_SAMPLE_INTERVAL_MILLIS).contains(&interval_millis) {
         bail!(
             "sample interval must be between {MIN_SAMPLE_INTERVAL_MILLIS} and {MAX_SAMPLE_INTERVAL_MILLIS} milliseconds"
+        );
+    }
+
+    let post_terminal_quiescence_millis = u64::try_from(post_terminal_quiescence.as_millis())
+        .context("post-terminal quiescence duration does not fit u64")?;
+    if post_terminal_quiescence_millis > MAX_POST_TERMINAL_QUIESCENCE_MILLIS {
+        bail!(
+            "post-terminal quiescence must be between 0 and {MAX_POST_TERMINAL_QUIESCENCE_MILLIS} milliseconds"
         );
     }
 
@@ -407,6 +498,18 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
     .await;
 
     let terminal_result = observer.enqueue_terminal(execution.is_ok());
+    let quiescence_result =
+        if execution.is_ok() && terminal_result.is_ok() && !post_terminal_quiescence.is_zero() {
+            let begin_result = observer.begin_quiescence();
+            if begin_result.is_ok() {
+                sleep(post_terminal_quiescence).await;
+                observer.end_quiescence()
+            } else {
+                begin_result
+            }
+        } else {
+            Ok(())
+        };
     let stop_result = observer.stop();
     let (samples_written, sampler_error) = match sampler.join().await {
         Ok(samples_written) => (Some(samples_written), None),
@@ -415,6 +518,7 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
 
     if let Some(sampling_error) = terminal_result
         .err()
+        .or(quiescence_result.err())
         .or(stop_result.err())
         .or(sampler_error)
     {
@@ -441,6 +545,7 @@ pub async fn execute_sampled_recorded_iteration_with_probe(
                 recorded,
                 samples_path: samples_path.display().to_string(),
                 sample_interval_millis: interval_millis,
+                post_terminal_quiescence_millis,
                 samples_written,
             })
         }
@@ -468,10 +573,16 @@ async fn run_sampler_inner(context: &SamplerContext, pool: &PgPool) -> Result<u6
     let mut next_periodic = Instant::now() + context.interval;
 
     loop {
-        let (boundaries, active, started, stop) = {
+        let (boundaries, active, started, quiescing, stop) = {
             let mut state = lock_state(&context.state)?;
             let boundaries = state.boundaries.drain(..).collect::<Vec<_>>();
-            (boundaries, state.active.clone(), state.started, state.stop)
+            (
+                boundaries,
+                state.active.clone(),
+                state.started,
+                state.quiescing,
+                state.stop,
+            )
         };
 
         for boundary in boundaries {
@@ -485,7 +596,17 @@ async fn run_sampler_inner(context: &SamplerContext, pool: &PgPool) -> Result<u6
                 .as_ref()
                 .map(|target| context.probe.process(target.pid, &target.role))
                 .transpose()?;
-            collect_sample(context, pool, "periodic", process).await?;
+            collect_sample(
+                context,
+                pool,
+                if quiescing {
+                    "quiescence-periodic"
+                } else {
+                    "periodic"
+                },
+                process,
+            )
+            .await?;
             samples_written += 1;
             next_periodic = Instant::now() + context.interval;
         }

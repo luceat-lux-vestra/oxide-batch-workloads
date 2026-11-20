@@ -2,14 +2,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use postgres_postgres::endurance::batch::execute_bounded_batch;
+use postgres_postgres::endurance::batch::execute_bounded_batch_with_quiescence;
 use postgres_postgres::endurance::campaign::execute_acceptance_campaign;
 use postgres_postgres::endurance::crash::execute_crash_iteration;
 use postgres_postgres::endurance::evidence::execute_recorded_iteration;
 use postgres_postgres::endurance::guarded_batch::execute_guarded_bounded_batch;
-use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration;
+use postgres_postgres::endurance::progress::execute_next_sampled_recorded_iteration_with_quiescence;
 use postgres_postgres::endurance::resume::reconcile_resume_status;
-use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration;
+use postgres_postgres::endurance::sampling::execute_sampled_recorded_iteration_with_quiescence;
 use postgres_postgres::endurance::summary::{summarize_campaign, SummaryVerdict};
 use postgres_postgres::endurance::{cleanup_business, execute_clean_iteration, plan_iteration};
 
@@ -89,6 +89,8 @@ enum Command {
         sequence: u64,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
+        #[arg(long, default_value_t = 0)]
+        post_terminal_quiescence_ms: u64,
     },
     /// Reconcile durable evidence and execute exactly one ready next sequence
     /// through the existing sampled recorded-iteration path.
@@ -101,6 +103,8 @@ enum Command {
         campaign_id: String,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
+        #[arg(long, default_value_t = 0)]
+        post_terminal_quiescence_ms: u64,
     },
     /// Execute an explicit finite number of durable-resume-selected iterations.
     RunBatch {
@@ -114,6 +118,8 @@ enum Command {
         iterations: u64,
         #[arg(long, default_value_t = 1000)]
         sample_interval_ms: u64,
+        #[arg(long, default_value_t = 0)]
+        post_terminal_quiescence_ms: u64,
     },
     /// Execute a finite durable-resume-selected batch with a fail-closed
     /// external guard before every logical iteration.
@@ -242,15 +248,17 @@ async fn main() -> anyhow::Result<()> {
             campaign_id,
             sequence,
             sample_interval_ms,
+            post_terminal_quiescence_ms,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let result = execute_sampled_recorded_iteration(
+            let result = execute_sampled_recorded_iteration_with_quiescence(
                 &workload_binary,
                 &database_url,
                 &evidence_root,
                 &campaign_id,
                 sequence,
                 Duration::from_millis(sample_interval_ms),
+                Duration::from_millis(post_terminal_quiescence_ms),
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -261,14 +269,16 @@ async fn main() -> anyhow::Result<()> {
             evidence_root,
             campaign_id,
             sample_interval_ms,
+            post_terminal_quiescence_ms,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let result = execute_next_sampled_recorded_iteration(
+            let result = execute_next_sampled_recorded_iteration_with_quiescence(
                 &workload_binary,
                 &database_url,
                 &evidence_root,
                 &campaign_id,
                 Duration::from_millis(sample_interval_ms),
+                Duration::from_millis(post_terminal_quiescence_ms),
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -280,15 +290,17 @@ async fn main() -> anyhow::Result<()> {
             campaign_id,
             iterations,
             sample_interval_ms,
+            post_terminal_quiescence_ms,
         } => {
             let workload_binary = sibling_workload_binary()?;
-            let result = execute_bounded_batch(
+            let result = execute_bounded_batch_with_quiescence(
                 &workload_binary,
                 &database_url,
                 &evidence_root,
                 &campaign_id,
                 iterations,
                 Duration::from_millis(sample_interval_ms),
+                Duration::from_millis(post_terminal_quiescence_ms),
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);

@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use postgres_postgres::endurance::sampling::{
     execute_sampled_recorded_iteration, execute_sampled_recorded_iteration_with_probe,
-    FilesystemObservation, LinuxResourceProbe, ProcessObservation, ResourceProbe,
+    execute_sampled_recorded_iteration_with_quiescence, FilesystemObservation, LinuxResourceProbe,
+    ProcessObservation, ResourceProbe,
 };
 use postgres_postgres::endurance::CANONICAL_SEED;
 use serde_json::Value;
@@ -215,6 +216,81 @@ async fn sampled_clean_iterations_append_measurements_and_stop_after_return() {
     assert!(!evidence.contains("oxide_batch_workload:oxide_batch_workload"));
 
     fs::remove_dir_all(root).expect("remove Slice E clean evidence");
+}
+
+#[tokio::test]
+async fn sampled_clean_iteration_retains_explicit_post_terminal_quiescence() {
+    support::migrate();
+    support::reset();
+    support::seed(SeedOptions {
+        rows: 500,
+        seed: CANONICAL_SEED,
+    });
+
+    let root = temp_root("quiescence");
+    let campaign_id = format!("samplequiescence{}", support::nonce());
+    let database_url = support::database_url();
+    let quiescence = Duration::from_millis(45);
+
+    let result = execute_sampled_recorded_iteration_with_quiescence(
+        &workload_binary(),
+        &database_url,
+        &root,
+        &campaign_id,
+        1,
+        SAMPLE_INTERVAL,
+        quiescence,
+    )
+    .await
+    .expect("execute sampled clean iteration with quiescence");
+
+    assert_eq!(result.post_terminal_quiescence_millis, 45);
+    let samples = read_samples(Path::new(&result.samples_path));
+    for sample in &samples {
+        assert_common_sample(sample, &campaign_id, 1);
+    }
+
+    let terminal = samples
+        .iter()
+        .position(|sample| sample["sample_kind"] == "terminal-success")
+        .expect("terminal-success sample");
+    let start = samples
+        .iter()
+        .position(|sample| sample["sample_kind"] == "quiescence-start")
+        .expect("quiescence-start sample");
+    let end = samples
+        .iter()
+        .position(|sample| sample["sample_kind"] == "quiescence-end")
+        .expect("quiescence-end sample");
+    assert!(terminal < start && start < end);
+
+    let periodic = samples
+        .iter()
+        .enumerate()
+        .filter(|(_, sample)| sample["sample_kind"] == "quiescence-periodic")
+        .collect::<Vec<_>>();
+    assert!(
+        periodic.len() >= 2,
+        "45 ms quiescence at 10 ms interval must retain multiple periodic samples"
+    );
+    for (index, sample) in periodic {
+        assert!(index > start && index < end);
+        assert!(
+            sample["process"].is_null(),
+            "post-terminal quiescence must not fabricate an exited workload process"
+        );
+    }
+
+    let stable_text =
+        fs::read_to_string(&result.samples_path).expect("snapshot quiescence samples");
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(
+        fs::read_to_string(&result.samples_path).expect("re-read quiescence samples"),
+        stable_text,
+        "sampler must stop after the explicit quiescence interval"
+    );
+
+    fs::remove_dir_all(root).expect("remove Slice E quiescence evidence");
 }
 
 #[tokio::test]
