@@ -446,6 +446,10 @@ variants must therefore retain the exact Cargo version alongside `rustc`.
 
 ## Repeated allocator benchmark producer
 
+> **Current-release boundary:** the executable producer is owned by campaign
+> #323 for exact published OxideBatch `0.7.0`. Historical #266 / 0.6.0
+> benchmark evidence remains historical and is not relabeled.
+
 `benchmark/allocator_benchmark.py` is the benchmark-lane producer for the
 registry-qualified allocator matrix. It is intentionally separate from the
 diagnostic smoke producer and from CPU/heap profiler orchestration.
@@ -480,9 +484,10 @@ and peak RSS for every allocator/reader pair.
 Only the exact canonical geometry is labelled
 `same-host-relative-observational`. Any bounded override is labelled
 `diagnostic-noncanonical` and every sample manifest records that it is not
-campaign acceptance evidence. Hosted-runner numbers remain unsuitable for
-stable-host absolute-performance claims, and this 0.6.0 rehearsal cannot select
-the post-M7 default allocator.
+campaign acceptance evidence. Timing values remain host-specific and must stay
+bound to retained host provenance. A non-canonical diagnostic run cannot select
+a default allocator, and even canonical #323 evidence requires the separate
+memory/quiescence gate before any permanent allocator recommendation.
 
 ## CPU attribution producer
 

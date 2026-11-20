@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run repeated campaign #266 allocator benchmarks with strict claim boundaries."""
+"""Run campaign #323 allocator benchmarks with strict claim boundaries."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ def sample_import_name(
 def benchmark_limitations(canonical: bool) -> list[str]:
     limitations = [
         "no profiler is attached in benchmark lane",
-        "hosted-runner results are same-run relative evidence, not stable-host absolute-performance truth",
+        "benchmark timing is same-host relative evidence; absolute values are host-specific and must remain bound to retained host provenance",
         "OxideBatch 0.7.0 evidence must not be generalized to later releases or a permanent allocator decision",
     ]
     if not canonical:

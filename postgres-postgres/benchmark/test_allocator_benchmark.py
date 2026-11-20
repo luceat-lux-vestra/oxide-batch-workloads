@@ -69,7 +69,9 @@ class AllocatorBenchmarkTests(unittest.TestCase):
     def test_noncanonical_limitations_fail_closed_to_diagnostic_scope(self) -> None:
         limitations = allocator_benchmark.benchmark_limitations(False)
         self.assertTrue(any("diagnostic only" in item for item in limitations))
-        self.assertTrue(any("stable-host" in item for item in limitations))
+        self.assertTrue(any("same-host relative evidence" in item for item in limitations))
+        self.assertTrue(any("host-specific" in item for item in limitations))
+        self.assertFalse(any("hosted-runner" in item for item in limitations))
 
     def test_summary_retains_distribution_not_single_number(self) -> None:
         samples = [
