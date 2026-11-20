@@ -428,3 +428,11 @@ Two host-qualification flags currently exist:
 All remain opt-in, so ordinary CI keeps the historical build-based Compose
 path and strict HTTP-201 tenant-bootstrap semantics. The OCI qualification path
 sets all three explicitly and therefore cannot build or pull during a smoke.
+
+## Provider side-effect cardinality authority
+
+The campaign uses the pinned payment-sandbox v1.5.4 authenticated payment
+timeline as provider-side effective-mutation truth. See
+[PROVIDER_CARDINALITY.md](PROVIDER_CARDINALITY.md). Gateway/Kill Bill journals
+and fault-proxy forwarding counters remain separate attempt/harness evidence and
+are not promoted to provider financial truth.
