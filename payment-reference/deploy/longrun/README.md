@@ -448,3 +448,17 @@ See [SETTLEMENT_ROSTER.md](SETTLEMENT_ROSTER.md). The builder emits the existing
 `settlement-roster-v1` contract plus an immutable 100-slot verification
 sidecar. The existing provider statement producer consumes that roster
 unchanged and re-reads provider amounts/version before statement creation.
+
+
+## Independent settlement statement and Merchant close proof
+
+The provider statement and Merchant settlement close are now designed as one
+independent proof stage rather than controller-owned acceptance logic. See
+[SETTLEMENT_VERIFICATION.md](SETTLEMENT_VERIFICATION.md).
+
+The verifier consumes the immutable roster + roster-verification pair,
+re-produces and immutably retains the provider statement, reconciles prior
+Merchant close state from `merchant-db` before mutation, proves exact replay
+idempotence, proves digest/totals conflicts are rejected without replacing the
+authoritative CLOSED row, and retains a non-accepting deterministic settlement
+verification artifact.
