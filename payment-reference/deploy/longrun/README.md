@@ -202,7 +202,8 @@ export KILLBILL_API_SECRET='hostq-318-local-only'
 
 bash payment-reference/deploy/longrun/deploy-oci.sh \
   --manifest /path/to/image-manifest.json \
-  --data-path /srv/oxide-batch-workloads
+  --data-path /srv/oxide-batch-workloads \
+  --contract payment-reference/deploy/longrun/host-qualification-contract-oci-4vcpu-24gb.json
 ```
 
 It fail-closes unless:
@@ -228,13 +229,20 @@ docker compose ... up -d --no-build --pull never --wait --wait-timeout 120
 ```
 
 The manifest and generated digest-only `images.env` are retained
-immutably under:
+immutably under a **source-versioned runtime directory**:
 
 ```text
-<durable-data-root>/payment-reference-runtime/
+<durable-data-root>/payment-reference-runtime/<source-sha>/
   image-manifest.json
   images.env
 ```
+
+This is also the upgrade boundary. Replaying the same source SHA is
+idempotent, while deploying a different source SHA creates a distinct runtime
+metadata directory and leaves earlier release metadata untouched. Historical
+flat files directly under `payment-reference-runtime/` from pre-versioned
+deployments are retained as legacy evidence and are never overwritten by the
+new deployment path.
 
 ## Qualification sequence
 
@@ -266,15 +274,19 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
    export KILLBILL_API_SECRET='hostq-318-local-only'
    ```
 
-7. Run `deploy-oci.sh`. It performs admission -> digest-pinned pull ->
-   admission -> no-build/no-pull start -> bounded wait -> exact eight-service
-   runtime-state verification.
+7. Run `deploy-oci.sh` with the **same selected qualification contract**
+   that was used for the explicit preflight. It performs admission ->
+   digest-pinned pull -> admission -> no-build/no-pull start -> bounded wait ->
+   exact eight-service runtime-state verification. Both admission checks use
+   that supplied contract; do not preflight with the upgraded contract and then
+   silently deploy under the lower default contract.
 8. Run the full runtime smoke three consecutive times against the same running
    Compose project and persistent volumes. Use the retained OCI Compose/env
    pair and unique safe business namespace per run:
 
    ```bash
-   runtime=/srv/oxide-batch-workloads/payment-reference-runtime
+   source_sha="$(git rev-parse HEAD)"
+   runtime="/srv/oxide-batch-workloads/payment-reference-runtime/$source_sha"
 
    export PAYMENT_REFERENCE_COMPOSE_FILE="$PWD/payment-reference/deploy/longrun/compose.oci.yaml"
    export PAYMENT_REFERENCE_COMPOSE_ENV_FILE="$runtime/images.env"
@@ -300,7 +312,9 @@ Qualification is run on the selected shared OCI ARM64 Linux host.
 
    ```bash
    set -a
-   . /srv/oxide-batch-workloads/payment-reference-runtime/images.env
+   source_sha="$(git rev-parse HEAD)"
+   runtime="/srv/oxide-batch-workloads/payment-reference-runtime/$source_sha"
+   . "$runtime/images.env"
    set +a
 
    python3 payment-reference/deploy/longrun/capture-provenance.py \
