@@ -489,6 +489,37 @@ bound to retained host provenance. A non-canonical diagnostic run cannot select
 a default allocator, and even canonical #323 evidence requires the separate
 memory/quiescence gate before any permanent allocator recommendation.
 
+## Canonical allocator evidence analysis
+
+`benchmark/allocator_benchmark_analysis.py` audits an already-retained canonical
+campaign #323 allocator benchmark without rerunning the expensive workload.
+
+The analyzer requires the exact source repository SHA and treats the original
+benchmark directory as immutable source evidence. It independently validates:
+
+- canonical campaign #323 / OxideBatch 0.7.0 subject provenance;
+- the exact 1,000,000-row canonical geometry;
+- all 70 measured manifests (5 allocators × 2 readers × 7 repetitions);
+- all 20 warmup correctness records;
+- every measured manifest's retained raw-artifact SHA-256;
+- every measured verifier report and correctness digest;
+- measured allocator/reader/repetition/order-position identity.
+
+For each allocator/reader pair it retains all seven individual measured samples
+and reports min/Q1/median/Q3/max/P95 plus two explicit dispersion measures:
+IQR and MAD. Outliers are identified descriptively with the Tukey 1.5×IQR rule,
+including repetition and order position. **No outlier is removed** from any
+distribution.
+
+The analyzer writes a separate create-only sidecar `analysis.json` bound to the
+source summary SHA-256 and source repository SHA. This lets a later analyzer
+revision audit historical evidence without relabeling or mutating the original
+benchmark run.
+
+The sidecar is distribution/correctness evidence only. Cursor and paging remain
+separate, absolute timings remain host-specific, and no default allocator may
+be selected until the separate memory/quiescence phase is complete.
+
 ## CPU attribution producer
 
 `benchmark/cpu_profile.py` is the first CPU-lane producer. It keeps profiling

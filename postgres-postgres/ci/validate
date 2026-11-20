@@ -713,6 +713,7 @@ run_ci_stage() {
 
   echo "allocator benchmark producer tests"
   python3 benchmark/test_allocator_benchmark.py
+  python3 benchmark/test_allocator_benchmark_analysis.py
 
   echo "CPU attribution producer tests"
   python3 benchmark/test_cpu_profile.py
