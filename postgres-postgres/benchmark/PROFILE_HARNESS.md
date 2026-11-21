@@ -1397,3 +1397,28 @@ The hosted-runner workflow validates orchestration, artifact closure, and bounde
 resource evidence only. It does not establish a leak, stable-host performance, or
 the separate long-running/quiescence completion criterion. The latter remains a
 separate S10/#203 evidence unit.
+
+
+### Phase 5B same-process real-workload allocation churn
+
+Phase 5A deliberately restarts the workload process for every retained iteration so process-local allocator state is destroyed between runs. That is necessary for the restart/quiescence control, but it cannot answer whether allocator arenas, caches, slabs, or retained mappings stabilize when the same process repeatedly allocates and frees real workload objects.
+
+Phase 5B is a separate claim-bearing lane implemented by `benchmark/allocator_churn.py` plus the `postgres-postgres-allocator-churn` binary. It keeps exactly one process alive per allocator while repeatedly invoking the real `job::run` path. The default ARM64 geometry is:
+
+- source rows: 1,000,000;
+- seed: 20260904;
+- chunk size: 1,000;
+- cursor fetch size: 500;
+- paging page size: 750;
+- 20 cycles per allocator, alternating cursor/paging 10:10;
+- 1,000 ms explicit idle after business-row cleanup.
+
+Twenty cycles stay below the endurance planner's first reserved crash/recovery sequence at 24. Each cycle uses a unique real JobInstance identity, requires a completed OxideBatch execution, requires destination cardinality to equal the seeded source row count, deletes only that cycle's business projection, and leaves OxideBatch metadata durable. The source table is never reseeded between cycles.
+
+The runner records the same process PID at `pre-run`, `post-run`, `post-cleanup`, and `post-idle` boundaries. RSS, PSS, smaps rollup classes, faults, CPU ticks, context switches, thread count, and FD count come from the existing Linux resource probe. A PID change fails the producer because that would invalidate the same-process claim.
+
+For registry-wired allocators, native snapshots are retained at `post-run`, `post-cleanup`, and `post-idle` for every cycle. Jemalloc, mimalloc, and snmalloc therefore expose their native state across repeated pressure/release cycles. System and tcmalloc remain explicitly not-wired rather than receiving synthetic allocator statistics.
+
+Phase 5B uses the 1,000,000-row Phase 4 workload geometry specifically to generate sustained real allocation/free churn. `job::run` also recomputes the streaming source digest on every cycle; that is part of the production workload path and intentionally contributes to allocation pressure rather than being removed for the profiler.
+
+This lane is not benchmark timing and it does not replace Phase 4 peak-memory measurements. It samples process memory at semantic boundaries to answer whether the post-cleanup/post-idle baseline stabilizes, drifts, or steps upward while the allocator process remains alive. Rising RSS/PSS is evidence to investigate, not by itself a leak verdict. Phase 5A remains the independent semantic-verifier lane; Phase 5B enforces successful execution plus exact projection cardinality so the additional churn instrumentation does not pretend to be a second independent correctness oracle.

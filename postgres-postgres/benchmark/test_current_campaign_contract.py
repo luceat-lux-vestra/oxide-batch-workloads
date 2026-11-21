@@ -44,6 +44,7 @@ CURRENT_PRODUCERS = (
     "allocator_telemetry_profile.py",
     "os_process_profile.py",
     "allocator_memory_quiescence.py",
+    "allocator_churn.py",
 )
 
 STALE_CAMPAIGN_ASSERTION = re.compile(r'\["campaign"\]\s*==\s*266')

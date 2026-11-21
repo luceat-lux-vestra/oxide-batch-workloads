@@ -39,7 +39,12 @@ pub fn capture_from_env() -> anyhow::Result<()> {
     capture_to(&PathBuf::from(value))
 }
 
-fn capture_to(output_dir: &Path) -> anyhow::Result<()> {
+/// Capture one allocator-native snapshot into an explicit directory.
+///
+/// This is the same payload used by `capture_from_env`, exposed for bounded
+/// same-process profiling loops that must retain multiple snapshots without
+/// changing the environment between cycles.
+pub fn capture_to(output_dir: &Path) -> anyhow::Result<()> {
     let snapshot = selected_snapshot()?;
     fs::create_dir_all(output_dir).with_context(|| {
         format!(
