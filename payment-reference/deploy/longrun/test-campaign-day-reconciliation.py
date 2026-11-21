@@ -263,9 +263,11 @@ class ReconciliationProducerTests(unittest.TestCase):
                 "--campaign-dir", str(campaign),
                 "--day", "1",
                 "--workload-binary", str(binary),
-                "--database-url", "postgresql://read-only-test",
             ]
-            with patch.object(sys, "argv", argv), patch.object(
+            with patch.object(sys, "argv", argv), patch.dict(
+                os.environ,
+                {"PAYMENT_RECONCILIATION_DATABASE_URL": "postgresql://read-only-test"},
+            ), patch.object(
                 reconciliation, "load_producer_report", return_value=report
             ):
                 self.assertEqual(reconciliation.main(), 0)
