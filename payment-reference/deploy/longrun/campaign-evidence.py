@@ -233,6 +233,12 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
             seq = int(path.name[:6])
             require(seq > 0, "day zero verification file invalid")
             verifications[seq] = path
+        elif re.fullmatch(r"day-[0-9]{6}\.recovery\.verification\.json", path.name):
+            seq = int(path.name[4:10])
+            require(seq > 0, "day zero recovery verification file invalid")
+            # Auxiliary recovery proof is validated only through the exact
+            # bound descriptor in the day-independent verification artifact.
+            continue
         else:
             raise EvidenceError(f"unexpected day evidence path: {path}")
     return days, verifications
