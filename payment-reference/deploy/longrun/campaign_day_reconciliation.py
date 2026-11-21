@@ -419,7 +419,7 @@ def verify_workload_binary(path: Path, expected_sha256: str) -> Path:
     return path.resolve()
 
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+Runner = Callable[..., Any]
 
 
 def load_producer_report(
@@ -432,8 +432,7 @@ def load_producer_report(
     require(isinstance(database_url, str) and database_url.strip(), "reconciliation database URL missing")
     require(
         isinstance(snapshot_id, str)
-        and snapshot_id
-        and all(ch.isalnum() or ch in "-_." for ch in snapshot_id),
+        and re.fullmatch(r"[A-Za-z0-9_.-]+", snapshot_id) is not None,
         "reconciliation snapshot id is not workload-safe",
     )
     result = runner(
