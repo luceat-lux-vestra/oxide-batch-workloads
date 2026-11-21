@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 import campaign_core as core
+import campaign_day_cardinality as day_cardinality
 
 CONTRACT_PATH = core.CONTRACT_PATH
 SCHEMA = "oxide-batch-workloads.payment-reference-campaign"
@@ -36,8 +37,9 @@ HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
 DAY_VERIFICATION_VERSION = 2
-GENERIC_CHECKS = {"recovery", "reconciliation", "financial_invariants", "side_effect_cardinality"}
+GENERIC_CHECKS = {"recovery", "reconciliation", "financial_invariants"}
 SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
+CARDINALITY_CHECK = "side_effect_cardinality"
 SETTLEMENT_ROSTER_SCHEMA = "oxide-batch-workloads.payment-reference-settlement-roster-verification"
 SETTLEMENT_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-settlement-verification"
 DIGEST64 = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -531,7 +533,7 @@ def validate_verification(
         "independent verification identity/verdict mismatch",
     )
     checks = record["checks"]
-    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS
+    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK}
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
 
     for check in GENERIC_CHECKS:
@@ -574,6 +576,44 @@ def validate_verification(
         settlement_subject["line_count"] == roster_subject["eligible_payment_count"],
         "settlement_close: statement line count differs from eligible roster membership",
     )
+
+    check = checks[CARDINALITY_CHECK]
+    name = f"day-{sequence:06}.provider-cardinality.verification.json"
+    expected_fields = {
+        "verdict", "artifact_schema", "artifact_schema_version", "campaign_id",
+        "logical_day_sequence", "source_revision", "relative_path",
+        "artifact_sha256", "subject",
+    }
+    require(type(check) is dict and set(check) == expected_fields,
+            "side_effect_cardinality: bound descriptor fields mismatch")
+    require(
+        check["verdict"] == "PASS"
+        and check["artifact_schema"] == day_cardinality.SCHEMA
+        and type(check["artifact_schema_version"]) is int
+        and check["artifact_schema_version"] == 1
+        and check["campaign_id"] == identity["campaign_id"]
+        and type(check["logical_day_sequence"]) is int
+        and check["logical_day_sequence"] == sequence
+        and check["source_revision"] == identity["source_revision"],
+        "side_effect_cardinality: descriptor identity/schema/verdict mismatch",
+    )
+    require(isinstance(check["artifact_sha256"], str)
+            and HEX64.fullmatch(check["artifact_sha256"]) is not None,
+            "side_effect_cardinality: invalid artifact SHA")
+    artifact_path = _safe_relative_artifact(
+        campaign_path, check["relative_path"], name, CARDINALITY_CHECK,
+    )
+    require(sha256(artifact_path) == check["artifact_sha256"],
+            "side_effect_cardinality: retained file SHA mismatch")
+    artifact = load_json(artifact_path)
+    subject = day_cardinality.validate(
+        artifact,
+        plan=day_cardinality.plan_for(identity["campaign_id"], sequence),
+        source_revision=identity["source_revision"],
+        roster_verification=roster_artifact,
+    )
+    require(check["subject"] == subject,
+            "side_effect_cardinality: descriptor subject mismatches independently re-derived proof")
     return sha256(path)
 
 

@@ -1,7 +1,7 @@
 # Day-independent verification contract v2 (#318)
 
 A terminal campaign day is not allowed to advance the evidence frontier from
-generic `PASS + SHA` assertions for settlement.
+generic `PASS + SHA` assertions for settlement or provider side-effect cardinality.
 
 ## Version boundary
 
@@ -90,20 +90,32 @@ The scanner additionally requires:
 
 This prevents mixing valid artifacts from different rosters or logical days.
 
+## Provider day-cardinality subject
+
+`side_effect_cardinality` now uses the same bound artifact descriptor,
+pointing to `statements/day-NNNNNN.provider-cardinality.verification.json`.
+
+The scanner requires exactly 100 distinct planned Merchant-to-Provider
+mappings, replays every retained provider timeline through the pinned
+v1.5.4 provider ledger verifier, and checks exact mutation counts, terminal
+financial states, absent-provider HTTP 404 evidence, and the immutable
+roster verification digest. The bound subject contains slot count, total
+effective provider mutations, roster/roster-verification digests, and
+the pinned provider source revision.
+
+See [DAY_CARDINALITY.md](DAY_CARDINALITY.md).
+
 ## Remaining checks
 
-`recovery`, `reconciliation`, `financial_invariants`, and
-`side_effect_cardinality` temporarily retain their previous
-`{verdict, artifact_sha256}` shape.
-
-That is deliberate. Their stronger schemas will be introduced only after their
-own independent proof boundaries are defined, rather than inventing a generic
-descriptor that overstates what is currently verified.
+Only `recovery`, `reconciliation`, and `financial_invariants` temporarily
+retain the legacy `{verdict, artifact_sha256}` shape. Their dedicated proof
+contracts remain separate work units.
 
 ## Authority boundary
 
 The campaign controller may sequence phases, but v2 frontier scanning derives
-settlement PASS from retained independent verifier artifacts. It does not accept
+settlement and provider-cardinality PASS from retained independent verifier
+artifacts. It does not accept
 a controller-authored settlement PASS assertion by itself.
 
 This contract still does not create a terminal day record, execute campaign
