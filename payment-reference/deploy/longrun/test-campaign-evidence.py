@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 import campaign_day_cardinality as day_cardinality
+import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
 
 HERE = Path(__file__).resolve().parent
@@ -219,6 +220,124 @@ def recovery_artifact_for_day(root, sequence, day_plan, day_card, provider_timel
     return relative, path, artifact, subject
 
 
+def reconciliation_artifact_for_day(root, sequence, day_plan, day_card):
+    internal = []
+    provider_rows = []
+    status_map = {"authorized": "AUTHORIZED", "captured": "CAPTURED", "refunded": "REFUNDED"}
+    for row in day_card["observations"]:
+        proof = row["verification"]
+        if proof["payment_status"] not in status_map:
+            continue
+        provider_id = row["provider_payment_id"]
+        normalized = status_map[proof["payment_status"]]
+        internal.append({
+            "source_row_id": "internal:" + row["merchant_payment_id"],
+            "merchant_payment_id": row["merchant_payment_id"],
+            "provider_payment_id": provider_id,
+            "currency": "USD",
+            "normalized_status": normalized,
+            "authorized_amount_minor": proof["authorized_amount_minor"],
+            "captured_amount_minor": proof["captured_amount_minor"],
+            "refunded_amount_minor": proof["refunded_amount_minor"],
+        })
+        provider_rows.append({
+            "source_row_id": "provider:" + provider_id,
+            "provider_payment_id": provider_id,
+            "currency": "USD",
+            "normalized_status": normalized,
+            "authorized_amount_minor": proof["authorized_amount_minor"],
+            "captured_amount_minor": proof["captured_amount_minor"],
+            "refunded_amount_minor": proof["refunded_amount_minor"],
+            "provider_version": row["timeline"]["payment"]["version"],
+        })
+    snapshot_id = day_reconciliation.expected_snapshot_id(root.name, sequence)
+    metadata = {
+        "snapshot_id": snapshot_id,
+        "business_date": m.plan_day(sequence)["logical_business_date"],
+        "provider_scope": day_plan["merchant_setup"][0]["body"]["merchantId"],
+        "scenario_case": "CLEAR",
+        "base_snapshot_id": None,
+        "internal_snapshot_digest": day_reconciliation.qualification.row_digest(internal),
+        "provider_snapshot_digest": day_reconciliation.qualification.row_digest(provider_rows),
+        "policy_version": day_reconciliation.POLICY_VERSION,
+    }
+    snapshot = {
+        "metadata": metadata,
+        "internal": internal,
+        "provider": provider_rows,
+        "mutation_recipe": {},
+    }
+    oracle = day_reconciliation.qualification.oracle(snapshot)
+    actual = {
+        "run_id": f"{root.name}:day-{sequence:06}:reconciliation-run",
+        "processing_state": "PROCESSED",
+        "business_state": oracle["business_state"],
+        "mismatch_count": oracle["mismatch_count"],
+        "aggregate_delta_minor": oracle["aggregate_delta_minor"],
+        "result_digest": oracle["result_digest"],
+        "details": oracle["details"],
+        "published_count": 1,
+    }
+    report = {
+        "schema_version": 1,
+        "campaign_issue": 148,
+        "classification": day_reconciliation.qualification.CLASSIFICATION,
+        "snapshot": snapshot,
+        "base_snapshot": None,
+        "oracle": oracle,
+        "actual": actual,
+        "violations": [],
+    }
+    scheduled = day_reconciliation.scheduled_hard_crash(day_plan)
+    crash = None
+    if scheduled is not None:
+        boundary, recovery_action = day_reconciliation.RECONCILIATION_CRASHES[scheduled]
+        crash = {
+            "schema": day_reconciliation.CRASH_SCHEMA,
+            "schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "snapshot_id": snapshot_id,
+            "boundary": boundary,
+            "semantic_marker_observed": True,
+            "signal": 9,
+            "killed_pid": 2201,
+            "process_gone_after_kill": True,
+            "recovery_action": recovery_action,
+            "new_process_pid": 2202,
+            "post_recovery_processing_state": "PROCESSED",
+            "final_publication_count": 1,
+        }
+    artifact = {
+        "schema": day_reconciliation.SCHEMA,
+        "schema_version": day_reconciliation.SCHEMA_VERSION,
+        "decision": day_reconciliation.DECISION,
+        "campaign_id": root.name,
+        "logical_day_sequence": sequence,
+        "source_revision": SHA40,
+        "day_plan_sha256": day_reconciliation.plan_digest(day_plan),
+        "oxide_batch_version": day_reconciliation.OXIDE_BATCH_VERSION,
+        "workload_contract": day_reconciliation.WORKLOAD_CONTRACT,
+        "workload_binary_sha256": SHA64,
+        "workload_semantics_sha256": day_reconciliation.file_sha256(
+            day_reconciliation.RECONCILIATION_VERIFIER
+        ),
+        "producer_report": report,
+        "scheduled_hard_crash": scheduled,
+        "crash_evidence": crash,
+    }
+    relative = f"days/day-{sequence:06}.reconciliation.verification.json"
+    path = root / relative
+    m.create_only(path, m.canonical_bytes(artifact))
+    subject = day_reconciliation.validate(
+        artifact,
+        plan=day_plan,
+        source_revision=SHA40,
+        workload_binary_sha256=SHA64,
+    )
+    return relative, path, artifact, subject
+
+
 def settlement_artifacts(root, sequence):
     plan = m.plan_day(sequence)
     day_plan = day_cardinality.plan_for(root.name, sequence)
@@ -258,6 +377,9 @@ def settlement_artifacts(root, sequence):
     )
     recovery_rel, recovery_path, recovery_artifact, recovery_subject = recovery_artifact_for_day(
         root, sequence, day_plan, day_card, provider_timelines,
+    )
+    reconciliation_rel, reconciliation_path, reconciliation_artifact, reconciliation_subject = (
+        reconciliation_artifact_for_day(root, sequence, day_plan, day_card)
     )
 
     statement_id = "statement-" + ("5" * 64)
@@ -330,6 +452,17 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
+        "reconciliation": {
+            "verdict": "PASS",
+            "artifact_schema": day_reconciliation.SCHEMA,
+            "artifact_schema_version": day_reconciliation.SCHEMA_VERSION,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": reconciliation_rel,
+            "artifact_sha256": m.sha256(reconciliation_path),
+            "subject": reconciliation_subject,
+        },
         "recovery": {
             "verdict": "PASS",
             "artifact_schema": day_recovery.SCHEMA,
@@ -383,7 +516,8 @@ def write_terminal(root, sequence, *, started=True):
     checks = {
         c: {"verdict": "PASS", "artifact_sha256": SHA64}
         for c in CHECKS
-        if c not in m.SETTLEMENT_CHECKS and c not in {m.CARDINALITY_CHECK, m.RECOVERY_CHECK}
+        if c not in m.SETTLEMENT_CHECKS
+        and c not in {m.CARDINALITY_CHECK, m.RECONCILIATION_CHECK, m.RECOVERY_CHECK}
     }
     checks.update(settlement_artifacts(root, sequence))
     verification = {
@@ -631,6 +765,73 @@ class CampaignEvidenceTests(unittest.TestCase):
         verification_path.write_bytes(m.canonical_bytes(verification))
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
             m.inspect(root)
+
+    def test_reconciliation_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["reconciliation"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "reconciliation: bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_reconciliation_result_tamper_blocks_even_when_descriptor_sha_is_repaired(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        artifact["producer_report"]["actual"]["result_digest"] = "f" * 64
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "reconciliation result digest mismatch"):
+            m.inspect(root)
+
+    def test_reconciliation_provider_snapshot_crossbinds_day_cardinality(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        provider_rows = artifact["producer_report"]["snapshot"]["provider"]
+        provider_rows[0]["provider_version"] += 1
+        metadata = artifact["producer_report"]["snapshot"]["metadata"]
+        metadata["provider_snapshot_digest"] = day_reconciliation.qualification.row_digest(provider_rows)
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+
+        day_plan = day_cardinality.plan_for(root.name, 1)
+        subject = day_reconciliation.validate(
+            artifact,
+            plan=day_plan,
+            source_revision=SHA40,
+            workload_binary_sha256=SHA64,
+        )
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification["checks"]["reconciliation"]["subject"] = subject
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "provider version differs"):
+            m.inspect(root)
+
+    def test_scheduled_reconciliation_crash_requires_execution_evidence(self):
+        root = self.init()
+        settlement_artifacts(root, 3)
+        reconciliation_path = root / "days/day-000003.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        artifact["crash_evidence"] = None
+        with self.assertRaisesRegex(
+            day_reconciliation.ReconciliationEvidenceError,
+            "scheduled reconciliation crash",
+        ):
+            day_reconciliation.validate(
+                artifact,
+                plan=day_cardinality.plan_for(root.name, 3),
+                source_revision=SHA40,
+                workload_binary_sha256=SHA64,
+            )
 
     def test_recovery_generic_pass_sha_no_longer_advances_frontier(self):
         root = self.init()

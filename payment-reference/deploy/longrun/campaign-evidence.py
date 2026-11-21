@@ -18,6 +18,7 @@ from typing import Any
 
 import campaign_core as core
 import campaign_day_cardinality as day_cardinality
+import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
 
 CONTRACT_PATH = core.CONTRACT_PATH
@@ -37,8 +38,9 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
-DAY_VERIFICATION_VERSION = 2
-GENERIC_CHECKS = {"reconciliation", "financial_invariants"}
+DAY_VERIFICATION_VERSION = 3
+GENERIC_CHECKS = {"financial_invariants"}
+RECONCILIATION_CHECK = "reconciliation"
 RECOVERY_CHECK = "recovery"
 SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
 CARDINALITY_CHECK = "side_effect_cardinality"
@@ -233,11 +235,11 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
             seq = int(path.name[:6])
             require(seq > 0, "day zero verification file invalid")
             verifications[seq] = path
-        elif re.fullmatch(r"day-[0-9]{6}\.recovery\.verification\.json", path.name):
+        elif re.fullmatch(r"day-[0-9]{6}\.(?:recovery|reconciliation)\.verification\.json", path.name):
             seq = int(path.name[4:10])
-            require(seq > 0, "day zero recovery verification file invalid")
-            # Auxiliary recovery proof is validated only through the exact
-            # bound descriptor in the day-independent verification artifact.
+            require(seq > 0, "day zero auxiliary verification file invalid")
+            # Auxiliary proofs are validated only through their exact bound
+            # descriptors in the day-independent verification artifact.
             continue
         else:
             raise EvidenceError(f"unexpected day evidence path: {path}")
@@ -541,7 +543,7 @@ def validate_verification(
         "independent verification identity/verdict mismatch",
     )
     checks = record["checks"]
-    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK, RECOVERY_CHECK}
+    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK, RECONCILIATION_CHECK, RECOVERY_CHECK}
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
 
     for check in GENERIC_CHECKS:
@@ -622,6 +624,82 @@ def validate_verification(
     )
     require(check["subject"] == subject,
             "side_effect_cardinality: descriptor subject mismatches independently re-derived proof")
+
+    reconciliation = checks[RECONCILIATION_CHECK]
+    reconciliation_name = f"day-{sequence:06}.reconciliation.verification.json"
+    require(type(reconciliation) is dict and set(reconciliation) == expected_fields,
+            "reconciliation: bound descriptor fields mismatch")
+    require(
+        reconciliation["verdict"] == "PASS"
+        and reconciliation["artifact_schema"] == day_reconciliation.SCHEMA
+        and type(reconciliation["artifact_schema_version"]) is int
+        and reconciliation["artifact_schema_version"] == day_reconciliation.SCHEMA_VERSION
+        and reconciliation["campaign_id"] == identity["campaign_id"]
+        and type(reconciliation["logical_day_sequence"]) is int
+        and reconciliation["logical_day_sequence"] == sequence
+        and reconciliation["source_revision"] == identity["source_revision"],
+        "reconciliation: descriptor identity/schema/verdict mismatch",
+    )
+    require(
+        isinstance(reconciliation["artifact_sha256"], str)
+        and HEX64.fullmatch(reconciliation["artifact_sha256"]) is not None,
+        "reconciliation: artifact SHA invalid",
+    )
+    reconciliation_path = _safe_relative_artifact(
+        campaign_path,
+        reconciliation["relative_path"],
+        reconciliation_name,
+        RECONCILIATION_CHECK,
+    )
+    require(sha256(reconciliation_path) == reconciliation["artifact_sha256"],
+            "reconciliation: retained file SHA mismatch")
+    reconciliation_artifact = load_json(reconciliation_path)
+    reconciliation_subject = day_reconciliation.validate(
+        reconciliation_artifact,
+        plan=day_cardinality.plan_for(identity["campaign_id"], sequence),
+        source_revision=identity["source_revision"],
+        workload_binary_sha256=identity["batch_binaries"]["payment-reconciliation-postgres"]["sha256"],
+    )
+    require(reconciliation["subject"] == reconciliation_subject,
+            "reconciliation: descriptor subject mismatches independently re-derived proof")
+
+    cardinality_by_provider = {
+        row["provider_payment_id"]: row
+        for row in artifact["observations"]
+    }
+    expected_reconciliation_provider_ids = {
+        row["provider_payment_id"]
+        for row in artifact["observations"]
+        if row["verification"]["payment_status"] in {"authorized", "captured", "refunded"}
+    }
+    reconciliation_provider_rows = reconciliation_artifact["producer_report"]["snapshot"]["provider"]
+    observed_reconciliation_provider_ids = {
+        row["provider_payment_id"] for row in reconciliation_provider_rows
+    }
+    require(
+        observed_reconciliation_provider_ids == expected_reconciliation_provider_ids,
+        "reconciliation: provider snapshot membership differs from stable EOD day-cardinality membership",
+    )
+    status_map = {"AUTHORIZED": "authorized", "CAPTURED": "captured", "REFUNDED": "refunded"}
+    for provider_row in reconciliation_provider_rows:
+        provider_id = provider_row["provider_payment_id"]
+        require(provider_id in cardinality_by_provider,
+                "reconciliation: provider snapshot identity missing from day-cardinality proof")
+        day_row = cardinality_by_provider[provider_id]
+        day_proof = day_row["verification"]
+        require(
+            status_map.get(provider_row["normalized_status"]) == day_proof["payment_status"],
+            "reconciliation: provider status differs from day-cardinality proof",
+        )
+        for field in ("authorized_amount_minor", "captured_amount_minor", "refunded_amount_minor"):
+            require(
+                provider_row[field] == day_proof[field],
+                f"reconciliation: provider {field} differs from day-cardinality proof",
+            )
+        require(
+            provider_row["provider_version"] == day_row["timeline"]["payment"]["version"],
+            "reconciliation: provider version differs from day-cardinality proof",
+        )
 
     recovery = checks[RECOVERY_CHECK]
     recovery_name = f"day-{sequence:06}.recovery.verification.json"

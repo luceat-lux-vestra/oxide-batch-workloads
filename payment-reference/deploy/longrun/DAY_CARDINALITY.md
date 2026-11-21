@@ -102,8 +102,9 @@ authentic without an external trust/attestation channel.
 
 Likewise, provider mutations are not **request attempts**. Gateway, Kill Bill,
 fault proxy, and controller execution histories have separate authorities.
-The remaining recovery/reconciliation/financial-invariant check contracts
-require their own independent work before a real terminal day can be accepted.
+Recovery and reconciliation now have their own bound independent proof contracts.
+The remaining financial-invariant check contract still requires independent work
+before a real terminal day can be accepted.
 
 ## Local tests
 

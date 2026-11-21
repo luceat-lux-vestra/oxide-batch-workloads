@@ -1,4 +1,4 @@
-# Day-independent verification contract v2 (#318)
+# Day-independent verification contract v3 (#318)
 
 A terminal campaign day is not allowed to advance the evidence frontier from
 generic `PASS + SHA` assertions for settlement or provider side-effect cardinality.
@@ -6,13 +6,13 @@ generic `PASS + SHA` assertions for settlement or provider side-effect cardinali
 ## Version boundary
 
 `oxide-batch-workloads.payment-reference-day-independent-verification` is now
-`schema_version: 2`.
+`schema_version: 3`.
 
-Version 1 is intentionally rejected by the current scanner. This is a
-backward-incompatible safety boundary: historical or hand-written v1 files
-cannot silently gain the stronger meaning of v2.
+Versions 1 and 2 are intentionally rejected by the current scanner. This is a
+backward-incompatible safety boundary: historical or hand-written files cannot
+silently gain the stronger reconciliation meaning of v3.
 
-The top-level v2 record binds:
+The top-level v3 record binds:
 
 - `campaign_id`;
 - `logical_day_sequence`;
@@ -111,15 +111,21 @@ See [DAY_CARDINALITY.md](DAY_CARDINALITY.md).
 
 See [DAY_RECOVERY.md](DAY_RECOVERY.md).
 
+## Reconciliation subject
+
+`reconciliation` now binds `days/day-NNNNNN.reconciliation.verification.json` instead of accepting a generic PASS + SHA assertion. The retained proof replays the exact v0.7.0 reconciliation oracle over the frozen Merchant/provider snapshot, requires a terminal CLEAR publication, binds the exact reconciliation binary/verifier identities, and carries scheduled crash execution evidence for the qualified reconciliation crash boundaries. The frontier then cross-checks the retained provider snapshot against the separately produced end-of-day provider-cardinality proof.
+
+See [DAY_RECONCILIATION.md](DAY_RECONCILIATION.md).
+
 ## Remaining checks
 
-Only `reconciliation` and `financial_invariants` temporarily retain the legacy `{verdict, artifact_sha256}` shape. Their dedicated proof contracts remain separate work units.
+Only `financial_invariants` temporarily retains the legacy `{verdict, artifact_sha256}` shape. Its dedicated proof contract remains a separate work unit.
 
 ## Authority boundary
 
-The campaign controller may sequence phases, but v2 frontier scanning derives
-settlement, provider-cardinality and recovery PASS from retained independent verifier
-artifacts. It does not accept
+The campaign controller may sequence phases, but v3 frontier scanning derives
+settlement, provider-cardinality, recovery and reconciliation PASS from retained
+independent verifier artifacts. It does not accept
 a controller-authored settlement PASS assertion by itself.
 
 This contract still does not create a terminal day record, execute campaign
