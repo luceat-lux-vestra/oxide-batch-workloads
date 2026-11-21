@@ -102,9 +102,9 @@ authentic without an external trust/attestation channel.
 
 Likewise, provider mutations are not **request attempts**. Gateway, Kill Bill,
 fault proxy, and controller execution histories have separate authorities.
-Recovery and reconciliation now have their own bound independent proof contracts.
-The remaining financial-invariant check contract still requires independent work
-before a real terminal day can be accepted.
+Recovery, reconciliation and financial invariants now have their own bound
+independent proof contracts. The day frontier cross-binds this provider authority
+to all three rather than allowing any producer to self-attest the same EOD truth.
 
 ## Local tests
 
