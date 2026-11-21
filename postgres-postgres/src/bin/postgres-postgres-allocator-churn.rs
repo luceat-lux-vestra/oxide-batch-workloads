@@ -171,9 +171,8 @@ async fn main() -> Result<()> {
 
     let probe = LinuxResourceProbe;
     let process_id = std::process::id();
-    let mut cycle_reports = Vec::with_capacity(
-        usize::try_from(cli.cycles).context("cycle count does not fit usize")?,
-    );
+    let mut cycle_reports =
+        Vec::with_capacity(usize::try_from(cli.cycles).context("cycle count does not fit usize")?);
 
     for sequence in 1..=cli.cycles {
         let plan = plan_iteration(&cli.campaign_id, sequence)?;
@@ -212,17 +211,12 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("same-process churn sequence {sequence} workload failed"))?;
         let post_run = sample_process(&probe, "post-run")?;
-        let native_post_run = capture_native(
-            cli.native_telemetry_root.as_deref(),
-            sequence,
-            "post-run",
-        )?;
+        let native_post_run =
+            capture_native(cli.native_telemetry_root.as_deref(), sequence, "post-run")?;
 
         let projection_rows = projection_row_count(&control_pool, &plan.import_name).await?;
         if projection_rows != source_rows {
-            bail!(
-                "sequence {sequence} projected {projection_rows} rows, expected {source_rows}"
-            );
+            bail!("sequence {sequence} projected {projection_rows} rows, expected {source_rows}");
         }
         let cleanup_deleted_rows = cleanup_projection(&control_pool, &plan.import_name).await?;
         if cleanup_deleted_rows != source_rows {
@@ -239,11 +233,8 @@ async fn main() -> Result<()> {
 
         sleep(Duration::from_millis(cli.idle_ms)).await;
         let post_idle = sample_process(&probe, "post-idle")?;
-        let native_post_idle = capture_native(
-            cli.native_telemetry_root.as_deref(),
-            sequence,
-            "post-idle",
-        )?;
+        let native_post_idle =
+            capture_native(cli.native_telemetry_root.as_deref(), sequence, "post-idle")?;
 
         cycle_reports.push(CycleReport {
             sequence,
