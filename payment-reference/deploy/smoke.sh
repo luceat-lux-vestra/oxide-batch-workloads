@@ -268,6 +268,7 @@ python3 longrun/test-campaign-settlement-roster.py
 python3 longrun/test-campaign-settlement-verification.py
 
 python3 longrun/test-campaign-online-pilot.py
+python3 longrun/test-campaign-day-online-traffic.py
 
 python3 longrun/test-oci-deployment.py
 
