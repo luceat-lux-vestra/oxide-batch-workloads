@@ -436,12 +436,12 @@ def load_producer_report(
         and re.fullmatch(r"[A-Za-z0-9_.-]+", snapshot_id) is not None,
         "reconciliation snapshot id is not workload-safe",
     )
+    child_env = dict(os.environ)
+    child_env["DATABASE_URL"] = database_url
     result = runner(
         [
             str(workload_binary),
             "verify",
-            "--database-url",
-            database_url,
             "--snapshot-id",
             snapshot_id,
         ],
@@ -449,6 +449,7 @@ def load_producer_report(
         text=True,
         timeout=30,
         check=False,
+        env=child_env,
     )
     require(result.returncode == 0, "reconciliation workload verify command failed")
     require(len(result.stdout.encode("utf-8")) <= 8_000_000, "reconciliation producer report is oversized")
