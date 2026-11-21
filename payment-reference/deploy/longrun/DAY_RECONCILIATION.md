@@ -136,9 +136,10 @@ python3 payment-reference/deploy/longrun/campaign_day_reconciliation.py \
 
 The producer verifies the binary SHA-256 against `campaign.json`, invokes only:
 
-`payment-reconciliation-postgres verify --database-url ... --snapshot-id ...`
+`DATABASE_URL=... payment-reconciliation-postgres verify --snapshot-id ...`
 
 and then runs this module's independent validator before create-only retention.
+The database URL is passed through the child environment rather than process argv.
 An identical existing output is an idempotent replay; differing existing bytes
 are a hard conflict. Database URLs and command stderr are not serialized into
 the retained proof.
