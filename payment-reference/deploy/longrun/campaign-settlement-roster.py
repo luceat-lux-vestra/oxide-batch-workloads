@@ -142,19 +142,8 @@ def expected_provider_status(item: dict[str, Any]) -> str:
     require(kind == "fault_overlay", f"unknown traffic kind: {kind}")
     fault_class = item.get("fault_class")
     require(isinstance(fault_class, str), "fault overlay missing fault class")
-    contract = fault_catalog.fault(fault_class)
-    expected = contract["expected_provider_truth"]
-    if expected == "PENDING":
-        steps = contract["steps"]
-        require(
-            fault_class == "plan-503-before-side-effect"
-            and len(steps) == 1
-            and steps[0]["point"] == "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT"
-            and steps[0]["action"] == {"kind": "HTTP_FAILURE", "status": 503},
-            "PENDING fault is not proven pre-side-effect absence",
-        )
-        return "ABSENT"
-    require(expected in {"AUTHORIZED", "FAILED"}, f"unsupported fault provider truth: {expected}")
+    expected = fault_catalog.end_of_day_provider_truth(fault_class)
+    require(expected in {"AUTHORIZED", "FAILED"}, f"unsupported end-of-day fault provider truth: {expected}")
     return expected.lower()
 
 

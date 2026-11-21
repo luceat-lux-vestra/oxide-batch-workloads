@@ -26,15 +26,17 @@ The expected effective mutation counts in the current frozen geometry are:
 | authorize + two captures | 25 | 3 |
 | authorize + cancel | 10 | 2 |
 | auth-capture + two refunds | 15 | 4 |
-| fault overlay | 10 | 0 (before-effect 503) or 1 (other qualified classes) |
+| fault overlay | 10 | 1 after the recovery phase |
 
-Current day total: **243 provider effective mutations**, with exactly two
-provider-absent HTTP-404 proofs. The total is recomputed from all 100
-individual slot contracts, never substituted as a standalone aggregate check.
+Current day total: **245 provider effective mutations**. All 100 provider
+identities must be present at the end-of-day verification boundary.
 
-The fault class is read from the frozen fault catalog; the provider status
-for each overlay must match that catalog. A 404 is valid only for the
-catalog's pre-side-effect case. Non-200/non-404 statuses fail closed.
+The fault class is read from the frozen fault catalog. The catalog deliberately
+separates online-phase `expected_provider_truth` from
+`end_of_day_provider_truth`. In particular, the pre-side-effect 503 remains
+`PENDING`/provider-absent during the online fault phase but must converge
+through same-identity recovery to EOD `AUTHORIZED`. A provider HTTP 404 is
+therefore not valid at this post-recovery cardinality boundary.
 
 ## Immutable output
 
@@ -52,7 +54,7 @@ The retained artifact includes:
 - pinned provider authority and payment-sandbox source revision;
 - exactly 100 ordered slot observations;
 - per-slot Merchant and Provider IDs, kind, fault class, HTTP status, raw
-  authoritative timeline (null for true 404), and the independently validated
+  authoritative timeline, and the independently validated
   per-payment provider cardinality result;
 - total effective mutation count, recomputed across all slots.
 
@@ -86,7 +88,7 @@ retained-file SHA-256, and independently recomputed subject:
 
 The frontier scanner replays all 100 retained raw provider timelines through
 the already qualified per-payment verifier, verifies roster slot mappings,
-expected transitions, absent-provider proofs, source/plan hashes, and the
+post-recovery expected transitions, source/plan hashes, and the
 roster-verification cross-link before accepting a cardinality check.
 
 A controller-authored `PASS + SHA` placeholder is insufficient.

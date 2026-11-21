@@ -11,9 +11,9 @@ import re
 import sys
 from typing import Any
 
-CATALOG_PATH = Path(__file__).with_name("fault-catalog-v1.json")
+CATALOG_PATH = Path(__file__).with_name("fault-catalog-v2.json")
 SCHEMA = "oxide-batch-workloads.payment-reference-campaign-fault-catalog"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PLACEHOLDER = "{provider_payment_id}"
 PAYMENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -44,8 +44,8 @@ def _load(path: Path = CATALOG_PATH) -> dict[str, Any]:
         require(
             set(fault) == {
                 "fault_class", "scenario_case", "scenario_version", "seed",
-                "expected_provider_truth", "expected_canonical_outcome",
-                "caller_outcome", "reconciliation", "steps",
+                "expected_provider_truth", "end_of_day_provider_truth",
+                "expected_canonical_outcome", "caller_outcome", "reconciliation", "steps",
             },
             f"fault[{index}] fields mismatch",
         )
@@ -53,10 +53,22 @@ def _load(path: Path = CATALOG_PATH) -> dict[str, Any]:
         require(isinstance(fault_class, str) and fault_class.strip(), f"fault[{index}] class must be non-blank")
         require(fault_class not in seen, f"duplicate fault class: {fault_class}")
         seen.add(fault_class)
-        for field in ("scenario_case", "expected_provider_truth", "expected_canonical_outcome", "caller_outcome"):
+        for field in ("scenario_case", "expected_provider_truth", "end_of_day_provider_truth", "expected_canonical_outcome", "caller_outcome"):
             require(isinstance(fault[field], str) and fault[field].strip(), f"{fault_class}: {field} must be non-blank")
         require(type(fault["scenario_version"]) is int and fault["scenario_version"] > 0, f"{fault_class}: bad scenario_version")
         require(type(fault["seed"]) is int and fault["seed"] >= 0, f"{fault_class}: bad seed")
+        online_truth = fault["expected_provider_truth"]
+        end_of_day_truth = fault["end_of_day_provider_truth"]
+        require(online_truth in {"PENDING", "AUTHORIZED", "FAILED"}, f"{fault_class}: unsupported online provider truth")
+        require(end_of_day_truth in {"AUTHORIZED", "FAILED"}, f"{fault_class}: unsupported end-of-day provider truth")
+        if online_truth == "PENDING":
+            require(
+                fault_class == "plan-503-before-side-effect"
+                and end_of_day_truth == "AUTHORIZED",
+                f"{fault_class}: only pre-side-effect 503 may converge from online PENDING to EOD AUTHORIZED",
+            )
+        else:
+            require(end_of_day_truth == online_truth, f"{fault_class}: EOD truth drift without recovery transition")
         reconciliation = fault["reconciliation"]
         require(isinstance(reconciliation, dict), f"{fault_class}: reconciliation must be an object")
         require(
@@ -94,6 +106,12 @@ def fault(fault_class: str) -> dict[str, Any]:
         if value["fault_class"] == fault_class:
             return copy.deepcopy(value)
     raise FaultCatalogError(f"unknown fault class: {fault_class}")
+
+
+def end_of_day_provider_truth(fault_class: str) -> str:
+    value = fault(fault_class)["end_of_day_provider_truth"]
+    require(value in {"AUTHORIZED", "FAILED"}, f"{fault_class}: unsupported end-of-day provider truth")
+    return value
 
 
 def _render(value: Any, payment_id: str | None) -> Any:

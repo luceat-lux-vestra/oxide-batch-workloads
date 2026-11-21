@@ -482,5 +482,11 @@ roster verification. The scanner replays all 100 raw ledgers and requires
 the day proof to cross-bind to the retained settlement roster.
 
 See [DAY_CARDINALITY.md](DAY_CARDINALITY.md).
-Only recovery, reconciliation, and financial-invariant checks remain on
-legacy descriptors pending their separate independent proof contracts.
+
+The frozen fault catalog distinguishes online fault truth from post-recovery
+end-of-day provider truth. The pre-side-effect 503 case is online
+`PENDING`/absent, then converges under same-identity recovery to EOD
+`AUTHORIZED`; cardinality and settlement verification use the EOD contract.
+Recovery now also uses a bound retained artifact. `campaign_day_recovery.py` replays the exact #271 secret-safe recovery semantics over the actual day candidate/result state and independently re-reads authenticated payment-sandbox timelines for terminal candidates. The frontier cross-checks those recovery provider proofs against the separately produced day-wide cardinality proof. See [DAY_RECOVERY.md](DAY_RECOVERY.md).
+
+Only reconciliation and financial-invariant checks remain on legacy descriptors pending their separate independent proof contracts.

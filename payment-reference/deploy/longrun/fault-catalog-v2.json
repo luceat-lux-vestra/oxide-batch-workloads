@@ -1,6 +1,6 @@
 {
   "schema": "oxide-batch-workloads.payment-reference-campaign-fault-catalog",
-  "schema_version": 1,
+  "schema_version": 2,
   "fault_plan_version": 1,
   "faults": [
     {
@@ -35,7 +35,8 @@
             "status": 503
           }
         }
-      ]
+      ],
+      "end_of_day_provider_truth": "AUTHORIZED"
     },
     {
       "fault_class": "post-commit-response-loss",
@@ -69,7 +70,8 @@
             "kind": "COMMIT_THEN_DROP_RESPONSE"
           }
         }
-      ]
+      ],
+      "end_of_day_provider_truth": "AUTHORIZED"
     },
     {
       "fault_class": "async-success-stale-convergence",
@@ -143,7 +145,8 @@
             "visibility": "IMMEDIATE"
           }
         }
-      ]
+      ],
+      "end_of_day_provider_truth": "AUTHORIZED"
     },
     {
       "fault_class": "async-failure",
@@ -189,7 +192,8 @@
             "outcome": "FAILED"
           }
         }
-      ]
+      ],
+      "end_of_day_provider_truth": "FAILED"
     },
     {
       "fault_class": "webhook-ordering-duplicate-drop-retry",
@@ -270,7 +274,8 @@
             "attempt": 3
           }
         }
-      ]
+      ],
+      "end_of_day_provider_truth": "AUTHORIZED"
     }
   ]
 }

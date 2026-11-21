@@ -18,6 +18,7 @@ from typing import Any
 
 import campaign_core as core
 import campaign_day_cardinality as day_cardinality
+import campaign_day_recovery as day_recovery
 
 CONTRACT_PATH = core.CONTRACT_PATH
 SCHEMA = "oxide-batch-workloads.payment-reference-campaign"
@@ -37,7 +38,8 @@ HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
 DAY_VERIFICATION_VERSION = 2
-GENERIC_CHECKS = {"recovery", "reconciliation", "financial_invariants"}
+GENERIC_CHECKS = {"reconciliation", "financial_invariants"}
+RECOVERY_CHECK = "recovery"
 SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
 CARDINALITY_CHECK = "side_effect_cardinality"
 SETTLEMENT_ROSTER_SCHEMA = "oxide-batch-workloads.payment-reference-settlement-roster-verification"
@@ -231,6 +233,12 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
             seq = int(path.name[:6])
             require(seq > 0, "day zero verification file invalid")
             verifications[seq] = path
+        elif re.fullmatch(r"day-[0-9]{6}\.recovery\.verification\.json", path.name):
+            seq = int(path.name[4:10])
+            require(seq > 0, "day zero recovery verification file invalid")
+            # Auxiliary recovery proof is validated only through the exact
+            # bound descriptor in the day-independent verification artifact.
+            continue
         else:
             raise EvidenceError(f"unexpected day evidence path: {path}")
     return days, verifications
@@ -533,7 +541,7 @@ def validate_verification(
         "independent verification identity/verdict mismatch",
     )
     checks = record["checks"]
-    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK}
+    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK, RECOVERY_CHECK}
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
 
     for check in GENERIC_CHECKS:
@@ -614,6 +622,67 @@ def validate_verification(
     )
     require(check["subject"] == subject,
             "side_effect_cardinality: descriptor subject mismatches independently re-derived proof")
+
+    recovery = checks[RECOVERY_CHECK]
+    recovery_name = f"day-{sequence:06}.recovery.verification.json"
+    require(type(recovery) is dict and set(recovery) == expected_fields,
+            "recovery: bound descriptor fields mismatch")
+    require(
+        recovery["verdict"] == "PASS"
+        and recovery["artifact_schema"] == day_recovery.SCHEMA
+        and type(recovery["artifact_schema_version"]) is int
+        and recovery["artifact_schema_version"] == day_recovery.SCHEMA_VERSION
+        and recovery["campaign_id"] == identity["campaign_id"]
+        and type(recovery["logical_day_sequence"]) is int
+        and recovery["logical_day_sequence"] == sequence
+        and recovery["source_revision"] == identity["source_revision"],
+        "recovery: descriptor identity/schema/verdict mismatch",
+    )
+    require(
+        isinstance(recovery["artifact_sha256"], str)
+        and HEX64.fullmatch(recovery["artifact_sha256"]) is not None,
+        "recovery: artifact SHA invalid",
+    )
+    recovery_path = _safe_relative_artifact(
+        campaign_path,
+        recovery["relative_path"],
+        recovery_name,
+        RECOVERY_CHECK,
+    )
+    require(sha256(recovery_path) == recovery["artifact_sha256"],
+            "recovery: retained file SHA mismatch")
+    recovery_artifact = load_json(recovery_path)
+    recovery_subject = day_recovery.validate(
+        recovery_artifact,
+        plan=day_cardinality.plan_for(identity["campaign_id"], sequence),
+        source_revision=identity["source_revision"],
+        workload_binary_sha256=identity["batch_binaries"]["payment-recovery-postgres"]["sha256"],
+    )
+    require(recovery["subject"] == recovery_subject,
+            "recovery: descriptor subject mismatches independently re-derived proof")
+
+    cardinality_by_payment = {
+        row["merchant_payment_id"]: row
+        for row in artifact["observations"]
+    }
+    for entry in recovery_artifact["candidates"]:
+        candidate = entry["candidate"]
+        provider_proof = entry["provider_verification"]
+        payment_id = candidate["merchant_payment_id"]
+        require(payment_id in cardinality_by_payment,
+                "recovery: candidate missing from day provider-cardinality proof")
+        day_provider = cardinality_by_payment[payment_id]
+        day_proof = day_provider["verification"]
+        require(
+            day_provider["provider_payment_id"] == provider_proof["provider_payment_id"]
+            and day_proof["provider_payment_id"] == provider_proof["provider_payment_id"],
+            "recovery: provider identity differs from day provider-cardinality proof",
+        )
+        for field in ("payment_status", "effective_mutation_count", "timeline_sha256"):
+            require(
+                day_proof[field] == provider_proof[field],
+                f"recovery: provider {field} differs from day provider-cardinality proof",
+            )
     return sha256(path)
 
 
