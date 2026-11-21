@@ -180,7 +180,7 @@ def recovery_artifact_for_day(root, sequence, day_plan, day_card, provider_timel
         "results": [result],
     }
     crash = None
-    if day_plan["scheduled_hard_crash"] == "recovery-after-external-convergence-before-local-commit":
+    if day_recovery.scheduled_hard_crash(day_plan) == "recovery-after-external-convergence-before-local-commit":
         crash = {
             "schema": day_recovery.CRASH_SCHEMA,
             "schema_version": 1,
