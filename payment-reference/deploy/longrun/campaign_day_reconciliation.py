@@ -30,7 +30,7 @@ RECONCILIATION_VERIFIER = (
 )
 
 SCHEMA = "oxide-batch-workloads.payment-reference-day-reconciliation-verification"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DECISION = "RECONCILIATION_VERIFIED_NOT_DAY_ACCEPTED"
 CRASH_SCHEMA = "oxide-batch-workloads.payment-reference-reconciliation-crash-execution"
 WORKLOAD_CONTRACT = "payment-reconciliation-v1"
