@@ -501,6 +501,16 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "orphan"):
             m.inspect(root)
 
+    def test_day_namespace_accepts_only_exact_recovery_verification_filename(self):
+        root = self.init()
+        write_terminal(root, 1)
+        self.assertEqual(m.inspect(root)["frontier_sequence"], 1)
+
+        unexpected = root / "days" / "day-000001.recovery.extra.json"
+        unexpected.write_text("{}\n")
+        with self.assertRaisesRegex(m.EvidenceError, "unexpected day evidence path"):
+            m.inspect(root)
+
     def test_plan_corruption_is_detected_even_if_terminal_hash_recomputed(self):
         root = self.init()
         write_terminal(root, 1)
