@@ -194,4 +194,5 @@ This verifier does not execute the recovery workload, create/freeze candidates,
 retry payment mutations, inject a crash, or advance the campaign frontier.
 
 A completed recovery proof is only one of the day-independent verification
-inputs. Reconciliation and financial-invariant proof contracts remain separate.
+inputs. Reconciliation and financial-invariant proofs are separately retained
+and cross-bound by the day frontier.
