@@ -63,7 +63,7 @@ The resulting durable layout is:
   days/                       # 000001.json and 000001.verification.json
   statements/                 # reserved for immutable provider statements
   failures/                   # retained diagnostics; presence blocks resume
-  samples.jsonl               # reserved for resource samples
+  samples.jsonl               # append-only per-day quiescence resource samples
 ```
 
 `status --campaign-dir ...` is **read-only** and returns `READY` only when
@@ -84,8 +84,15 @@ can advance the frontier. Synthetic test fixtures are never campaign evidence.
 The reconciliation proof now has a read-only producer/retainer CLI over an
 already-completed `payment-reconciliation-postgres` state. Day financial
 invariants likewise have a 100-slot read-only collector/retainer over completed
-EOD state. Full online traffic, fault/crash orchestration, quiescence sampling,
-and terminal-day orchestration remain separate implementation slices.
+EOD state. Per-day quiescence now has a read-only resource sampler that binds
+host/container/process/PostgreSQL/filesystem observations to the deterministic
+day window and appends them to `samples.jsonl`. Full online traffic,
+fault/crash orchestration, and terminal-day orchestration remain separate
+implementation slices.
+
+See [QUIESCENCE.md](QUIESCENCE.md) for the sampler contract. The sampler does
+not itself establish the no-work phase boundary; the future terminal-day
+controller must invoke it only after day-close mutation has stopped.
 
 No CLI for writing completed days is exposed in this slice, so operators
 cannot use it to manufacture a completed campaign. There is no `summary.json`

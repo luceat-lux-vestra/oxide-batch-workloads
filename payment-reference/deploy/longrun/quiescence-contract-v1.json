@@ -1,0 +1,11 @@
+{
+  "schema": "oxide-batch-workloads.payment-reference-quiescence-contract",
+  "schema_version": 1,
+  "campaign_contract": "payment-reference-longrun-v1",
+  "sample_schema": "oxide-batch-workloads.payment-reference-resource-sample",
+  "sample_schema_version": 1,
+  "target_sample_interval_seconds": 4,
+  "maximum_sample_gap_seconds": 5,
+  "minimum_postgres_targets": 3,
+  "oxide_batch_schema": "oxide_batch"
+}
