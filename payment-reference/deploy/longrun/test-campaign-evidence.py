@@ -317,6 +317,7 @@ def reconciliation_artifact_for_day(root, sequence, day_plan, day_card):
         "source_revision": SHA40,
         "day_plan_sha256": day_reconciliation.plan_digest(day_plan),
         "oxide_batch_version": day_reconciliation.OXIDE_BATCH_VERSION,
+        "workload_contract": day_reconciliation.WORKLOAD_CONTRACT,
         "workload_binary_sha256": SHA64,
         "workload_semantics_sha256": day_reconciliation.file_sha256(
             day_reconciliation.RECONCILIATION_VERIFIER
