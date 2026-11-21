@@ -157,6 +157,14 @@ def scan_secrets(value: Any, path: str = "$") -> list[str]:
     return violations
 
 
+def scheduled_hard_crash(plan: dict[str, Any]) -> str | None:
+    sequence = plan.get("logical_day_sequence")
+    require(type(sequence) is int and sequence > 0, "recovery plan logical day sequence invalid")
+    day = core.plan_day(sequence)
+    require(day.get("logical_day_sequence") == sequence, "recovery core day identity mismatch")
+    return day.get("scheduled_hard_crash")
+
+
 def _plan_slots(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
     slots = plan.get("slots")
     require(type(slots) is list and len(slots) == 100, "recovery proof requires a complete 100-slot day plan")
@@ -316,7 +324,7 @@ def _validate_crash(
     entries: list[dict[str, Any]],
     run_generation: int,
 ) -> dict[str, Any] | None:
-    scheduled = plan["scheduled_hard_crash"]
+    scheduled = scheduled_hard_crash(plan)
     recovery_crash = scheduled == "recovery-after-external-convergence-before-local-commit"
     if not recovery_crash:
         require(crash is None, "recovery crash evidence supplied on a day without a scheduled recovery crash")
@@ -469,7 +477,8 @@ def validate(
     require(artifact["resolved_succeeded_count"] == succeeded, "resolved-success count mismatch")
     require(artifact["resolved_failed_count"] == failed, "resolved-failed count mismatch")
     require(succeeded + failed == len(entries), "recovery contains unresolved candidates")
-    require(artifact["scheduled_hard_crash"] == plan["scheduled_hard_crash"], "recovery scheduled-crash identity mismatch")
+    expected_crash = scheduled_hard_crash(plan)
+    require(artifact["scheduled_hard_crash"] == expected_crash, "recovery scheduled-crash identity mismatch")
     crash_subject = _validate_crash(
         artifact["crash_evidence"],
         plan=plan,
@@ -489,7 +498,7 @@ def validate(
         "provider_authority": provider.AUTHORITY,
         "provider_source_revision": provider.PAYMENT_SANDBOX_SOURCE_REVISION,
         "provider_proofs_sha256": json_sha256([entry["provider_verification"] for entry in entries]),
-        "scheduled_hard_crash": plan["scheduled_hard_crash"],
+        "scheduled_hard_crash": expected_crash,
         "crash_subject": crash_subject,
     }
 
@@ -564,7 +573,7 @@ def collect(
         "resolved_succeeded_count": sum(e["result"]["classification"] == "RESOLVED_SUCCEEDED" for e in entries),
         "resolved_failed_count": sum(e["result"]["classification"] == "RESOLVED_FAILED" for e in entries),
         "candidates": entries,
-        "scheduled_hard_crash": plan["scheduled_hard_crash"],
+        "scheduled_hard_crash": scheduled_hard_crash(plan),
         "crash_evidence": crash_evidence,
     }
     validate(
