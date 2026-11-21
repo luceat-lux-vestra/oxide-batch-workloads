@@ -230,6 +230,7 @@ class ReconciliationProducerTests(unittest.TestCase):
             source_revision=SHA40,
             workload_binary_sha256="b" * 64,
         )
+        self.assertEqual(artifact["schema_version"], 2)
         self.assertEqual(subject["snapshot_id"], "test318-day-000001-reconciliation")
         self.assertEqual(subject["business_state"], "CLEAR")
         self.assertEqual(subject["published_count"], 1)
