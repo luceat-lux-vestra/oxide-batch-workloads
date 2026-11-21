@@ -1,4 +1,4 @@
-# Day reconciliation verification contract v1 (#318)
+# Day reconciliation verification contract v2 (#318)
 
 This contract replaces the legacy terminal-day `reconciliation: PASS + SHA`
 placeholder with a retained, independently replayable proof over the exact
@@ -12,7 +12,7 @@ The day proof is retained at:
 
 with schema:
 
-`oxide-batch-workloads.payment-reference-day-reconciliation-verification/v1`
+`oxide-batch-workloads.payment-reference-day-reconciliation-verification/v2`
 
 and decision:
 
@@ -30,13 +30,21 @@ The artifact binds:
 - the logical-day reconciliation crash schedule and, when scheduled, retained
   crash execution evidence.
 
+## Version boundary
+
+Reconciliation proof schema version 1 is intentionally superseded before live
+campaign execution. Its snapshot identifier used ':' separators, while the
+published `payment-reconciliation-postgres` workload rejects ':' in snapshot IDs.
+Version 2 freezes the workload-compatible identifier below; v1 retained files are
+therefore rejected by the current day-verification scanner.
+
 ## Snapshot identity
 
 The proof accepts only the root live CLEAR snapshot for the logical day.
 
 Required metadata:
 
-- snapshot ID `<campaign-id>:day-NNNNNN:reconciliation`;
+- snapshot ID `<campaign-id>-day-NNNNNN-reconciliation` (the workload's ASCII-safe snapshot identifier contract forbids `:`);
 - contract `payment-reconciliation-v1` through the workload-owned snapshot;
 - logical business date equal to the campaign day;
 - provider scope equal to the deterministic Reference Merchant identity;
@@ -119,11 +127,37 @@ A scheduled crash requires:
 
 Crash evidence is forbidden on other logical days.
 
+## Read-only producer CLI
+
+After the reconciliation workload has already reached its final state, retain the
+day proof with the exact campaign-pinned binary:
+
+```bash
+export PAYMENT_RECONCILIATION_DATABASE_URL='<existing workload database URL>'
+
+python3 payment-reference/deploy/longrun/campaign_day_reconciliation.py \
+  --campaign-dir '<campaign evidence directory>' \
+  --day N \
+  --workload-binary '<exact payment-reconciliation-postgres binary>' \
+  [--crash-evidence '<qualified scheduled-crash evidence JSON>']
+```
+
+The producer verifies the binary SHA-256 against `campaign.json`, invokes only:
+
+`DATABASE_URL=... payment-reconciliation-postgres verify --snapshot-id ...`
+
+and then runs this module's independent validator before create-only retention.
+The database URL is passed through the child environment rather than process argv.
+An identical existing output is an idempotent replay; differing existing bytes
+are a hard conflict. Database URLs and command stderr are not serialized into
+the retained proof.
+
 ## Claim boundary
 
-This proof validates retained reconciliation state. It does not itself execute
-the workload, mutate Merchant/provider state, start the OCI campaign, or advance
-a logical-day frontier.
+This proof validates and retains already-completed reconciliation state. The
+producer does not create a source snapshot, execute or recover the OxideBatch
+job, finalize publication, mutate Merchant/provider state, start the OCI
+campaign, or advance a logical-day frontier.
 
-The live campaign producer/controller that captures this retained artifact is a
-separate implementation slice.
+Crash execution/orchestration and the full day controller remain separate
+implementation slices.

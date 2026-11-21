@@ -113,7 +113,7 @@ See [DAY_RECOVERY.md](DAY_RECOVERY.md).
 
 ## Reconciliation subject
 
-`reconciliation` now binds `days/day-NNNNNN.reconciliation.verification.json` instead of accepting a generic PASS + SHA assertion. The retained proof replays the exact v0.7.0 reconciliation oracle over the frozen Merchant/provider snapshot, requires a terminal CLEAR publication, binds the exact reconciliation binary/verifier identities, and carries scheduled crash execution evidence for the qualified reconciliation crash boundaries. The frontier then cross-checks the retained provider snapshot against the separately produced end-of-day provider-cardinality proof.
+`reconciliation` now binds `days/day-NNNNNN.reconciliation.verification.json` instead of accepting a generic PASS + SHA assertion. Reconciliation proof schema v2 uses the workload-compatible `<campaign-id>-day-NNNNNN-reconciliation` snapshot identity. Its read-only producer verifies the exact campaign-pinned binary, invokes only the workload `verify` command against already-completed state, then independently replays the exact v0.7.0 oracle before create-only retention. The proof requires a terminal CLEAR publication, exact binary/verifier identities, and scheduled crash execution evidence for qualified reconciliation crash boundaries. The frontier then cross-checks the retained provider snapshot against the separately produced end-of-day provider-cardinality proof.
 
 See [DAY_RECONCILIATION.md](DAY_RECONCILIATION.md).
 

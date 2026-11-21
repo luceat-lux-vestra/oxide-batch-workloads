@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """#318 independent per-day payment-reconciliation proof.
 
-This verifier binds one frozen payment-reconciliation-postgres snapshot/result to
+This module binds one frozen payment-reconciliation-postgres snapshot/result to
 an exact logical day, replays the retained v0.7.0 reconciliation oracle, and
-returns a compact subject for the day frontier. It does not run the workload or
-refresh Merchant/provider state.
+returns a compact subject for the day frontier. Its producer CLI invokes only
+the workload's read-only `verify` command against already-completed state; it
+does not snapshot, run, recover, finalize, or refresh Merchant/provider state.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
-from typing import Any
+from typing import Any, Callable
 
 import campaign_core as core
 import campaign_day_cardinality as day_cardinality
@@ -26,7 +30,7 @@ RECONCILIATION_VERIFIER = (
 )
 
 SCHEMA = "oxide-batch-workloads.payment-reference-day-reconciliation-verification"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DECISION = "RECONCILIATION_VERIFIED_NOT_DAY_ACCEPTED"
 CRASH_SCHEMA = "oxide-batch-workloads.payment-reference-reconciliation-crash-execution"
 WORKLOAD_CONTRACT = "payment-reconciliation-v1"
@@ -89,7 +93,13 @@ def plan_digest(plan: dict[str, Any]) -> str:
 
 
 def expected_snapshot_id(campaign_id: str, sequence: int) -> str:
-    return f"{campaign_id}:day-{sequence:06}:reconciliation"
+    require(
+        isinstance(campaign_id, str) and core.CAMPAIGN_ID.fullmatch(campaign_id) is not None,
+        "reconciliation campaign id is unsafe",
+    )
+    require(type(sequence) is int and sequence > 0, "reconciliation day sequence invalid")
+    # payment-reconciliation-postgres rejects ':' in snapshot identifiers.
+    return f"{campaign_id}-day-{sequence:06}-reconciliation"
 
 
 def scheduled_hard_crash(plan: dict[str, Any]) -> str | None:
@@ -333,3 +343,222 @@ def validate(
         "scheduled_hard_crash": expected_crash,
         "crash_subject": crash_subject,
     }
+
+def build_artifact(
+    *,
+    plan: dict[str, Any],
+    source_revision: str,
+    workload_binary_sha256: str,
+    producer_report: dict[str, Any],
+    crash_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    artifact = {
+        "schema": SCHEMA,
+        "schema_version": SCHEMA_VERSION,
+        "decision": DECISION,
+        "campaign_id": plan["campaign_id"],
+        "logical_day_sequence": plan["logical_day_sequence"],
+        "source_revision": source_revision,
+        "day_plan_sha256": plan_digest(plan),
+        "oxide_batch_version": OXIDE_BATCH_VERSION,
+        "workload_contract": WORKLOAD_CONTRACT,
+        "workload_binary_sha256": workload_binary_sha256,
+        "workload_semantics_sha256": file_sha256(RECONCILIATION_VERIFIER),
+        "producer_report": object_(producer_report, "reconciliation producer report"),
+        "scheduled_hard_crash": scheduled_hard_crash(plan),
+        "crash_evidence": crash_evidence,
+    }
+    validate(
+        artifact,
+        plan=plan,
+        source_revision=source_revision,
+        workload_binary_sha256=workload_binary_sha256,
+    )
+    return artifact
+
+
+def load_campaign(campaign_dir: Path) -> tuple[str, str, str]:
+    require(campaign_dir.is_dir() and not campaign_dir.is_symlink(), "unsafe campaign directory")
+    record = object_(
+        json.loads((campaign_dir / "campaign.json").read_text(encoding="utf-8")),
+        "campaign",
+    )
+    require(
+        record.get("schema") == "oxide-batch-workloads.payment-reference-campaign"
+        and record.get("schema_version") == 1,
+        "campaign schema mismatch",
+    )
+    require(record.get("contract") == core.contract()["contract"], "campaign contract identity mismatch")
+    require(record.get("contract_sha256") == core.sha256(core.CONTRACT_PATH), "campaign contract digest mismatch")
+    identity = object_(record.get("identity"), "campaign identity")
+    campaign_id = identity.get("campaign_id")
+    source_revision = identity.get("source_revision")
+    binaries = object_(identity.get("batch_binaries"), "campaign batch binaries")
+    binary = object_(binaries.get("payment-reconciliation-postgres"), "payment reconciliation binary identity")
+    binary_sha = binary.get("sha256")
+    require(
+        campaign_id == campaign_dir.name
+        and isinstance(campaign_id, str)
+        and core.CAMPAIGN_ID.fullmatch(campaign_id) is not None,
+        "campaign directory identity mismatch",
+    )
+    require(
+        isinstance(source_revision, str) and re.fullmatch(r"[0-9a-f]{40}", source_revision) is not None,
+        "campaign source revision invalid",
+    )
+    require(
+        isinstance(binary_sha, str) and HEX64.fullmatch(binary_sha) is not None,
+        "campaign reconciliation binary SHA invalid",
+    )
+    return campaign_id, source_revision, binary_sha
+
+
+def verify_workload_binary(path: Path, expected_sha256: str) -> Path:
+    require(path.is_file() and not path.is_symlink(), "reconciliation workload binary missing/unsafe")
+    require(os.access(path, os.X_OK), "reconciliation workload binary is not executable")
+    require(file_sha256(path) == expected_sha256, "reconciliation workload binary SHA mismatch")
+    return path.resolve()
+
+
+Runner = Callable[..., Any]
+
+
+def load_producer_report(
+    *,
+    workload_binary: Path,
+    database_url: str,
+    snapshot_id: str,
+    runner: Runner = subprocess.run,
+) -> dict[str, Any]:
+    require(isinstance(database_url, str) and database_url.strip(), "reconciliation database URL missing")
+    require(
+        isinstance(snapshot_id, str)
+        and re.fullmatch(r"[A-Za-z0-9_.-]+", snapshot_id) is not None,
+        "reconciliation snapshot id is not workload-safe",
+    )
+    child_env = dict(os.environ)
+    child_env["DATABASE_URL"] = database_url
+    result = runner(
+        [
+            str(workload_binary),
+            "verify",
+            "--snapshot-id",
+            snapshot_id,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=child_env,
+    )
+    require(result.returncode == 0, "reconciliation workload verify command failed")
+    require(len(result.stdout.encode("utf-8")) <= 8_000_000, "reconciliation producer report is oversized")
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ReconciliationEvidenceError("reconciliation producer report is not valid JSON") from exc
+    return object_(report, "reconciliation producer report")
+
+
+def retain_immutable(path: Path, value: Any) -> str:
+    require(not path.is_symlink(), "reconciliation output path must not be a symlink")
+    raw = core.canonical_bytes(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        require(path.is_file() and not path.is_symlink(), "existing reconciliation output is unsafe")
+        require(path.read_bytes() == raw, "immutable reconciliation verification conflict")
+        return "replay"
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    return "created"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="#318 read-only producer for the retained day reconciliation proof"
+    )
+    parser.add_argument("--campaign-dir", type=Path, required=True)
+    parser.add_argument("--day", type=int, required=True)
+    parser.add_argument("--workload-binary", type=Path, required=True)
+    parser.add_argument("--crash-evidence", type=Path)
+    args = parser.parse_args()
+    try:
+        require(type(args.day) is int and args.day > 0, "day must be positive")
+        campaign_id, source_revision, binary_sha = load_campaign(args.campaign_dir)
+        plan = day_cardinality.plan_for(campaign_id, args.day)
+        workload_binary = verify_workload_binary(args.workload_binary, binary_sha)
+        snapshot_id = expected_snapshot_id(campaign_id, args.day)
+
+        crash = None
+        if args.crash_evidence is not None:
+            require(
+                args.crash_evidence.is_file() and not args.crash_evidence.is_symlink(),
+                "reconciliation crash evidence path unsafe/missing",
+            )
+            crash = object_(
+                json.loads(args.crash_evidence.read_text(encoding="utf-8")),
+                "reconciliation crash evidence",
+            )
+
+        report = load_producer_report(
+            workload_binary=workload_binary,
+            database_url=os.environ.get("PAYMENT_RECONCILIATION_DATABASE_URL", ""),
+            snapshot_id=snapshot_id,
+        )
+        artifact = build_artifact(
+            plan=plan,
+            source_revision=source_revision,
+            workload_binary_sha256=binary_sha,
+            producer_report=report,
+            crash_evidence=crash,
+        )
+        output = (
+            args.campaign_dir
+            / "days"
+            / f"day-{args.day:06}.reconciliation.verification.json"
+        )
+        retention = retain_immutable(output, artifact)
+        subject = validate(
+            artifact,
+            plan=plan,
+            source_revision=source_revision,
+            workload_binary_sha256=binary_sha,
+        )
+        print(json.dumps({
+            "decision": DECISION,
+            "verification_path": str(output),
+            "retention": retention,
+            "snapshot_id": subject["snapshot_id"],
+            "run_id": subject["run_id"],
+            "published_count": subject["published_count"],
+        }, sort_keys=True))
+        return 0
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+    ) as exc:
+        print(
+            json.dumps({"decision": "BLOCK", "error_type": type(exc).__name__}, sort_keys=True),
+            file=sys.stderr,
+        )
+        return 75
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
