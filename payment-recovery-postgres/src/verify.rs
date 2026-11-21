@@ -17,11 +17,9 @@ use crate::{CONTRACT_VERSION, OXIDE_BATCH_VERSION};
 pub const VERIFICATION_SCHEMA: &str =
     "oxide-batch-workloads.payment-recovery-independent-verification";
 pub const VERIFICATION_SCHEMA_VERSION: u32 = 1;
-pub const VERIFIED_DECISION: &str =
-    "RECOVERY_SEMANTICS_VERIFIED_SIDE_EFFECT_CARDINALITY_SEPARATE";
+pub const VERIFIED_DECISION: &str = "RECOVERY_SEMANTICS_VERIFIED_SIDE_EFFECT_CARDINALITY_SEPARATE";
 pub const BLOCKED_DECISION: &str = "RECOVERY_VERIFICATION_BLOCKED";
-pub const SIDE_EFFECT_CARDINALITY_AUTHORITY: &str =
-    "SEPARATE_PROVIDER_DAY_PROOF_REQUIRED";
+pub const SIDE_EFFECT_CARDINALITY_AUTHORITY: &str = "SEPARATE_PROVIDER_DAY_PROOF_REQUIRED";
 
 #[derive(Debug, Serialize)]
 pub struct VerificationReport {
@@ -149,7 +147,9 @@ pub async fn verify(
 
     match candidate_set_digest(&candidates) {
         Ok(digest) if digest == run.candidate_set_digest => {}
-        Ok(_) => violations.push("candidate-set digest differs from the frozen run identity".into()),
+        Ok(_) => {
+            violations.push("candidate-set digest differs from the frozen run identity".into())
+        }
         Err(_) => violations.push("frozen candidate set fails independent validation".into()),
     }
 
@@ -159,14 +159,7 @@ pub async fn verify(
     let mut result_digest_pairs = Vec::new();
 
     for candidate in &candidates {
-        match verify_candidate(
-            &pool,
-            &provider_base,
-            &run,
-            candidate,
-        )
-        .await
-        {
+        match verify_candidate(&pool, &provider_base, &run, candidate).await {
             Ok(report) => {
                 total_attempts += report.attempt_count;
                 *classification_counts
@@ -182,8 +175,7 @@ pub async fn verify(
             Err(error) => {
                 violations.push(format!(
                     "candidate {} failed independent verification: {}",
-                    candidate.candidate_id,
-                    error
+                    candidate.candidate_id, error
                 ));
             }
         }
@@ -210,7 +202,8 @@ pub async fn verify(
     .fetch_one(&pool)
     .await?;
     if usize::try_from(attempt_count).ok() != Some(total_attempts) {
-        violations.push("attempt cardinality differs from independently inspected candidates".into());
+        violations
+            .push("attempt cardinality differs from independently inspected candidates".into());
     }
 
     pool.close().await;
@@ -363,9 +356,7 @@ async fn verify_candidate(
         {
             bail!("attempt processing generation is outside the run generation");
         }
-        if index > 0
-            && attempts[index - 1].processing_generation > attempt.processing_generation
-        {
+        if index > 0 && attempts[index - 1].processing_generation > attempt.processing_generation {
             bail!("attempt processing generations regress");
         }
     }
@@ -558,7 +549,10 @@ fn attempt_provider_observation(attempt: &AttemptRecord) -> Result<ProviderObser
         "UNAVAILABLE" => ProviderVisibility::Unavailable,
         _ => bail!("unsupported retained provider visibility"),
     };
-    let exists = matches!(visibility, ProviderVisibility::Immediate | ProviderVisibility::Stale);
+    let exists = matches!(
+        visibility,
+        ProviderVisibility::Immediate | ProviderVisibility::Stale
+    );
 
     Ok(ProviderObservation {
         visibility,
@@ -751,27 +745,23 @@ mod tests {
             captured_amount: 0,
             refunded_amount: 0,
         };
-        assert!(
-            validate_current_provider_payment(
-                "provider-verify",
-                &candidate,
-                "RESOLVED_SUCCEEDED",
-                &good,
-            )
-            .is_ok()
-        );
+        assert!(validate_current_provider_payment(
+            "provider-verify",
+            &candidate,
+            "RESOLVED_SUCCEEDED",
+            &good,
+        )
+        .is_ok());
 
         let mut bad = good;
         bad.authorized_amount = 999;
-        assert!(
-            validate_current_provider_payment(
-                "provider-verify",
-                &candidate,
-                "RESOLVED_SUCCEEDED",
-                &bad,
-            )
-            .is_err()
-        );
+        assert!(validate_current_provider_payment(
+            "provider-verify",
+            &candidate,
+            "RESOLVED_SUCCEEDED",
+            &bad,
+        )
+        .is_err());
     }
 
     #[test]
