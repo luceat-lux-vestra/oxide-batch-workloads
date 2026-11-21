@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """#318 independent per-day payment-reconciliation proof.
 
-This verifier binds one frozen payment-reconciliation-postgres snapshot/result to
+This module binds one frozen payment-reconciliation-postgres snapshot/result to
 an exact logical day, replays the retained v0.7.0 reconciliation oracle, and
-returns a compact subject for the day frontier. It does not run the workload or
-refresh Merchant/provider state.
+returns a compact subject for the day frontier. Its producer CLI invokes only
+the workload's read-only `verify` command against already-completed state; it
+does not snapshot, run, recover, finalize, or refresh Merchant/provider state.
 """
 from __future__ import annotations
 
