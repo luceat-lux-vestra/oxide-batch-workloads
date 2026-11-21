@@ -38,7 +38,7 @@ idempotency/operation keys, so later runner retries must explicitly reconcile
 prior states rather than invent a new financial mutation identity.
 
 The fault overlay rotates across the five qualified **classes** represented by
-the v1 fault matrix, twice per logical day:
+the qualified fault matrix, twice per logical day:
 
 1. 503 before provider side effects
 2. Provider commit followed by response loss
@@ -46,9 +46,9 @@ the v1 fault matrix, twice per logical day:
 4. Async failure
 5. Webhook ordering/duplicate/drop/retry
 
-The mapping is now frozen in `fault-catalog-v1.json`. The catalog owns each
-class's exact scenario case, seed, fault-engine steps, caller outcome, expected
-provider/canonical outcome and reconciliation requirements. Both the runtime
+The mapping is frozen in `fault-catalog-v2.json`. The catalog owns each
+class's exact scenario case, seed, fault-engine steps, caller outcome, online-phase
+provider/canonical outcome, post-recovery end-of-day provider truth, and reconciliation requirements. Both the runtime
 fault-matrix smoke and the campaign planner consume this catalog, so a future
 controller must render the same catalog entry rather than re-declare fault
 semantics. The planner records the catalog SHA-256 and still makes no terminal

@@ -105,16 +105,20 @@ the pinned provider source revision.
 
 See [DAY_CARDINALITY.md](DAY_CARDINALITY.md).
 
+## Recovery subject
+
+`recovery` now binds `days/day-NNNNNN.recovery.verification.json` instead of accepting a generic PASS + SHA assertion. The recovery producer replays the secret-safe #271 candidate/result semantics, checks deterministic day membership and the exact recovery binary identity, and independently re-reads each terminal candidate's authenticated provider timeline. The frontier then cross-checks those per-candidate provider proofs against the separately produced 100-slot day-cardinality artifact. Scheduled day-8-style recovery crashes additionally require retained SIGKILL/new-process execution evidence.
+
+See [DAY_RECOVERY.md](DAY_RECOVERY.md).
+
 ## Remaining checks
 
-Only `recovery`, `reconciliation`, and `financial_invariants` temporarily
-retain the legacy `{verdict, artifact_sha256}` shape. Their dedicated proof
-contracts remain separate work units.
+Only `reconciliation` and `financial_invariants` temporarily retain the legacy `{verdict, artifact_sha256}` shape. Their dedicated proof contracts remain separate work units.
 
 ## Authority boundary
 
 The campaign controller may sequence phases, but v2 frontier scanning derives
-settlement and provider-cardinality PASS from retained independent verifier
+settlement, provider-cardinality and recovery PASS from retained independent verifier
 artifacts. It does not accept
 a controller-authored settlement PASS assertion by itself.
 

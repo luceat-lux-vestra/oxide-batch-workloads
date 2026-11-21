@@ -185,26 +185,28 @@ class SettlementRosterBuilderTests(unittest.TestCase):
                 provider_read=self.provider_read,
             )
 
-    def test_pre_side_effect_fault_must_be_provider_absent(self):
+    def test_pre_side_effect_503_online_pending_is_authorized_by_end_of_day(self):
         item = next(
             item for item in self.plan["slots"]
             if item["fault_class"] == "plan-503-before-side-effect"
         )
         provider_id = f"prov-{item['slot']:03d}"
+        self.assertEqual(
+            roster_builder.fault_catalog.fault(item["fault_class"])["expected_provider_truth"],
+            "PENDING",
+        )
+        self.assertEqual(roster_builder.expected_provider_status(item), "authorized")
 
-        def present_provider(pid):
+        roster, verification = self.build()
+        row = next(x for x in verification["observations"] if x["provider_payment_id"] == provider_id)
+        self.assertEqual(row["provider_status"], "authorized")
+        self.assertFalse(row["settlement_eligible"])
+        self.assertNotIn(provider_id, roster["provider_payment_ids"])
+
+        def absent_provider(pid):
             if pid != provider_id:
                 return self.provider_read(pid)
-            return 200, {
-                "id": pid,
-                "amount": 1000,
-                "currency": "USD",
-                "status": "authorized",
-                "authorized_amount": 1000,
-                "captured_amount": 0,
-                "refunded_amount": 0,
-                "version": 2,
-            }
+            return 404, None
 
         with self.assertRaisesRegex(roster_builder.RosterError, "provider truth"):
             roster_builder.collect(
@@ -212,7 +214,7 @@ class SettlementRosterBuilderTests(unittest.TestCase):
                 source_revision=self.source,
                 provider_account_id="payment-sandbox-default",
                 gateway_read=self.gateway_read,
-                provider_read=present_provider,
+                provider_read=absent_provider,
             )
 
     def test_immutable_roster_and_verification_replay_without_rewrite(self):

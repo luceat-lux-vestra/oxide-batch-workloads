@@ -72,10 +72,10 @@ def expected(item: dict[str, Any]) -> dict[str, Any]:
         status, mutations, authorized, captured, refunded = "refunded", 4, 1000, 1000, 1000
     else:
         require(kind == "fault_overlay", "unknown slot kind")
-        truth = faults.fault(item["fault_class"])["expected_provider_truth"]
-        require(truth in {"PENDING", "AUTHORIZED", "FAILED"}, "unsupported provider fault truth")
-        status = {"PENDING": "ABSENT", "AUTHORIZED": "authorized", "FAILED": "failed"}[truth]
-        mutations = 0 if status == "ABSENT" else 1
+        truth = faults.end_of_day_provider_truth(item["fault_class"])
+        require(truth in {"AUTHORIZED", "FAILED"}, "unsupported end-of-day provider fault truth")
+        status = {"AUTHORIZED": "authorized", "FAILED": "failed"}[truth]
+        mutations = 1
         authorized = 1000 if status == "authorized" else 0
         captured = refunded = 0
     return {

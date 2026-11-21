@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 import campaign_day_cardinality as day_cardinality
+import campaign_day_recovery as day_recovery
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("campaign_evidence", HERE / "campaign-evidence.py")
@@ -105,6 +106,119 @@ def mocked_day_observations(plan):
     return rows, provider_timelines
 
 
+def recovery_artifact_for_day(root, sequence, day_plan, day_card, provider_timelines):
+    item = next(row for row in day_plan["slots"] if row["fault_class"] == "post-commit-response-loss")
+    card_row = next(row for row in day_card["observations"] if row["merchant_payment_id"] == item["merchant_payment_id"])
+    provider_id = card_row["provider_payment_id"]
+    mutation = item["mutations"][0]["body"]
+    prepare = item["prepare_payment"]["body"]
+    candidate = {
+        "candidate_id": "",
+        "merchant_id": day_plan["merchant_setup"][0]["body"]["merchantId"],
+        "merchant_order_id": item["merchant_order_id"],
+        "merchant_payment_id": item["merchant_payment_id"],
+        "operation_id": mutation["operationId"],
+        "operation_kind": "AUTHORIZE",
+        "payment_state": "PAYMENT_UNKNOWN",
+        "operation_state": "UNKNOWN",
+        "amount_minor": mutation["amountMinor"],
+        "currency": "USD",
+        "idempotency_key_digest": day_recovery.secret_digest(mutation["idempotencyKey"]),
+        "payment_method_token_digest": day_recovery.secret_digest(prepare["paymentMethodToken"]),
+        "provider_payment_id": provider_id,
+        "gateway_operation_id": mutation["operationId"],
+        "source_updated_at": "2026-11-21T03:00:00.000000Z",
+    }
+    candidate["candidate_id"] = day_recovery.candidate_identity(candidate)
+    attempt = {
+        "candidate_id": candidate["candidate_id"],
+        "attempt_no": 1,
+        "processing_generation": 1,
+        "attempt_state": "OBSERVED",
+        "merchant_http_status": 200,
+        "canonical_payment_state": "AUTHORIZED",
+        "canonical_operation_state": "SUCCEEDED",
+        "canonical_provider_payment_id": provider_id,
+        "canonical_gateway_operation_id": candidate["operation_id"],
+        "provider_visibility": "IMMEDIATE",
+        "provider_payment_id": provider_id,
+        "provider_currency": "USD",
+        "provider_status": "authorized",
+        "provider_authorized_amount_minor": 1000,
+        "provider_captured_amount_minor": 0,
+        "provider_refunded_amount_minor": 0,
+        "outcome_kind": "MERCHANT_CANONICAL_RESPONSE",
+    }
+    result = {
+        "candidate_id": candidate["candidate_id"],
+        "classification": "RESOLVED_SUCCEEDED",
+        "duplicate_provider_mutation_count": 0,
+        "final_canonical_payment_state": "AUTHORIZED",
+        "final_canonical_operation_state": "SUCCEEDED",
+        "final_provider_status": "authorized",
+        "result_digest": "",
+        "verified": False,
+        "oracle_violations": [],
+    }
+    result["result_digest"] = day_recovery.qualification.digest(candidate, attempt, result)
+    run_id = day_recovery.expected_run_id(root.name, sequence)
+    snapshot = {
+        "run": {
+            "run_id": run_id,
+            "contract_version": day_recovery.RUN_CONTRACT,
+            "oxide_batch_version": day_recovery.OXIDE_BATCH_VERSION,
+            "business_date": "2026-11-21",
+            "eligibility_cutoff": "2026-11-21T03:01:00.000000Z",
+            "scenario_set_id": run_id,
+            "policy_version": day_recovery.POLICY_VERSION,
+            "candidate_set_digest": day_recovery.candidate_set_digest([candidate]),
+            "processing_generation": 1,
+            "run_state": "PROCESSED",
+        },
+        "candidates": [candidate],
+        "attempts": [attempt],
+        "results": [result],
+    }
+    crash = None
+    if day_plan["scheduled_hard_crash"] == "recovery-after-external-convergence-before-local-commit":
+        crash = {
+            "schema": day_recovery.CRASH_SCHEMA,
+            "schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "run_id": run_id,
+            "target_candidate_id": candidate["candidate_id"],
+            "boundary": "after-external-convergence-before-local-commit",
+            "semantic_marker_observed": True,
+            "signal": 9,
+            "killed_pid": 1201,
+            "process_gone_after_kill": True,
+            "pre_recovery_run_state": "PROCESSING",
+            "pre_recovery_target_attempt_count": 0,
+            "recover_process_pid": 1202,
+            "recover_launched": True,
+            "post_recovery_processing_generation": 1,
+        }
+    artifact = day_recovery.collect(
+        plan=day_plan,
+        source_revision=SHA40,
+        workload_binary_sha256=SHA64,
+        snapshot=snapshot,
+        crash_evidence=crash,
+        provider_read=lambda payment_id: provider_timelines[payment_id],
+    )
+    relative = f"days/day-{sequence:06}.recovery.verification.json"
+    path = root / relative
+    m.create_only(path, m.canonical_bytes(artifact))
+    subject = day_recovery.validate(
+        artifact,
+        plan=day_plan,
+        source_revision=SHA40,
+        workload_binary_sha256=SHA64,
+    )
+    return relative, path, artifact, subject
+
+
 def settlement_artifacts(root, sequence):
     plan = m.plan_day(sequence)
     day_plan = day_cardinality.plan_for(root.name, sequence)
@@ -141,6 +255,9 @@ def settlement_artifacts(root, sequence):
     m.create_only(cardinality_path, m.canonical_bytes(day_card))
     cardinality_subject = day_cardinality.validate(
         day_card, plan=day_plan, source_revision=SHA40, roster_verification=roster,
+    )
+    recovery_rel, recovery_path, recovery_artifact, recovery_subject = recovery_artifact_for_day(
+        root, sequence, day_plan, day_card, provider_timelines,
     )
 
     statement_id = "statement-" + ("5" * 64)
@@ -213,6 +330,17 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
+        "recovery": {
+            "verdict": "PASS",
+            "artifact_schema": day_recovery.SCHEMA,
+            "artifact_schema_version": day_recovery.SCHEMA_VERSION,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": recovery_rel,
+            "artifact_sha256": m.sha256(recovery_path),
+            "subject": recovery_subject,
+        },
         "side_effect_cardinality": {
             "verdict": "PASS",
             "artifact_schema": day_cardinality.SCHEMA,
@@ -255,7 +383,7 @@ def write_terminal(root, sequence, *, started=True):
     checks = {
         c: {"verdict": "PASS", "artifact_sha256": SHA64}
         for c in CHECKS
-        if c not in m.SETTLEMENT_CHECKS and c != m.CARDINALITY_CHECK
+        if c not in m.SETTLEMENT_CHECKS and c not in {m.CARDINALITY_CHECK, m.RECOVERY_CHECK}
     }
     checks.update(settlement_artifacts(root, sequence))
     verification = {
@@ -492,6 +620,61 @@ class CampaignEvidenceTests(unittest.TestCase):
         verification["checks"]["settlement_close"]["subject"]["line_count"] = 79
         verification_path.write_bytes(m.canonical_bytes(verification))
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
+            m.inspect(root)
+
+    def test_recovery_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["recovery"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "recovery: bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_recovery_artifact_result_tamper_blocks_even_when_descriptor_sha_is_repaired(self):
+        root = self.init()
+        write_terminal(root, 1)
+        recovery_path = root / "days/day-000001.recovery.verification.json"
+        artifact = m.load_json(recovery_path)
+        artifact["candidates"][0]["result"]["result_digest"] = "f" * 64
+        recovery_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["recovery"]["artifact_sha256"] = m.sha256(recovery_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "result digest"):
+            m.inspect(root)
+
+    def test_recovery_artifact_must_cross_bind_exact_day_provider_cardinality(self):
+        root = self.init()
+        write_terminal(root, 1)
+        cardinality_path = root / "statements/day-000001.provider-cardinality.verification.json"
+        cardinality = m.load_json(cardinality_path)
+        recovery_path = root / "days/day-000001.recovery.verification.json"
+        recovery_artifact = m.load_json(recovery_path)
+        payment_id = recovery_artifact["candidates"][0]["candidate"]["merchant_payment_id"]
+        row = next(x for x in cardinality["observations"] if x["merchant_payment_id"] == payment_id)
+        row["timeline"]["events"][0]["occurred_at"] = "2026-11-21T00:10:01Z"
+        day_plan = day_cardinality.plan_for(root.name, 1)
+        item = next(x for x in day_plan["slots"] if x["merchant_payment_id"] == payment_id)
+        expected = day_cardinality.expected(item)
+        row["verification"] = day_cardinality.provider.verify_cardinality(
+            provider_payment_id=row["provider_payment_id"],
+            timeline=row["timeline"],
+            expected_effective_mutations=expected["effective_mutation_count"],
+            expected_status=expected["provider_status"],
+            expected_authorized=expected["authorized_amount_minor"],
+            expected_captured=expected["captured_amount_minor"],
+            expected_refunded=expected["refunded_amount_minor"],
+        )
+        cardinality_path.write_bytes(m.canonical_bytes(cardinality))
+
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["side_effect_cardinality"]["artifact_sha256"] = m.sha256(cardinality_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "timeline_sha256 differs"):
             m.inspect(root)
 
     def test_cardinality_generic_pass_sha_no_longer_advances_frontier(self):

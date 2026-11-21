@@ -29,28 +29,30 @@ adapter = load_adapter()
 class CampaignFaultCatalogTests(unittest.TestCase):
     EXPECTED = {
         "plan-503-before-side-effect": (
-            "fault-plan-pre-side-effect-503", "PENDING", "RETRYABLE_FAILURE",
+            "fault-plan-pre-side-effect-503", "PENDING", "AUTHORIZED", "RETRYABLE_FAILURE",
             "HTTP_503", "RETRYABLE_PRE_SIDE_EFFECT", False, "SAME_IDENTITY_ONLY",
         ),
         "post-commit-response-loss": (
-            "fault-plan-post-commit-response-loss", "AUTHORIZED", "UNKNOWN",
+            "fault-plan-post-commit-response-loss", "AUTHORIZED", "AUTHORIZED", "UNKNOWN",
             "CONNECTION_DROP", "AMBIGUOUS_POST_COMMIT", True, "BLOCK_UNTIL_READ_RECONCILIATION",
         ),
         "async-success-stale-convergence": (
-            "fault-plan-async-success-stale-convergence", "AUTHORIZED", "ACCEPTED_THEN_CONVERGED",
+            "fault-plan-async-success-stale-convergence", "AUTHORIZED", "AUTHORIZED", "ACCEPTED_THEN_CONVERGED",
             "HTTP_200_PENDING_ACCEPTED", "ASYNC_PENDING_CONVERGENCE", True, "NO_MUTATION_RETRY_WHILE_PENDING",
         ),
         "async-failure": (
-            "fault-plan-async-failure", "FAILED", "ACCEPTED_THEN_FAILED",
+            "fault-plan-async-failure", "FAILED", "FAILED", "ACCEPTED_THEN_FAILED",
             "HTTP_200_PENDING_ACCEPTED", "ASYNC_TERMINAL_FAILURE", True, "NO_MUTATION_RETRY_BEFORE_TERMINAL_READ",
         ),
         "webhook-ordering-duplicate-drop-retry": (
-            "fault-plan-webhook-delivery", "AUTHORIZED", "DELIVERY_SEQUENCE_REPRODUCED",
+            "fault-plan-webhook-delivery", "AUTHORIZED", "AUTHORIZED", "DELIVERY_SEQUENCE_REPRODUCED",
             "WEBHOOK_SCHEDULE_REPLAYED", "WEBHOOK_REPLAY_DELIVERY", False, "NOT_APPLICABLE",
         ),
     }
 
     def test_catalog_freezes_exact_five_campaign_fault_classes(self) -> None:
+        self.assertEqual(catalog.SCHEMA_VERSION, 2)
+        self.assertEqual(catalog._load()["schema_version"], 2)
         self.assertEqual(catalog.classes(), tuple(self.EXPECTED))
         self.assertEqual(len(catalog.catalog_sha256()), 64)
         for fault_class, expected in self.EXPECTED.items():
@@ -60,6 +62,7 @@ class CampaignFaultCatalogTests(unittest.TestCase):
                 observed = (
                     value["scenario_case"],
                     value["expected_provider_truth"],
+                    value["end_of_day_provider_truth"],
                     value["expected_canonical_outcome"],
                     value["caller_outcome"],
                     reconciliation["classification"],
@@ -68,6 +71,26 @@ class CampaignFaultCatalogTests(unittest.TestCase):
                 )
                 self.assertEqual(observed, expected)
                 self.assertTrue(reconciliation["requirements"])
+
+    def test_online_and_end_of_day_truth_are_distinct_only_for_recoverable_pre_side_effect_503(self) -> None:
+        pre = catalog.fault("plan-503-before-side-effect")
+        self.assertEqual(pre["expected_provider_truth"], "PENDING")
+        self.assertEqual(pre["end_of_day_provider_truth"], "AUTHORIZED")
+        self.assertEqual(catalog.end_of_day_provider_truth("plan-503-before-side-effect"), "AUTHORIZED")
+
+        for fault_class in catalog.classes():
+            value = catalog.fault(fault_class)
+            if fault_class == "plan-503-before-side-effect":
+                continue
+            self.assertEqual(value["end_of_day_provider_truth"], value["expected_provider_truth"])
+
+        rendered = catalog.render_plan(
+            "plan-503-before-side-effect",
+            "2026-11-14T00:00:00Z",
+            "provider-phase-test",
+        )
+        self.assertEqual(rendered["expected_provider_truth"], "PENDING")
+        self.assertNotIn("end_of_day_provider_truth", rendered)
 
     def test_every_rendered_plan_is_accepted_by_qualified_fault_adapter(self) -> None:
         for fault_class in catalog.classes():

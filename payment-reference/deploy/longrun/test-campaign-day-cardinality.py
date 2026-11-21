@@ -50,15 +50,21 @@ class DayCardinalityTests(unittest.TestCase):
     def test_all_100_slots_verified_with_pinned_provider_timeline_authority(self):
         result = self.collect()
         self.assertEqual(result["observed_slot_count"], 100)
-        self.assertEqual(result["effective_mutation_total"], 243)
+        self.assertEqual(result["effective_mutation_total"], 245)
         self.assertEqual(result["provider_source_revision"], card.provider.PAYMENT_SANDBOX_SOURCE_REVISION)
         self.assertEqual(card.validate(
             result, plan=self.plan, source_revision=fixtures.SHA40,
             roster_verification=self.roster,
-        )["effective_mutation_total"], 243)
+        )["effective_mutation_total"], 245)
         absent = [row for row in result["observations"] if row["http_status"] == 404]
-        self.assertEqual(len(absent), 2)
-        self.assertTrue(all(not row["verification"]["provider_exists"] for row in absent))
+        self.assertEqual(absent, [])
+        recovered_503 = [
+            row for row in result["observations"]
+            if row["fault_class"] == "plan-503-before-side-effect"
+        ]
+        self.assertEqual(len(recovered_503), 2)
+        self.assertTrue(all(row["verification"]["payment_status"] == "authorized" for row in recovered_503))
+        self.assertTrue(all(row["verification"]["effective_mutation_count"] == 1 for row in recovered_503))
         self.assertEqual(result, self.collect())
 
     def test_missing_and_duplicate_slots_fail_closed(self):
@@ -79,16 +85,32 @@ class DayCardinalityTests(unittest.TestCase):
             card.validate(artifact, plan=self.plan, source_revision=fixtures.SHA40,
                           roster_verification=self.roster)
 
-    def test_absence_must_be_authentic_404_and_cannot_be_invented_from_200(self):
+    def test_recovered_pre_side_effect_503_requires_present_authorized_eod_truth(self):
         artifact = self.collect()
-        absent = next(x for x in artifact["observations"] if x["http_status"] == 404)
-        absent["http_status"] = 200
-        with self.assertRaisesRegex(ValueError, "absent provider requires HTTP 404"):
-            card.validate(artifact, plan=self.plan, source_revision=fixtures.SHA40,
-                          roster_verification=self.roster)
-        self.timelines[absent["provider_payment_id"]] = (500, None)
-        with self.assertRaisesRegex(ValueError, "expected absent provider"):
+        recovered = next(
+            x for x in artifact["observations"]
+            if x["fault_class"] == "plan-503-before-side-effect"
+        )
+        self.assertEqual(recovered["http_status"], 200)
+        self.assertEqual(recovered["verification"]["payment_status"], "authorized")
+
+        self.timelines[recovered["provider_payment_id"]] = (404, None)
+        with self.assertRaisesRegex(ValueError, "expected present provider timeline"):
             self.collect()
+
+        bad = copy.deepcopy(artifact)
+        target = next(
+            x for x in bad["observations"]
+            if x["fault_class"] == "plan-503-before-side-effect"
+        )
+        target["http_status"] = 404
+        target["timeline"] = None
+        target["verification"] = card.provider.verify_absent(target["provider_payment_id"], 404)
+        with self.assertRaises(ValueError):
+            card.validate(
+                bad, plan=self.plan, source_revision=fixtures.SHA40,
+                roster_verification=self.roster,
+            )
 
     def test_roster_plan_identity_and_source_provenance_cannot_drift(self):
         artifact = self.collect()
