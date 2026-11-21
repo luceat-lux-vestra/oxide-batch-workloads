@@ -296,6 +296,63 @@ upstream revision is not encoded in the sys-crate version string, so later
 manifest generation must record any more precise version only from an
 authoritative build/runtime observation rather than infer one here.
 
+
+## Campaign #323 allocator decision and current policy
+
+Campaign #323 completed the current-release allocator comparison for exact
+published OxideBatch `0.7.0` on the qualified
+`aarch64-unknown-linux-gnu` OCI host. The campaign closed with correctness,
+canonical repeated benchmark, restart/quiescence, and same-process churn
+evidence all accepted.
+
+The resulting allocator policy is:
+
+- **default:** keep the platform/system allocator (no allocator Cargo feature);
+- **performance opt-in on the qualified ARM64 GNU/Linux target:** `snmalloc`,
+  when a small throughput improvement is worth additional peak-memory headroom;
+- **qualified comparison candidates, but not recommended as defaults from this
+  evidence:** `jemalloc`, `mimalloc`, and `tcmalloc`;
+- `rpmalloc` remains outside the ARM64 campaign because the registry marks that
+  target unsupported.
+
+The decision is evidence-based rather than a registry-state change. A registry
+entry marked `qualified` means that the harness can build and execute that
+allocator correctly on the target; it does **not** mean that the allocator is
+preferred or should become the workload/framework default.
+
+The accepted canonical Phase 4 evidence is bound to workload SHA
+`47a3c8f73f1b60986558453c00f8354d19fe4f23`, analyzer SHA
+`29c6b67890e80737c8df9a4567234fb04352f306`, and summary SHA-256
+`938032fe04a00a366b3e0f9917398b19f997ac63d643f08ae017da8bd8aa4c20`.
+Against the system allocator median, snmalloc was approximately 2.43% faster
+for cursor and 2.20% faster for paging, while median max RSS was approximately
+13.2% higher for cursor and 9.2% higher for paging.
+
+The accepted Phase 5 evidence is bound to workload SHA
+`5024efd7169bb8cdf4778641b9f63d08f0904a01`:
+
+- restart/quiescence summary SHA-256:
+  `593afa55c1178db1e7d5b0ba041674d50e37ed996c04fbf3ca309cd0656054e0`;
+- same-process churn summary SHA-256:
+  `5422a392ba2133afa576883191132079068e97075d830eb79b4854cab41013a7`.
+
+In the 20-cycle same-process lane, system post-idle PSS was effectively flat
+(16.56 MiB first-five median to 16.58 MiB last-five median). Snmalloc also
+stabilized (17.79 MiB to 17.92 MiB), with a late-ten slope of about
+0.003 MiB/cycle and zero median drift in its native current/peak reservation
+counters. No allocator was proven to leak.
+
+Therefore snmalloc's measured timing gain is treated as a useful opt-in
+trade-off, not sufficient justification for a global default change. The system
+allocator retains the lowest observed memory footprint, near-zero long-lived
+drift, and the smallest platform/dependency policy surface.
+
+This recommendation is intentionally scoped to OxideBatch `0.7.0`, this
+representative workload family, and the qualified ARM64 GNU/Linux host class.
+A later OxideBatch release, materially different workload allocation pattern,
+different target architecture/libc, or allocator dependency revision requires
+new evidence before changing the default or generalizing this recommendation.
+
 ## Artifact contract
 
 A run produces a self-contained result root with raw evidence authoritative
