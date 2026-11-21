@@ -913,6 +913,33 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "provider version differs"):
             m.inspect(root)
 
+    def test_financial_merchant_provider_pairs_crossbind_reconciliation(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        snapshot = artifact["producer_report"]["snapshot"]
+        snapshot["internal"][0]["merchant_payment_id"] = "tampered-payment"
+        snapshot["metadata"]["internal_snapshot_digest"] = (
+            day_reconciliation.qualification.row_digest(snapshot["internal"])
+        )
+        artifact["producer_report"]["oracle"] = day_reconciliation.qualification.oracle(snapshot)
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+
+        subject = day_reconciliation.validate(
+            artifact,
+            plan=day_cardinality.plan_for(root.name, 1),
+            source_revision=SHA40,
+            workload_binary_sha256=SHA64,
+        )
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification["checks"]["reconciliation"]["subject"] = subject
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "Merchant/provider identity pairs differ"):
+            m.inspect(root)
+
     def test_reconciliation_generic_pass_sha_no_longer_advances_frontier(self):
         root = self.init()
         write_terminal(root, 1)
