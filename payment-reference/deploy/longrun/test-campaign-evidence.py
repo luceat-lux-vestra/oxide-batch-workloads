@@ -874,6 +874,45 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
             m.inspect(root)
 
+    def test_financial_invariants_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["financial_invariants"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "financial_invariants: bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_financial_invariants_replay_raw_cross_system_state(self):
+        root = self.init()
+        write_terminal(root, 1)
+        financial_path = root / "days/day-000001.financial-invariants.verification.json"
+        artifact = m.load_json(financial_path)
+        row = next(x for x in artifact["observations"] if x["kind"] == "auth_capture_purchase")
+        row["merchant"]["paymentState"] = "AUTHORIZED"
+        financial_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["financial_invariants"]["artifact_sha256"] = m.sha256(financial_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "Merchant terminal state conflict"):
+            m.inspect(root)
+
+    def test_financial_provider_version_crossbinds_day_cardinality(self):
+        root = self.init()
+        write_terminal(root, 1)
+        financial_path = root / "days/day-000001.financial-invariants.verification.json"
+        artifact = m.load_json(financial_path)
+        artifact["observations"][0]["provider"]["version"] += 1
+        financial_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["financial_invariants"]["artifact_sha256"] = m.sha256(financial_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "provider version differs"):
+            m.inspect(root)
+
     def test_reconciliation_generic_pass_sha_no_longer_advances_frontier(self):
         root = self.init()
         write_terminal(root, 1)
