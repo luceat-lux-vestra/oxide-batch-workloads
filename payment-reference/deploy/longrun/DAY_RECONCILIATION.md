@@ -1,4 +1,4 @@
-# Day reconciliation verification contract v1 (#318)
+# Day reconciliation verification contract v2 (#318)
 
 This contract replaces the legacy terminal-day `reconciliation: PASS + SHA`
 placeholder with a retained, independently replayable proof over the exact
@@ -12,7 +12,7 @@ The day proof is retained at:
 
 with schema:
 
-`oxide-batch-workloads.payment-reference-day-reconciliation-verification/v1`
+`oxide-batch-workloads.payment-reference-day-reconciliation-verification/v2`
 
 and decision:
 
@@ -29,6 +29,14 @@ The artifact binds:
 - the complete secret-free workload producer report;
 - the logical-day reconciliation crash schedule and, when scheduled, retained
   crash execution evidence.
+
+## Version boundary
+
+Reconciliation proof schema version 1 is intentionally superseded before live
+campaign execution. Its snapshot identifier used ':' separators, while the
+published `payment-reconciliation-postgres` workload rejects ':' in snapshot IDs.
+Version 2 freezes the workload-compatible identifier below; v1 retained files are
+therefore rejected by the current day-verification scanner.
 
 ## Snapshot identity
 
