@@ -82,8 +82,9 @@ independently revalidates those artifacts and their cross-bindings before a day
 can advance the frontier. Synthetic test fixtures are never campaign evidence.
 
 The reconciliation proof now has a read-only producer/retainer CLI over an
-already-completed `payment-reconciliation-postgres` state. Full online traffic,
-fault/crash orchestration, financial-invariant collection, quiescence sampling,
+already-completed `payment-reconciliation-postgres` state. Day financial
+invariants likewise have a 100-slot read-only collector/retainer over completed
+EOD state. Full online traffic, fault/crash orchestration, quiescence sampling,
 and terminal-day orchestration remain separate implementation slices.
 
 No CLI for writing completed days is exposed in this slice, so operators
