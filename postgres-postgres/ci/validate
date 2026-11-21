@@ -740,6 +740,9 @@ run_ci_stage() {
   echo "Allocator repeated memory/quiescence producer tests"
   python3 benchmark/test_allocator_memory_quiescence.py
 
+  echo "Allocator same-process churn producer tests"
+  python3 benchmark/test_allocator_churn.py
+
   echo "S10 deployment asset contract tests"
   python3 deploy/s10/test-assets.py
 
