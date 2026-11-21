@@ -33,6 +33,10 @@ NORMAL = {
 PROVENANCE_FILES = ("host.json", "runtime.json", "container-images.json", "toolchains.json")
 COMPOSE_SERVICES = {"merchant", "gateway", "killbill", "payment-sandbox", "payment-sandbox-fault-proxy", "merchant-db", "gateway-db", "killbill-db"}
 BASE = "http://127.0.0.1:18083"
+DAY_SCHEMA = "payment-reference-pilot-day-v1"
+INTENT_SCHEMA = "payment-reference-pilot-intent-v1"
+RESPONSE_SCHEMA = "payment-reference-pilot-response-v1"
+RESULT_DECISION = "ONE_SLOT_EXECUTED_NOT_FINANCIALLY_VERIFIED"
 
 
 def load_traffic():
@@ -96,6 +100,40 @@ def read_object(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_bytes())
     require(type(value) is dict, f"invalid JSON object: {path.name}")
     return value
+
+
+def day_path(evidence_root: Path, plan: dict[str, Any]) -> Path:
+    return evidence_root.resolve() / f'{plan["campaign_id"]}-day{plan["logical_day_sequence"]:06}'
+
+
+def day_identity(
+    plan: dict[str, Any], source_sha: str, provenance_hashes: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "schema": DAY_SCHEMA,
+        "campaign_id": plan["campaign_id"],
+        "logical_day_sequence": plan["logical_day_sequence"],
+        "source_sha": source_sha,
+        "day_plan_sha256": sha(stable(plan)),
+        "provenance_sha256": provenance_hashes,
+    }
+
+
+def slot_requests(item: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item["create_order"], item["prepare_payment"], *item["mutations"]]
+
+
+def slot_result(plan: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision": RESULT_DECISION,
+        "day": plan["logical_day_sequence"],
+        "slot": item["slot"],
+        "kind": item["kind"],
+        "merchant_payment_id": item["merchant_payment_id"],
+        "merchant_order_id": item["merchant_order_id"],
+        "requests": len(slot_requests(item)),
+        "independent_financial_verification_required": True,
+    }
 
 
 def qualified_source(expected_sha: str, provenance_dir: Path) -> dict[str, str]:
@@ -240,7 +278,7 @@ def record_post(
     payload = request["body"]
     # Commit the precise request identity before any network mutation.
     exclusive_write(intent, {
-        "schema": "payment-reference-pilot-intent-v1", "ordinal": ordinal,
+        "schema": INTENT_SCHEMA, "ordinal": ordinal,
         "method": "POST", "path": request["path"], "body_sha256": sha(stable(payload)),
         "expected_status": expected_status,
     })
@@ -255,7 +293,7 @@ def record_post(
     except ValueError:
         parsed = None
     exclusive_write(result, {
-        "schema": "payment-reference-pilot-response-v1", "ordinal": ordinal,
+        "schema": RESPONSE_SCHEMA, "ordinal": ordinal,
         "status": status, "body_sha256": sha(body), "json_body": parsed,
     })
     require(status == expected_status, f"HTTP {status}, expected {expected_status}; no retry")
@@ -306,15 +344,8 @@ def run_one(
     require(not evidence_root.is_symlink(), "operator evidence root must not be a symlink")
     root = evidence_root.resolve()
     require(root.exists() and root.is_dir(), "operator evidence root must exist")
-    day = root / f'{plan["campaign_id"]}-day{plan["logical_day_sequence"]:06}'
-    identity = {
-        "schema": "payment-reference-pilot-day-v1",
-        "campaign_id": plan["campaign_id"],
-        "logical_day_sequence": plan["logical_day_sequence"],
-        "source_sha": source_sha,
-        "day_plan_sha256": sha(stable(plan)),
-        "provenance_sha256": provenance_hashes,
-    }
+    day = day_path(root, plan)
+    identity = day_identity(plan, source_sha, provenance_hashes)
     try:
         day.mkdir(mode=0o700)
         first = True
@@ -340,7 +371,7 @@ def run_one(
         # when its last response was durably observed.
         item_dir.mkdir(mode=0o700, exist_ok=False)
         fsync_dir(day)
-        requests = [item["create_order"], item["prepare_payment"], *item["mutations"]]
+        requests = slot_requests(item)
         for i, request in enumerate(requests, 1):
             state = NORMAL[item["kind"]][i - 3] if i >= 3 else None
             observed = record_post(item_dir, i, request, 201 if i <= 2 else 200, state, post)
@@ -357,18 +388,90 @@ def run_one(
         require(view.get("merchantOrderId") == item["merchant_order_id"], "final Merchant GET order identity drift")
         require(view.get("paymentState") == item["expected_normal_terminal_state"], "final Merchant GET state mismatch")
         require(view.get("amountMinor") == 1000 and view.get("currency") == "USD", "final Merchant GET amount mismatch")
-        result = {
-            "decision": "ONE_SLOT_EXECUTED_NOT_FINANCIALLY_VERIFIED",
-            "day": plan["logical_day_sequence"],
-            "slot": slot,
-            "kind": item["kind"],
-            "merchant_payment_id": item["merchant_payment_id"],
-            "merchant_order_id": item["merchant_order_id"],
-            "requests": len(requests),
-            "independent_financial_verification_required": True,
-        }
+        result = slot_result(plan, item)
         exclusive_write(item_dir / "result.json", result)
         return result
+
+
+
+def validate_completed_slot(
+    *,
+    plan: dict[str, Any],
+    slot: int,
+    evidence_root: Path,
+    source_sha: str,
+    provenance_hashes: dict[str, str],
+) -> dict[str, Any]:
+    """Re-verify one fully acknowledged normal slot without network mutation."""
+    require(type(slot) is int and 1 <= slot <= 100, "slot outside 1..100")
+    item = plan["slots"][slot - 1]
+    require(item["slot"] == slot and item["kind"] in NORMAL, "fault overlay is not a completed normal slot")
+    require(not evidence_root.is_symlink(), "operator evidence root must not be a symlink")
+    root = evidence_root.resolve()
+    require(root.exists() and root.is_dir(), "operator evidence root must exist")
+    day = day_path(root, plan)
+    require(day.is_dir() and not day.is_symlink(), "normal traffic day evidence missing/unsafe")
+    require(
+        read_object(day / "identity.json") == day_identity(plan, source_sha, provenance_hashes),
+        "pilot day source/provenance/plan drift",
+    )
+    require(validate_setup(day / "setup", plan["merchant_setup"]), "day setup not validated")
+
+    item_dir = day / f"slot-{slot:03}"
+    require(item_dir.is_dir() and not item_dir.is_symlink(), "normal slot evidence missing/unsafe")
+    requests = slot_requests(item)
+    expected_files = {item_dir / "result.json"}
+
+    for ordinal, request in enumerate(requests, 1):
+        intent_path, response_path = step_files(item_dir, ordinal)
+        expected_files.update((intent_path, response_path))
+        intent = read_object(intent_path)
+        response = read_object(response_path)
+        expected_status = 201 if ordinal <= 2 else 200
+        require(
+            intent == {
+                "schema": INTENT_SCHEMA,
+                "ordinal": ordinal,
+                "method": "POST",
+                "path": request["path"],
+                "body_sha256": sha(stable(request["body"])),
+                "expected_status": expected_status,
+            },
+            f"slot {slot} request {ordinal}: intent drift",
+        )
+        require(
+            set(response) == {"schema", "ordinal", "status", "body_sha256", "json_body"}
+            and response["schema"] == RESPONSE_SCHEMA
+            and response["ordinal"] == ordinal
+            and response["status"] == expected_status
+            and isinstance(response["body_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", response["body_sha256"]) is not None,
+            f"slot {slot} request {ordinal}: response envelope drift",
+        )
+
+        observed = response["json_body"]
+        if ordinal == 2:
+            require(
+                type(observed) is dict
+                and observed.get("merchantPaymentId") == item["merchant_payment_id"]
+                and observed.get("merchantOrderId") == item["merchant_order_id"],
+                f"slot {slot}: prepared payment acknowledgement drift",
+            )
+        elif ordinal >= 3:
+            expected_state = NORMAL[item["kind"]][ordinal - 3]
+            require(
+                type(observed) is dict
+                and observed.get("merchantPaymentId") == item["merchant_payment_id"]
+                and observed.get("paymentState") == expected_state
+                and observed.get("operationState") == "SUCCEEDED"
+                and observed.get("operationId") == request["body"]["operationId"],
+                f"slot {slot} request {ordinal}: mutation acknowledgement drift",
+            )
+
+    require(set(item_dir.iterdir()) == expected_files, f"slot {slot}: unexpected evidence files")
+    result = read_object(item_dir / "result.json")
+    require(result == slot_result(plan, item), f"slot {slot}: retained result drift")
+    return result
 
 
 def main() -> int:

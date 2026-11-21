@@ -495,4 +495,6 @@ Financial invariants now also use a bound retained artifact. `campaign_day_finan
 
 Per-day quiescence now has a dedicated read-only resource sampler. `campaign_quiescence.py` derives the required 60/600-second window from the deterministic day plan, observes at a contract target cadence with a five-second maximum accepted gap, binds the exact qualified Compose/source identity, and appends fail-closed host/container/process/PostgreSQL/filesystem evidence to `samples.jsonl`. See [QUIESCENCE.md](QUIESCENCE.md).
 
+Day-wide normal online traffic now has a coordinator over the existing write-ahead one-slot pilot. It safely executes or resumes every non-fault slot while retaining the fault-overlay slots as an explicit external dependency; it cannot mark a day complete. See [ONLINE_TRAFFIC.md](ONLINE_TRAFFIC.md).
+
 Day verification v4 therefore has no remaining controller-authored generic `PASS + SHA` checks.
