@@ -131,65 +131,65 @@ impl RecoveryProcessor {
 
         let (attempt_state, merchant_http_status, outcome_kind, canonical, provider) = match replay
         {
-                ReplayTransportOutcome::TransportUnknown => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    (
-                        "CALL_UNKNOWN",
-                        None,
-                        "MERCHANT_TRANSPORT_UNKNOWN",
-                        canonical,
-                        provider,
-                    )
-                }
-                ReplayTransportOutcome::Rejected { http_status } => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        if is_retryable_http_status(http_status) {
-                            "MERCHANT_RETRYABLE_REJECTION"
-                        } else {
-                            "MERCHANT_NON_RETRYABLE_REJECTION"
-                        },
-                        canonical,
-                        provider,
-                    )
-                }
-                ReplayTransportOutcome::IncoherentResponse { http_status } => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        "MERCHANT_INCOHERENT_RESPONSE",
-                        canonical,
-                        provider,
-                    )
-                }
-                ReplayTransportOutcome::Canonical { http_status, view } => {
-                    let canonical = canonical_from_view(&view);
-                    let provider_id = view
-                        .mapping
-                        .provider_payment_id
-                        .as_deref()
-                        .or(candidate.provider_payment_id.as_deref());
-                    let provider = self.fetch_provider(provider_id).await?;
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        "MERCHANT_CANONICAL_RESPONSE",
-                        canonical,
-                        provider,
-                    )
-                }
+            ReplayTransportOutcome::TransportUnknown => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "CALL_UNKNOWN",
+                    None,
+                    "MERCHANT_TRANSPORT_UNKNOWN",
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::Rejected { http_status } => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    if is_retryable_http_status(http_status) {
+                        "MERCHANT_RETRYABLE_REJECTION"
+                    } else {
+                        "MERCHANT_NON_RETRYABLE_REJECTION"
+                    },
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::IncoherentResponse { http_status } => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    "MERCHANT_INCOHERENT_RESPONSE",
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::Canonical { http_status, view } => {
+                let canonical = canonical_from_view(&view);
+                let provider_id = view
+                    .mapping
+                    .provider_payment_id
+                    .as_deref()
+                    .or(candidate.provider_payment_id.as_deref());
+                let provider = self.fetch_provider(provider_id).await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    "MERCHANT_CANONICAL_RESPONSE",
+                    canonical,
+                    provider,
+                )
+            }
         };
 
         let decision = decision_from_observation(
