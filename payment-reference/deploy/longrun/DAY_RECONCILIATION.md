@@ -36,7 +36,7 @@ The proof accepts only the root live CLEAR snapshot for the logical day.
 
 Required metadata:
 
-- snapshot ID `<campaign-id>:day-NNNNNN:reconciliation`;
+- snapshot ID `<campaign-id>-day-NNNNNN-reconciliation` (the workload's ASCII-safe snapshot identifier contract forbids `:`);
 - contract `payment-reconciliation-v1` through the workload-owned snapshot;
 - logical business date equal to the campaign day;
 - provider scope equal to the deterministic Reference Merchant identity;
@@ -119,11 +119,36 @@ A scheduled crash requires:
 
 Crash evidence is forbidden on other logical days.
 
+## Read-only producer CLI
+
+After the reconciliation workload has already reached its final state, retain the
+day proof with the exact campaign-pinned binary:
+
+```bash
+export PAYMENT_RECONCILIATION_DATABASE_URL='<existing workload database URL>'
+
+python3 payment-reference/deploy/longrun/campaign_day_reconciliation.py \
+  --campaign-dir '<campaign evidence directory>' \
+  --day N \
+  --workload-binary '<exact payment-reconciliation-postgres binary>' \
+  [--crash-evidence '<qualified scheduled-crash evidence JSON>']
+```
+
+The producer verifies the binary SHA-256 against `campaign.json`, invokes only:
+
+`payment-reconciliation-postgres verify --database-url ... --snapshot-id ...`
+
+and then runs this module's independent validator before create-only retention.
+An identical existing output is an idempotent replay; differing existing bytes
+are a hard conflict. Database URLs and command stderr are not serialized into
+the retained proof.
+
 ## Claim boundary
 
-This proof validates retained reconciliation state. It does not itself execute
-the workload, mutate Merchant/provider state, start the OCI campaign, or advance
-a logical-day frontier.
+This proof validates and retains already-completed reconciliation state. The
+producer does not create a source snapshot, execute or recover the OxideBatch
+job, finalize publication, mutate Merchant/provider state, start the OCI
+campaign, or advance a logical-day frontier.
 
-The live campaign producer/controller that captures this retained artifact is a
-separate implementation slice.
+Crash execution/orchestration and the full day controller remain separate
+implementation slices.
