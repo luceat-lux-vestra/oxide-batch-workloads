@@ -185,12 +185,12 @@ async fn main() -> Result<()> {
                 )
             }
         }
-        Command::Reset { .. } => checkpoint_seven("reset"),
+        Command::Reset { .. } => deferred_reset(),
     }
 }
 
-fn checkpoint_seven(command: &str) -> Result<()> {
-    bail!("{command} is intentionally deferred until issue #271 checkpoint 7")
+fn deferred_reset() -> Result<()> {
+    bail!("reset remains intentionally unimplemented after the read-only verify checkpoint")
 }
 
 #[cfg(test)]
