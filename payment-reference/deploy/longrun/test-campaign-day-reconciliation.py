@@ -150,10 +150,12 @@ class ReconciliationProducerTests(unittest.TestCase):
         self.assertNotIn("run", observed["command"])
         self.assertNotIn("recover", observed["command"])
         self.assertNotIn("finalize", observed["command"])
+        self.assertNotIn("postgresql://read-only-test", observed["command"])
         self.assertEqual(
             observed["command"][-1],
             "test318-day-000001-reconciliation",
         )
+        self.assertEqual(observed["kwargs"]["env"]["DATABASE_URL"], "postgresql://read-only-test")
         self.assertEqual(observed["kwargs"]["timeout"], 30)
         self.assertFalse(observed["kwargs"]["check"])
 
