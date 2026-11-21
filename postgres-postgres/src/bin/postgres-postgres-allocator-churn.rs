@@ -89,7 +89,7 @@ fn validate_cli(cli: &Cli) -> Result<()> {
     if !(MIN_CYCLES..=MAX_CYCLES).contains(&cli.cycles) {
         bail!("cycles must be between {MIN_CYCLES} and {MAX_CYCLES}");
     }
-    if cli.cycles % 2 != 0 {
+    if !cli.cycles.is_multiple_of(2) {
         bail!("cycles must be even so cursor/paging counts remain balanced");
     }
     if cli.idle_ms == 0 || cli.idle_ms > MAX_IDLE_MILLIS {
