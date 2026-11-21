@@ -330,6 +330,7 @@ def _validate_crash(
         require(crash is None, "recovery crash evidence supplied on a day without a scheduled recovery crash")
         return None
 
+    require(crash is not None, "scheduled recovery crash evidence required")
     crash = object_(crash, "recovery crash evidence")
     expected_fields = {
         "schema", "schema_version", "campaign_id", "logical_day_sequence", "run_id",
