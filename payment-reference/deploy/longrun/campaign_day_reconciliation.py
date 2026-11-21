@@ -492,10 +492,6 @@ def main() -> int:
     parser.add_argument("--campaign-dir", type=Path, required=True)
     parser.add_argument("--day", type=int, required=True)
     parser.add_argument("--workload-binary", type=Path, required=True)
-    parser.add_argument(
-        "--database-url",
-        default=os.environ.get("PAYMENT_RECONCILIATION_DATABASE_URL", ""),
-    )
     parser.add_argument("--crash-evidence", type=Path)
     args = parser.parse_args()
     try:
@@ -518,7 +514,7 @@ def main() -> int:
 
         report = load_producer_report(
             workload_binary=workload_binary,
-            database_url=args.database_url,
+            database_url=os.environ.get("PAYMENT_RECONCILIATION_DATABASE_URL", ""),
             snapshot_id=snapshot_id,
         )
         artifact = build_artifact(
