@@ -473,6 +473,14 @@ retained independent artifacts rather than generic PASS + SHA claims. See
 The v2 scanner verifies campaign/day/source identity, safe relative paths,
 exact retained-file hashes, settlement subjects, and the cross-artifact
 roster/statement linkage. Version 1 day-independent verification is rejected.
-The recovery, reconciliation, financial-invariant and side-effect-cardinality
-checks remain on their legacy descriptor shape until their dedicated proof
-contracts are defined.
+Provider side-effect cardinality now also uses a bound retained artifact
+rather than generic PASS + SHA. The independent
+[`campaign_day_cardinality.py`](campaign_day_cardinality.py) producer requires
+all 100 planned provider identities, authentic provider timeline reads,
+the pinned cardinality verifier, and the exact independent settlement
+roster verification. The scanner replays all 100 raw ledgers and requires
+the day proof to cross-bind to the retained settlement roster.
+
+See [DAY_CARDINALITY.md](DAY_CARDINALITY.md).
+Only recovery, reconciliation, and financial-invariant checks remain on
+legacy descriptors pending their separate independent proof contracts.

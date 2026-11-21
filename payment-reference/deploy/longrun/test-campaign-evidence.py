@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+import campaign_day_cardinality as day_cardinality
+
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("campaign_evidence", HERE / "campaign-evidence.py")
 assert spec is not None and spec.loader is not None
@@ -47,9 +49,66 @@ def fixture(root):
     }
     return provenance, identity
 
+def mock_timeline(payment_id, kind, contract):
+    status = contract["provider_status"]
+    if kind == "auth_capture_purchase":
+        types = ("payment.created", "payment.authorized", "payment.captured")
+    elif kind == "authorize_capture":
+        types = ("payment.created", "payment.authorized", "payment.captured", "payment.captured")
+    elif kind == "authorize_cancel":
+        types = ("payment.created", "payment.authorized", "payment.cancelled")
+    elif kind == "auth_capture_refund":
+        types = ("payment.created", "payment.authorized", "payment.captured", "payment.refunded", "payment.refunded")
+    else:
+        types = ("payment.created", "payment.failed" if status == "failed" else "payment.authorized")
+    events = []
+    for index, event_type in enumerate(types, 1):
+        prior = types[index - 2] if index > 1 else None
+        events.append({
+            "id": f"{payment_id}:{event_type}:{index}",
+            "aggregate_id": payment_id,
+            "type": event_type,
+            "occurred_at": f"2026-11-21T00:00:{index:02}Z",
+            "aggregate_version": index,
+            "runtime_sequence": 100 + index,
+            "correlation_id": f"corr-{payment_id}-{index}",
+            "causation_id": "" if index == 1 else f"{payment_id}:{prior}:{index-1}",
+        })
+    return {
+        "payment": {
+            "id": payment_id, "amount": 1000, "currency": "USD",
+            "status": status, "authorized_amount": contract["authorized_amount_minor"],
+            "captured_amount": contract["captured_amount_minor"],
+            "refunded_amount": contract["refunded_amount_minor"], "version": len(types),
+        },
+        "events": events,
+    }
+
+
+def mocked_day_observations(plan):
+    rows, provider_timelines = [], {}
+    for item in plan["slots"]:
+        payment_id = "provider-" + item["merchant_payment_id"]
+        contract = day_cardinality.expected(item)
+        status = contract["provider_status"]
+        timeline = None if status == "ABSENT" else mock_timeline(payment_id, item["kind"], contract)
+        provider_timelines[payment_id] = (404, None) if timeline is None else (200, timeline)
+        rows.append({
+            "slot": item["slot"], "kind": item["kind"], "fault_class": item["fault_class"],
+            "merchant_payment_id": item["merchant_payment_id"],
+            "provider_payment_id": payment_id, "provider_status": status,
+            "provider_version": None if timeline is None else timeline["payment"]["version"],
+            "captured_amount_minor": contract["captured_amount_minor"],
+            "refunded_amount_minor": contract["refunded_amount_minor"],
+            "settlement_eligible": status in {"captured", "refunded"},
+        })
+    return rows, provider_timelines
+
 
 def settlement_artifacts(root, sequence):
     plan = m.plan_day(sequence)
+    day_plan = day_cardinality.plan_for(root.name, sequence)
+    rows, provider_timelines = mocked_day_observations(day_plan)
     roster_digest = "sha256:" + ("1" * 64)
     account = "payment-sandbox-default"
     roster = {
@@ -59,20 +118,30 @@ def settlement_artifacts(root, sequence):
         "campaign_id": root.name,
         "logical_day_sequence": sequence,
         "source_revision": SHA40,
-        "day_plan_sha256": "2" * 64,
-        "plan_contract_sha256": "3" * 64,
-        "fault_catalog_sha256": "4" * 64,
+        "day_plan_sha256": day_cardinality.digest(day_plan).removeprefix("sha256:"),
+        "plan_contract_sha256": day_plan["plan_contract_sha256"],
+        "fault_catalog_sha256": day_plan["fault_catalog_sha256"],
         "provider_account_id": account,
         "settlement_date": plan["logical_business_date"],
         "currency": "USD",
         "observed_slot_count": 100,
         "eligible_payment_count": 80,
         "roster_sha256": roster_digest,
-        "observations": [{"slot": slot} for slot in range(1, 101)],
+        "observations": rows,
     }
     roster_rel = f"statements/day-{sequence:06}.roster.verification.json"
     roster_path = root / roster_rel
     m.create_only(roster_path, m.canonical_bytes(roster))
+    day_card = day_cardinality.collect(
+        plan=day_plan, source_revision=SHA40, roster_verification=roster,
+        read=lambda payment_id: provider_timelines[payment_id],
+    )
+    cardinality_rel = f"statements/day-{sequence:06}.provider-cardinality.verification.json"
+    cardinality_path = root / cardinality_rel
+    m.create_only(cardinality_path, m.canonical_bytes(day_card))
+    cardinality_subject = day_cardinality.validate(
+        day_card, plan=day_plan, source_revision=SHA40, roster_verification=roster,
+    )
 
     statement_id = "statement-" + ("5" * 64)
     statement_digest = "sha256:" + ("6" * 64)
@@ -144,6 +213,17 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
+        "side_effect_cardinality": {
+            "verdict": "PASS",
+            "artifact_schema": day_cardinality.SCHEMA,
+            "artifact_schema_version": 1,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": cardinality_rel,
+            "artifact_sha256": m.sha256(cardinality_path),
+            "subject": cardinality_subject,
+        },
         "settlement_roster": {
             "verdict": "PASS",
             "artifact_schema": m.SETTLEMENT_ROSTER_SCHEMA,
@@ -175,7 +255,7 @@ def write_terminal(root, sequence, *, started=True):
     checks = {
         c: {"verdict": "PASS", "artifact_sha256": SHA64}
         for c in CHECKS
-        if c not in m.SETTLEMENT_CHECKS
+        if c not in m.SETTLEMENT_CHECKS and c != m.CARDINALITY_CHECK
     }
     checks.update(settlement_artifacts(root, sequence))
     verification = {
@@ -412,6 +492,59 @@ class CampaignEvidenceTests(unittest.TestCase):
         verification["checks"]["settlement_close"]["subject"]["line_count"] = 79
         verification_path.write_bytes(m.canonical_bytes(verification))
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
+            m.inspect(root)
+
+    def test_cardinality_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["side_effect_cardinality"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_cardinality_rejects_missing_slot_even_if_file_sha_recomputed(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "statements/day-000001.provider-cardinality.verification.json"
+        value = m.load_json(path)
+        value["observations"].pop()
+        path.write_bytes(m.canonical_bytes(value))
+        verification_path = root / "days/000001.verification.json"
+        record = m.load_json(verification_path)
+        record["checks"]["side_effect_cardinality"]["artifact_sha256"] = m.sha256(path)
+        verification_path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "requires exactly 100 slots"):
+            m.inspect(root)
+
+    def test_cardinality_rejects_rehashed_duplicated_provider_ledger(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "statements/day-000001.provider-cardinality.verification.json"
+        value = m.load_json(path)
+        # Duplicate identity across two slots even when the descriptor SHA is repaired.
+        value["observations"][1]["provider_payment_id"] = value["observations"][0]["provider_payment_id"]
+        path.write_bytes(m.canonical_bytes(value))
+        verification_path = root / "days/000001.verification.json"
+        record = m.load_json(verification_path)
+        record["checks"]["side_effect_cardinality"]["artifact_sha256"] = m.sha256(path)
+        verification_path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "provider mapping"):
+            m.inspect(root)
+
+    def test_cardinality_artifact_crossbinds_exact_roster_verification_digest(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "statements/day-000001.provider-cardinality.verification.json"
+        value = m.load_json(path)
+        value["roster_verification_sha256"] = "sha256:" + "f" * 64
+        path.write_bytes(m.canonical_bytes(value))
+        verification_path = root / "days/000001.verification.json"
+        record = m.load_json(verification_path)
+        record["checks"]["side_effect_cardinality"]["artifact_sha256"] = m.sha256(path)
+        verification_path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "plan/roster digest mismatch"):
             m.inspect(root)
 
     def test_out_of_order_gap_duplicate_terminal_and_truncated_jsonl_block(self):
