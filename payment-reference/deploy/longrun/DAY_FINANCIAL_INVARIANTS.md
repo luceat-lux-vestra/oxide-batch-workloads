@@ -99,13 +99,31 @@ from different logical payments or different points in time.
 
 ## Authority and execution boundary
 
-`campaign_day_financial_invariants.py` is an offline validator. It does not
-perform payment mutations, run batch workloads, activate OCI, or advance the
-campaign frontier.
+`campaign_day_financial_invariants.py` now provides both the offline validator
+and a bounded live **read-only collector/retainer** for one already-completed
+logical day. The collector performs exactly one Merchant, Gateway, Kill Bill and
+provider GET per deterministic slot, recomputes the existing pure per-slot
+financial proof, validates the complete 100-slot artifact, then retains it with
+create-only semantics.
 
-The online controller/collector that performs the 100 read-only Merchant,
-Gateway, Kill Bill and provider GETs and writes this retained artifact is a
-separate implementation/execution slice.
+Runtime endpoints are explicit CLI inputs rather than source constants. Kill
+Bill credentials remain environment-only, and provider reads reuse the
+qualified Compose service path from `campaign-financial-consistency.py`.
+
+Example:
+
+```bash
+python3 payment-reference/deploy/longrun/campaign_day_financial_invariants.py \
+  --campaign-dir '<campaign evidence directory>' \
+  --day N \
+  --merchant-url '<qualified Merchant loopback URL>' \
+  --gateway-url '<qualified Gateway loopback URL>' \
+  --killbill-url '<qualified Kill Bill loopback URL>'
+```
+
+This command does not perform payment mutations, run or recover batch workloads,
+execute settlement close, activate OCI, or advance the campaign frontier.
+Exact retained-file replay is allowed; conflicting bytes fail closed.
 
 The existing single-payment command remains a diagnostic read-only probe; a
 single successful invocation is not a day PASS.
