@@ -129,8 +129,8 @@ impl RecoveryProcessor {
             .await;
         let replay = self.merchant.execute(&candidate, &self.crash).await?;
 
-        let (attempt_state, merchant_http_status, outcome_kind, canonical, provider) =
-            match replay {
+        let (attempt_state, merchant_http_status, outcome_kind, canonical, provider) = match replay
+        {
                 ReplayTransportOutcome::TransportUnknown => {
                     let canonical = canonical_from_candidate(&candidate);
                     let provider = self
@@ -190,7 +190,7 @@ impl RecoveryProcessor {
                         provider,
                     )
                 }
-            };
+        };
 
         let decision = decision_from_observation(
             &candidate,
@@ -395,7 +395,9 @@ pub(crate) fn decision_from_observation(
         "MERCHANT_RETRYABLE_REJECTION" => {
             let status = merchant_http_status
                 .and_then(|value| u16::try_from(value).ok())
-                .ok_or_else(|| anyhow::anyhow!("retryable rejection requires a valid HTTP status"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("retryable rejection requires a valid HTTP status")
+                })?;
             if !is_retryable_http_status(status) {
                 bail!("retryable rejection carries a non-retryable HTTP status");
             }
@@ -407,7 +409,9 @@ pub(crate) fn decision_from_observation(
         "MERCHANT_NON_RETRYABLE_REJECTION" => {
             let status = merchant_http_status
                 .and_then(|value| u16::try_from(value).ok())
-                .ok_or_else(|| anyhow::anyhow!("non-retryable rejection requires a valid HTTP status"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("non-retryable rejection requires a valid HTTP status")
+                })?;
             if is_retryable_http_status(status) {
                 bail!("non-retryable rejection carries a retryable HTTP status");
             }
@@ -422,9 +426,7 @@ pub(crate) fn decision_from_observation(
             }
             Ok(OracleDecision {
                 classification: RecoveryClassification::HoldManual,
-                violations: vec![
-                    "Merchant replay returned an incoherent canonical response".into(),
-                ],
+                violations: vec!["Merchant replay returned an incoherent canonical response".into()],
             })
         }
         "MERCHANT_CANONICAL_RESPONSE" => {
