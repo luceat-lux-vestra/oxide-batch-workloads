@@ -765,6 +765,73 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
             m.inspect(root)
 
+    def test_reconciliation_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["reconciliation"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "reconciliation: bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_reconciliation_result_tamper_blocks_even_when_descriptor_sha_is_repaired(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        artifact["producer_report"]["actual"]["result_digest"] = "f" * 64
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "reconciliation result digest mismatch"):
+            m.inspect(root)
+
+    def test_reconciliation_provider_snapshot_crossbinds_day_cardinality(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        provider_rows = artifact["producer_report"]["snapshot"]["provider"]
+        provider_rows[0]["provider_version"] += 1
+        metadata = artifact["producer_report"]["snapshot"]["metadata"]
+        metadata["provider_snapshot_digest"] = day_reconciliation.qualification.row_digest(provider_rows)
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+
+        day_plan = day_cardinality.plan_for(root.name, 1)
+        subject = day_reconciliation.validate(
+            artifact,
+            plan=day_plan,
+            source_revision=SHA40,
+            workload_binary_sha256=SHA64,
+        )
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification["checks"]["reconciliation"]["subject"] = subject
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "provider version differs"):
+            m.inspect(root)
+
+    def test_scheduled_reconciliation_crash_requires_execution_evidence(self):
+        root = self.init()
+        settlement_artifacts(root, 3)
+        reconciliation_path = root / "days/day-000003.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        artifact["crash_evidence"] = None
+        with self.assertRaisesRegex(
+            day_reconciliation.ReconciliationEvidenceError,
+            "scheduled reconciliation crash",
+        ):
+            day_reconciliation.validate(
+                artifact,
+                plan=day_cardinality.plan_for(root.name, 3),
+                source_revision=SHA40,
+                workload_binary_sha256=SHA64,
+            )
+
     def test_recovery_generic_pass_sha_no_longer_advances_frontier(self):
         root = self.init()
         write_terminal(root, 1)
