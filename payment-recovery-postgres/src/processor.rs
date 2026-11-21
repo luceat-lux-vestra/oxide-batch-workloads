@@ -129,96 +129,76 @@ impl RecoveryProcessor {
             .await;
         let replay = self.merchant.execute(&candidate, &self.crash).await?;
 
-        let (attempt_state, merchant_http_status, outcome_kind, canonical, provider, decision) =
-            match replay {
-                ReplayTransportOutcome::TransportUnknown => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    let decision = OracleDecision {
-                        classification: RecoveryClassification::RetryLater,
-                        violations: vec!["Merchant replay transport outcome is unknown".into()],
-                    };
-                    (
-                        "CALL_UNKNOWN",
-                        None,
-                        "MERCHANT_TRANSPORT_UNKNOWN",
-                        canonical,
-                        provider,
-                        decision,
-                    )
-                }
-                ReplayTransportOutcome::Rejected { http_status } => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    let retryable = is_retryable_http_status(http_status);
-                    let decision = OracleDecision {
-                        classification: if retryable {
-                            RecoveryClassification::RetryLater
-                        } else {
-                            RecoveryClassification::HoldManual
-                        },
-                        violations: if retryable {
-                            Vec::new()
-                        } else {
-                            vec![format!("Merchant replay rejected HTTP {http_status}")]
-                        },
-                    };
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        if retryable {
-                            "MERCHANT_RETRYABLE_REJECTION"
-                        } else {
-                            "MERCHANT_NON_RETRYABLE_REJECTION"
-                        },
-                        canonical,
-                        provider,
-                        decision,
-                    )
-                }
-                ReplayTransportOutcome::IncoherentResponse { http_status } => {
-                    let canonical = canonical_from_candidate(&candidate);
-                    let provider = self
-                        .fetch_provider(candidate.provider_payment_id.as_deref())
-                        .await?;
-                    let decision = OracleDecision {
-                        classification: RecoveryClassification::HoldManual,
-                        violations: vec![
-                            "Merchant replay returned an incoherent canonical response".into(),
-                        ],
-                    };
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        "MERCHANT_INCOHERENT_RESPONSE",
-                        canonical,
-                        provider,
-                        decision,
-                    )
-                }
-                ReplayTransportOutcome::Canonical { http_status, view } => {
-                    let canonical = canonical_from_view(&view);
-                    let provider_id = view
-                        .mapping
-                        .provider_payment_id
-                        .as_deref()
-                        .or(candidate.provider_payment_id.as_deref());
-                    let provider = self.fetch_provider(provider_id).await?;
-                    let decision = oracle::classify(&candidate, &canonical, &provider, false);
-                    (
-                        "OBSERVED",
-                        Some(i64::from(http_status)),
-                        "MERCHANT_CANONICAL_RESPONSE",
-                        canonical,
-                        provider,
-                        decision,
-                    )
-                }
-            };
+        let (attempt_state, merchant_http_status, outcome_kind, canonical, provider) = match replay
+        {
+            ReplayTransportOutcome::TransportUnknown => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "CALL_UNKNOWN",
+                    None,
+                    "MERCHANT_TRANSPORT_UNKNOWN",
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::Rejected { http_status } => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    if is_retryable_http_status(http_status) {
+                        "MERCHANT_RETRYABLE_REJECTION"
+                    } else {
+                        "MERCHANT_NON_RETRYABLE_REJECTION"
+                    },
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::IncoherentResponse { http_status } => {
+                let canonical = canonical_from_candidate(&candidate);
+                let provider = self
+                    .fetch_provider(candidate.provider_payment_id.as_deref())
+                    .await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    "MERCHANT_INCOHERENT_RESPONSE",
+                    canonical,
+                    provider,
+                )
+            }
+            ReplayTransportOutcome::Canonical { http_status, view } => {
+                let canonical = canonical_from_view(&view);
+                let provider_id = view
+                    .mapping
+                    .provider_payment_id
+                    .as_deref()
+                    .or(candidate.provider_payment_id.as_deref());
+                let provider = self.fetch_provider(provider_id).await?;
+                (
+                    "OBSERVED",
+                    Some(i64::from(http_status)),
+                    "MERCHANT_CANONICAL_RESPONSE",
+                    canonical,
+                    provider,
+                )
+            }
+        };
+
+        let decision = decision_from_observation(
+            &candidate,
+            merchant_http_status,
+            outcome_kind,
+            &canonical,
+            &provider,
+        )?;
 
         if matches!(
             decision.classification,
@@ -395,6 +375,70 @@ fn unavailable_provider(provider_payment_id: Option<&str>) -> ProviderObservatio
     }
 }
 
+pub(crate) fn decision_from_observation(
+    candidate: &CandidateSnapshot,
+    merchant_http_status: Option<i64>,
+    outcome_kind: &str,
+    canonical: &CanonicalObservation,
+    provider: &ProviderObservation,
+) -> Result<OracleDecision> {
+    match outcome_kind {
+        "MERCHANT_TRANSPORT_UNKNOWN" => {
+            if merchant_http_status.is_some() {
+                bail!("transport-unknown recovery observation cannot carry an HTTP status");
+            }
+            Ok(OracleDecision {
+                classification: RecoveryClassification::RetryLater,
+                violations: vec!["Merchant replay transport outcome is unknown".into()],
+            })
+        }
+        "MERCHANT_RETRYABLE_REJECTION" => {
+            let status = merchant_http_status
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("retryable rejection requires a valid HTTP status")
+                })?;
+            if !is_retryable_http_status(status) {
+                bail!("retryable rejection carries a non-retryable HTTP status");
+            }
+            Ok(OracleDecision {
+                classification: RecoveryClassification::RetryLater,
+                violations: Vec::new(),
+            })
+        }
+        "MERCHANT_NON_RETRYABLE_REJECTION" => {
+            let status = merchant_http_status
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("non-retryable rejection requires a valid HTTP status")
+                })?;
+            if is_retryable_http_status(status) {
+                bail!("non-retryable rejection carries a retryable HTTP status");
+            }
+            Ok(OracleDecision {
+                classification: RecoveryClassification::HoldManual,
+                violations: vec![format!("Merchant replay rejected HTTP {status}")],
+            })
+        }
+        "MERCHANT_INCOHERENT_RESPONSE" => {
+            if merchant_http_status.is_none() {
+                bail!("incoherent response requires an HTTP status");
+            }
+            Ok(OracleDecision {
+                classification: RecoveryClassification::HoldManual,
+                violations: vec!["Merchant replay returned an incoherent canonical response".into()],
+            })
+        }
+        "MERCHANT_CANONICAL_RESPONSE" => {
+            if merchant_http_status.is_none() {
+                bail!("canonical response requires an HTTP status");
+            }
+            Ok(oracle::classify(candidate, canonical, provider, false))
+        }
+        other => bail!("unsupported recovery outcome kind: {other}"),
+    }
+}
+
 fn is_retryable_http_status(status: u16) -> bool {
     matches!(status, 408 | 425 | 429 | 500..=599)
 }
@@ -413,7 +457,7 @@ fn percent_encode_path_segment(value: &str) -> String {
     output
 }
 
-fn result_digest(
+pub(crate) fn result_digest(
     candidate: &CandidateSnapshot,
     attempt_no: i64,
     processing_generation: i64,

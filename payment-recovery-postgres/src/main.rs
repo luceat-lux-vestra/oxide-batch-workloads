@@ -164,13 +164,33 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
-        Command::Verify { .. } => checkpoint_seven("verify"),
-        Command::Reset { .. } => checkpoint_seven("reset"),
+        Command::Verify {
+            database_url,
+            provider_base_url,
+            run_id,
+        } => {
+            let report = payment_recovery_postgres::verify::verify(
+                &database_url,
+                &provider_base_url,
+                &run_id,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report.violations.is_empty() {
+                Ok(())
+            } else {
+                bail!(
+                    "independent recovery verification reported {} violation(s)",
+                    report.violations.len()
+                )
+            }
+        }
+        Command::Reset { .. } => deferred_reset(),
     }
 }
 
-fn checkpoint_seven(command: &str) -> Result<()> {
-    bail!("{command} is intentionally deferred until issue #271 checkpoint 7")
+fn deferred_reset() -> Result<()> {
+    bail!("reset remains intentionally unimplemented after the read-only verify checkpoint")
 }
 
 #[cfg(test)]
