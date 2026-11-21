@@ -493,4 +493,6 @@ Reconciliation now also uses a bound retained artifact. Reconciliation proof sch
 
 Financial invariants now also use a bound retained artifact. `campaign_day_financial_invariants.py` replays all 100 retained Merchant/Gateway/Kill Bill/provider EOD snapshots, including qualified fault overlays, and the frontier cross-binds those results to day-cardinality, settlement, reconciliation and recovery proofs. See [DAY_FINANCIAL_INVARIANTS.md](DAY_FINANCIAL_INVARIANTS.md).
 
+Per-day quiescence now has a dedicated read-only resource sampler. `campaign_quiescence.py` derives the required 60/600-second window from the deterministic day plan, observes at a contract target cadence with a five-second maximum accepted gap, binds the exact qualified Compose/source identity, and appends fail-closed host/container/process/PostgreSQL/filesystem evidence to `samples.jsonl`. See [QUIESCENCE.md](QUIESCENCE.md).
+
 Day verification v4 therefore has no remaining controller-authored generic `PASS + SHA` checks.
