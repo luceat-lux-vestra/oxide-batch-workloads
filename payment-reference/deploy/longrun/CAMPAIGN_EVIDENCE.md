@@ -75,15 +75,16 @@ provenance drift, or an inconsistent contract. A controller process restart
 must call this status boundary before selecting the next day; a started day
 with no completed terminal evidence is **not** silently re-run.
 
-The per-day `*.verification.json` format requires PASS entries for recovery,
-reconciliation, settlement roster, settlement close, financial invariants,
-and external side-effect cardinality, each bound to an artifact SHA-256.
-**These entries are only an evidence-envelope schema**: this slice does *not*
-verify the underlying external database/provider financial claims. A later
-independent verifier and actual controller must produce and validate the
-referenced artifacts and enforce ordering before any day can count for the
-campaign's acceptance. Synthetic test fixtures exercising the schema are
-never campaign evidence.
+The per-day `*.verification.json` format requires bound retained artifacts for
+recovery, reconciliation, settlement roster, settlement close, financial
+invariants, and external side-effect cardinality. The current v4 scanner
+independently revalidates those artifacts and their cross-bindings before a day
+can advance the frontier. Synthetic test fixtures are never campaign evidence.
+
+The reconciliation proof now has a read-only producer/retainer CLI over an
+already-completed `payment-reconciliation-postgres` state. Full online traffic,
+fault/crash orchestration, financial-invariant collection, quiescence sampling,
+and terminal-day orchestration remain separate implementation slices.
 
 No CLI for writing completed days is exposed in this slice, so operators
 cannot use it to manufacture a completed campaign. There is no `summary.json`
