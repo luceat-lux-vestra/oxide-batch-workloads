@@ -160,28 +160,33 @@ def validate(
         require(type(provider.get("version")) is int and provider["version"] > 0,
                 f"financial slot {ordinal}: provider version invalid")
 
-        if item["kind"] == "fault_overlay":
-            fault_count += 1
-            proof = financial.canonical_fault_consistency(
-                payment_id=payment_id,
-                order_id=item["merchant_order_id"],
-                fault_class=item["fault_class"],
-                merchant=merchant,
-                gateway=gateway,
-                provider=provider,
-                killbill=killbill,
-            )
-        else:
-            normal_count += 1
-            proof = financial.canonical_consistency(
-                payment_id=payment_id,
-                order_id=item["merchant_order_id"],
-                case=item["kind"],
-                merchant=merchant,
-                gateway=gateway,
-                provider=provider,
-                killbill=killbill,
-            )
+        try:
+            if item["kind"] == "fault_overlay":
+                fault_count += 1
+                proof = financial.canonical_fault_consistency(
+                    payment_id=payment_id,
+                    order_id=item["merchant_order_id"],
+                    fault_class=item["fault_class"],
+                    merchant=merchant,
+                    gateway=gateway,
+                    provider=provider,
+                    killbill=killbill,
+                )
+            else:
+                normal_count += 1
+                proof = financial.canonical_consistency(
+                    payment_id=payment_id,
+                    order_id=item["merchant_order_id"],
+                    case=item["kind"],
+                    merchant=merchant,
+                    gateway=gateway,
+                    provider=provider,
+                    killbill=killbill,
+                )
+        except financial.Block as exc:
+            raise FinancialInvariantError(
+                f"financial slot {ordinal}: cross-system invariant failed: {exc}"
+            ) from exc
         require(observation["proof"] == proof,
                 f"financial slot {ordinal}: retained cross-system proof mismatch")
 
