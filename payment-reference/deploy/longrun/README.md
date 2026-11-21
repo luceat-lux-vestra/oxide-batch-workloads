@@ -462,3 +462,17 @@ Merchant close state from `merchant-db` before mutation, proves exact replay
 idempotence, proves digest/totals conflicts are rejected without replacing the
 authoritative CLOSED row, and retains a non-accepting deterministic settlement
 verification artifact.
+
+
+## Day-independent verification v2
+
+Terminal-day verification now requires settlement checks to bind the actual
+retained independent artifacts rather than generic PASS + SHA claims. See
+[DAY_VERIFICATION.md](DAY_VERIFICATION.md).
+
+The v2 scanner verifies campaign/day/source identity, safe relative paths,
+exact retained-file hashes, settlement subjects, and the cross-artifact
+roster/statement linkage. Version 1 day-independent verification is rejected.
+The recovery, reconciliation, financial-invariant and side-effect-cardinality
+checks remain on their legacy descriptor shape until their dedicated proof
+contracts are defined.

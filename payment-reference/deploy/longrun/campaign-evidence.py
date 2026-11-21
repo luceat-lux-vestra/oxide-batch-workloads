@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Any
@@ -33,6 +34,16 @@ BINARIES = ("postgres-postgres", "payment-reconciliation-postgres", "payment-rec
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
+DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
+DAY_VERIFICATION_VERSION = 2
+GENERIC_CHECKS = {"recovery", "reconciliation", "financial_invariants", "side_effect_cardinality"}
+SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
+SETTLEMENT_ROSTER_SCHEMA = "oxide-batch-workloads.payment-reference-settlement-roster-verification"
+SETTLEMENT_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-settlement-verification"
+DIGEST64 = re.compile(r"sha256:[0-9a-f]{64}\Z")
+STATEMENT_ID = re.compile(r"statement-[0-9a-f]{64}\Z")
+CURRENCY = re.compile(r"[A-Z]{3}\Z")
+ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 
 
 EvidenceError = core.EvidenceError
@@ -223,16 +234,346 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
     return days, verifications
 
 
-def validate_verification(path: Path, campaign_id: str, sequence: int) -> str:
+def compact_json_sha256(value: Any) -> str:
+    raw = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _safe_relative_artifact(
+    campaign_path: Path,
+    relative_path: Any,
+    expected_name: str,
+    check: str,
+) -> Path:
+    require(isinstance(relative_path, str) and relative_path, f"{check}: artifact path missing")
+    require("\\" not in relative_path, f"{check}: artifact path must use POSIX separators")
+    posix = PurePosixPath(relative_path)
+    require(
+        not posix.is_absolute()
+        and str(posix) == relative_path
+        and all(part not in ("", ".", "..") for part in posix.parts),
+        f"{check}: unsafe artifact relative path",
+    )
+    require(posix.name == expected_name, f"{check}: artifact filename does not match logical day")
+
+    cursor = campaign_path
+    for part in posix.parts:
+        cursor = cursor / part
+        require(not cursor.is_symlink(), f"{check}: artifact path contains symlink")
+    require(cursor.is_file(), f"{check}: artifact file missing")
+
+    root = campaign_path.resolve(strict=True)
+    resolved = cursor.resolve(strict=True)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise EvidenceError(f"{check}: artifact escapes campaign directory") from exc
+    return cursor
+
+
+def _roster_subject(artifact: dict[str, Any]) -> dict[str, Any]:
+    expected_fields = {
+        "schema", "schema_version", "decision", "campaign_id",
+        "logical_day_sequence", "source_revision", "day_plan_sha256",
+        "plan_contract_sha256", "fault_catalog_sha256", "provider_account_id",
+        "settlement_date", "currency", "observed_slot_count",
+        "eligible_payment_count", "roster_sha256", "observations",
+    }
+    require(set(artifact) == expected_fields, "settlement_roster: retained artifact fields mismatch")
+    for name in ("day_plan_sha256", "plan_contract_sha256", "fault_catalog_sha256"):
+        value = artifact.get(name)
+        require(isinstance(value, str) and HEX64.fullmatch(value), f"settlement_roster: invalid {name}")
+
+    roster_sha = artifact["roster_sha256"]
+    account = artifact["provider_account_id"]
+    settlement_date = artifact["settlement_date"]
+    currency = artifact["currency"]
+    eligible = artifact["eligible_payment_count"]
+    observations = artifact["observations"]
+    require(isinstance(roster_sha, str) and DIGEST64.fullmatch(roster_sha), "settlement_roster: invalid roster digest")
+    require(isinstance(account, str) and account.strip(), "settlement_roster: provider account missing")
+    require(isinstance(settlement_date, str) and ISO_DATE.fullmatch(settlement_date), "settlement_roster: settlement date invalid")
+    require(isinstance(currency, str) and CURRENCY.fullmatch(currency), "settlement_roster: currency invalid")
+    require(
+        artifact["observed_slot_count"] == 100
+        and isinstance(observations, list)
+        and len(observations) == 100,
+        "settlement_roster: retained artifact must cover exactly 100 slots",
+    )
+    require(type(eligible) is int and 0 < eligible <= 100, "settlement_roster: eligible payment count invalid")
+    return {
+        "roster_sha256": roster_sha,
+        "provider_account_id": account,
+        "settlement_date": settlement_date,
+        "currency": currency,
+        "eligible_payment_count": eligible,
+    }
+
+
+def _settlement_subject(artifact: dict[str, Any]) -> dict[str, Any]:
+    require(
+        set(artifact) == {
+            "schema", "schema_version", "decision", "campaign_id",
+            "logical_day_sequence", "source_revision", "roster_sha256",
+            "roster_verification_sha256", "statement", "merchant_close",
+        },
+        "settlement_close: retained artifact fields mismatch",
+    )
+    roster_sha = artifact["roster_sha256"]
+    roster_verification_sha = artifact["roster_verification_sha256"]
+    summary = artifact["statement"]
+    proof = artifact["merchant_close"]
+    require(isinstance(roster_sha, str) and DIGEST64.fullmatch(roster_sha), "settlement_close: invalid roster digest")
+    require(
+        isinstance(roster_verification_sha, str)
+        and DIGEST64.fullmatch(roster_verification_sha),
+        "settlement_close: invalid roster-verification digest",
+    )
+    require(
+        isinstance(summary, dict)
+        and set(summary) == {
+            "statement_contract_version", "statement_id", "statement_digest",
+            "statement_artifact_sha256", "source_roster_digest",
+            "provider_account_id", "settlement_date", "currency", "line_count",
+            "captured_total_minor", "refunded_total_minor",
+            "net_settlement_total_minor",
+        },
+        "settlement_close: statement summary fields mismatch",
+    )
+    require(
+        summary["statement_contract_version"] == "provider-settlement-statement-v1",
+        "settlement_close: statement contract version mismatch",
+    )
+    statement_id = summary["statement_id"]
+    statement_digest = summary["statement_digest"]
+    statement_artifact_sha = summary["statement_artifact_sha256"]
+    account = summary["provider_account_id"]
+    settlement_date = summary["settlement_date"]
+    currency = summary["currency"]
+    line_count = summary["line_count"]
+    captured = summary["captured_total_minor"]
+    refunded = summary["refunded_total_minor"]
+    net = summary["net_settlement_total_minor"]
+    require(isinstance(statement_id, str) and STATEMENT_ID.fullmatch(statement_id), "settlement_close: statement id invalid")
+    require(isinstance(statement_digest, str) and DIGEST64.fullmatch(statement_digest), "settlement_close: statement digest invalid")
+    require(isinstance(statement_artifact_sha, str) and DIGEST64.fullmatch(statement_artifact_sha), "settlement_close: statement artifact digest invalid")
+    require(summary["source_roster_digest"] == roster_sha, "settlement_close: statement/roster digest mismatch")
+    require(isinstance(account, str) and account.strip(), "settlement_close: provider account missing")
+    require(isinstance(settlement_date, str) and ISO_DATE.fullmatch(settlement_date), "settlement_close: settlement date invalid")
+    require(isinstance(currency, str) and CURRENCY.fullmatch(currency), "settlement_close: currency invalid")
+    require(type(line_count) is int and line_count > 0, "settlement_close: line count invalid")
+    require(
+        type(captured) is int
+        and type(refunded) is int
+        and type(net) is int
+        and captured >= 0
+        and 0 <= refunded <= captured
+        and net == captured - refunded,
+        "settlement_close: statement totals invalid",
+    )
+
+    expected_row = {
+        "statement_id": statement_id,
+        "statement_digest": statement_digest,
+        "provider_account_id": account,
+        "settlement_date": settlement_date,
+        "currency": currency,
+        "line_count": line_count,
+        "captured_total_minor": captured,
+        "refunded_total_minor": refunded,
+        "net_settlement_total_minor": net,
+        "settlement_state": "CLOSED",
+    }
+    require(
+        isinstance(proof, dict)
+        and set(proof) == {
+            "settlement_state", "persisted_row", "business_event_count",
+            "exact_replay_http_status", "digest_conflict_http_status",
+            "totals_conflict_http_status",
+            "authoritative_state_unchanged_after_conflicts",
+        },
+        "settlement_close: merchant close proof fields mismatch",
+    )
+    require(
+        proof["settlement_state"] == "CLOSED"
+        and proof["persisted_row"] == expected_row
+        and proof["business_event_count"] == 1
+        and proof["exact_replay_http_status"] == 200
+        and proof["digest_conflict_http_status"] == 409
+        and proof["totals_conflict_http_status"] == 409
+        and proof["authoritative_state_unchanged_after_conflicts"] is True,
+        "settlement_close: merchant close proof mismatch",
+    )
+    return {
+        "roster_sha256": roster_sha,
+        "statement_id": statement_id,
+        "statement_digest": statement_digest,
+        "provider_account_id": account,
+        "settlement_date": settlement_date,
+        "currency": currency,
+        "line_count": line_count,
+        "captured_total_minor": captured,
+        "refunded_total_minor": refunded,
+        "net_settlement_total_minor": net,
+    }
+
+
+def _validate_bound_settlement_check(
+    *,
+    check: str,
+    result: Any,
+    campaign_path: Path,
+    identity: dict[str, Any],
+    sequence: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    expected_schema = {
+        "settlement_roster": SETTLEMENT_ROSTER_SCHEMA,
+        "settlement_close": SETTLEMENT_VERIFICATION_SCHEMA,
+    }[check]
+    expected_name = {
+        "settlement_roster": f"day-{sequence:06}.roster.verification.json",
+        "settlement_close": f"day-{sequence:06}.settlement.verification.json",
+    }[check]
+    expected_decision = {
+        "settlement_roster": "SETTLEMENT_ROSTER_VERIFIED_NOT_DAY_ACCEPTED",
+        "settlement_close": "SETTLEMENT_VERIFIED_NOT_DAY_ACCEPTED",
+    }[check]
+    expected_fields = {
+        "verdict",
+        "artifact_schema",
+        "artifact_schema_version",
+        "campaign_id",
+        "logical_day_sequence",
+        "source_revision",
+        "relative_path",
+        "artifact_sha256",
+        "subject",
+    }
+    require(isinstance(result, dict) and set(result) == expected_fields, f"{check}: bound artifact descriptor fields mismatch")
+    require(result["verdict"] == "PASS", f"{check}: verdict is not PASS")
+    require(
+        result["artifact_schema"] == expected_schema
+        and type(result["artifact_schema_version"]) is int
+        and result["artifact_schema_version"] == 1,
+        f"{check}: artifact schema/version mismatch",
+    )
+    require(
+        result["campaign_id"] == identity["campaign_id"]
+        and type(result["logical_day_sequence"]) is int
+        and result["logical_day_sequence"] == sequence
+        and result["source_revision"] == identity["source_revision"],
+        f"{check}: descriptor campaign/day/source mismatch",
+    )
+    require(
+        isinstance(result["artifact_sha256"], str)
+        and HEX64.fullmatch(result["artifact_sha256"]) is not None,
+        f"{check}: artifact SHA invalid",
+    )
+
+    artifact_path = _safe_relative_artifact(
+        campaign_path,
+        result["relative_path"],
+        expected_name,
+        check,
+    )
+    require(sha256(artifact_path) == result["artifact_sha256"], f"{check}: artifact file SHA mismatch")
+    artifact = load_json(artifact_path)
+    require(
+        artifact.get("schema") == expected_schema
+        and type(artifact.get("schema_version")) is int
+        and artifact.get("schema_version") == 1
+        and artifact.get("decision") == expected_decision,
+        f"{check}: retained artifact schema/decision mismatch",
+    )
+    require(
+        artifact.get("campaign_id") == identity["campaign_id"]
+        and type(artifact.get("logical_day_sequence")) is int
+        and artifact.get("logical_day_sequence") == sequence
+        and artifact.get("source_revision") == identity["source_revision"],
+        f"{check}: retained artifact campaign/day/source mismatch",
+    )
+    subject = _roster_subject(artifact) if check == "settlement_roster" else _settlement_subject(artifact)
+    require(result["subject"] == subject, f"{check}: descriptor subject does not match retained artifact")
+    return artifact, subject
+
+
+def validate_verification(
+    path: Path,
+    campaign_path: Path,
+    identity: dict[str, Any],
+    sequence: int,
+) -> str:
     record = load_json(path)
-    require(set(record) == {"schema", "schema_version", "campaign_id", "logical_day_sequence", "verdict", "checks"}, "independent verification fields mismatch")
-    require(record["schema"] == "oxide-batch-workloads.payment-reference-day-independent-verification" and record["schema_version"] == 1, "independent verification schema mismatch")
-    require(record["campaign_id"] == campaign_id and record["logical_day_sequence"] == sequence and record["verdict"] == "PASS", "independent verification identity/verdict mismatch")
+    require(
+        set(record) == {
+            "schema", "schema_version", "campaign_id",
+            "logical_day_sequence", "source_revision", "verdict", "checks",
+        },
+        "independent verification fields mismatch",
+    )
+    require(
+        record["schema"] == DAY_VERIFICATION_SCHEMA
+        and type(record["schema_version"]) is int
+        and record["schema_version"] == DAY_VERIFICATION_VERSION,
+        "independent verification schema mismatch",
+    )
+    require(
+        record["campaign_id"] == identity["campaign_id"]
+        and type(record["logical_day_sequence"]) is int
+        and record["logical_day_sequence"] == sequence
+        and record["source_revision"] == identity["source_revision"]
+        and record["verdict"] == "PASS",
+        "independent verification identity/verdict mismatch",
+    )
     checks = record["checks"]
-    expected = {"recovery", "reconciliation", "settlement_roster", "settlement_close", "financial_invariants", "side_effect_cardinality"}
+    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
-    for check, result in checks.items():
-        require(isinstance(result, dict) and set(result) == {"verdict", "artifact_sha256"} and result["verdict"] == "PASS" and isinstance(result["artifact_sha256"], str) and HEX64.fullmatch(result["artifact_sha256"]) is not None, f"{check}: incomplete independent verification")
+
+    for check in GENERIC_CHECKS:
+        result = checks[check]
+        require(
+            isinstance(result, dict)
+            and set(result) == {"verdict", "artifact_sha256"}
+            and result["verdict"] == "PASS"
+            and isinstance(result["artifact_sha256"], str)
+            and HEX64.fullmatch(result["artifact_sha256"]) is not None,
+            f"{check}: incomplete independent verification",
+        )
+
+    roster_artifact, roster_subject = _validate_bound_settlement_check(
+        check="settlement_roster",
+        result=checks["settlement_roster"],
+        campaign_path=campaign_path,
+        identity=identity,
+        sequence=sequence,
+    )
+    settlement_artifact, settlement_subject = _validate_bound_settlement_check(
+        check="settlement_close",
+        result=checks["settlement_close"],
+        campaign_path=campaign_path,
+        identity=identity,
+        sequence=sequence,
+    )
+
+    require(
+        settlement_artifact["roster_verification_sha256"]
+        == compact_json_sha256(roster_artifact),
+        "settlement_close: does not bind exact settlement_roster verification artifact",
+    )
+    for field in ("roster_sha256", "provider_account_id", "settlement_date", "currency"):
+        require(
+            settlement_subject[field] == roster_subject[field],
+            f"settlement_close: {field} differs from settlement_roster",
+        )
+    require(
+        settlement_subject["line_count"] == roster_subject["eligible_payment_count"],
+        "settlement_close: statement line count differs from eligible roster membership",
+    )
     return sha256(path)
 
 
@@ -279,7 +620,7 @@ def inspect(campaign_path: Path) -> dict[str, Any]:
         require(day["schema"] == DAY_SCHEMA and day["schema_version"] == 1 and day["campaign_id"] == identity["campaign_id"], f"day {s}: schema or campaign mismatch")
         require(day["logical_day_sequence"] == s and day["plan"] == plan_day(s), f"day {s}: plan identity mismatch")
         require(day["verdict"] == "PASS" and s in verifications, f"day {s}: verification file missing")
-        require(day["independent_verification_sha256"] == validate_verification(verifications[s], identity["campaign_id"], s), f"day {s}: verification digest mismatch")
+        require(day["independent_verification_sha256"] == validate_verification(verifications[s], campaign_path, identity, s), f"day {s}: verification digest mismatch")
         require(event["detail"].get("day_sha256") == sha256(days[s]), f"day {s}: terminal digest mismatch")
         frontier = s
         active = None
