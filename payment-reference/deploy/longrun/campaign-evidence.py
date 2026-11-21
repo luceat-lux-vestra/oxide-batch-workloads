@@ -820,6 +820,20 @@ def validate_verification(
         "financial_invariants: settlement totals differ from independent settlement proof",
     )
 
+    financial_reconciliation_pairs = {
+        (row["merchant_payment_id"], row["provider"]["id"])
+        for row in financial_artifact["observations"]
+        if row["provider"]["status"] in {"authorized", "captured", "refunded"}
+    }
+    reconciliation_pairs = {
+        (row["merchant_payment_id"], row["provider_payment_id"])
+        for row in reconciliation_artifact["producer_report"]["snapshot"]["internal"]
+    }
+    require(
+        financial_reconciliation_pairs == reconciliation_pairs,
+        "financial_invariants: Merchant/provider identity pairs differ from reconciliation snapshot",
+    )
+
     recovery_by_payment = {
         entry["candidate"]["merchant_payment_id"]: entry
         for entry in recovery_artifact["candidates"]
