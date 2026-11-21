@@ -172,7 +172,7 @@ def validate(
     expected_fields = {
         "schema", "schema_version", "decision", "campaign_id",
         "logical_day_sequence", "source_revision", "day_plan_sha256",
-        "oxide_batch_version", "workload_binary_sha256",
+        "oxide_batch_version", "workload_contract", "workload_binary_sha256",
         "workload_semantics_sha256", "producer_report",
         "scheduled_hard_crash", "crash_evidence",
     }
@@ -193,6 +193,8 @@ def validate(
             "reconciliation day plan digest mismatch")
     require(artifact["oxide_batch_version"] == OXIDE_BATCH_VERSION,
             "reconciliation OxideBatch version mismatch")
+    require(artifact["workload_contract"] == WORKLOAD_CONTRACT,
+            "reconciliation workload contract mismatch")
     require(
         isinstance(workload_binary_sha256, str)
         and HEX64.fullmatch(workload_binary_sha256) is not None
