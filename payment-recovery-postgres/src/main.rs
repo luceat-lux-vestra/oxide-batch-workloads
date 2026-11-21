@@ -169,9 +169,12 @@ async fn main() -> Result<()> {
             provider_base_url,
             run_id,
         } => {
-            let report =
-                payment_recovery_postgres::verify::verify(&database_url, &provider_base_url, &run_id)
-                    .await?;
+            let report = payment_recovery_postgres::verify::verify(
+                &database_url,
+                &provider_base_url,
+                &run_id,
+            )
+            .await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report.violations.is_empty() {
                 Ok(())
