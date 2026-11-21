@@ -18,6 +18,7 @@ from typing import Any
 
 import campaign_core as core
 import campaign_day_cardinality as day_cardinality
+import campaign_day_financial_invariants as day_financial
 import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
 
@@ -38,8 +39,8 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
-DAY_VERIFICATION_VERSION = 3
-GENERIC_CHECKS = {"financial_invariants"}
+DAY_VERIFICATION_VERSION = 4
+FINANCIAL_CHECK = "financial_invariants"
 RECONCILIATION_CHECK = "reconciliation"
 RECOVERY_CHECK = "recovery"
 SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
@@ -235,7 +236,7 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
             seq = int(path.name[:6])
             require(seq > 0, "day zero verification file invalid")
             verifications[seq] = path
-        elif re.fullmatch(r"day-[0-9]{6}\.(?:recovery|reconciliation)\.verification\.json", path.name):
+        elif re.fullmatch(r"day-[0-9]{6}\.(?:recovery|reconciliation|financial-invariants)\.verification\.json", path.name):
             seq = int(path.name[4:10])
             require(seq > 0, "day zero auxiliary verification file invalid")
             # Auxiliary proofs are validated only through their exact bound
@@ -543,19 +544,8 @@ def validate_verification(
         "independent verification identity/verdict mismatch",
     )
     checks = record["checks"]
-    expected = GENERIC_CHECKS | SETTLEMENT_CHECKS | {CARDINALITY_CHECK, RECONCILIATION_CHECK, RECOVERY_CHECK}
+    expected = SETTLEMENT_CHECKS | {CARDINALITY_CHECK, FINANCIAL_CHECK, RECONCILIATION_CHECK, RECOVERY_CHECK}
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
-
-    for check in GENERIC_CHECKS:
-        result = checks[check]
-        require(
-            isinstance(result, dict)
-            and set(result) == {"verdict", "artifact_sha256"}
-            and result["verdict"] == "PASS"
-            and isinstance(result["artifact_sha256"], str)
-            and HEX64.fullmatch(result["artifact_sha256"]) is not None,
-            f"{check}: incomplete independent verification",
-        )
 
     roster_artifact, roster_subject = _validate_bound_settlement_check(
         check="settlement_roster",
@@ -761,6 +751,106 @@ def validate_verification(
                 day_proof[field] == provider_proof[field],
                 f"recovery: provider {field} differs from day provider-cardinality proof",
             )
+
+    financial = checks[FINANCIAL_CHECK]
+    financial_name = f"day-{sequence:06}.financial-invariants.verification.json"
+    require(type(financial) is dict and set(financial) == expected_fields,
+            "financial_invariants: bound descriptor fields mismatch")
+    require(
+        financial["verdict"] == "PASS"
+        and financial["artifact_schema"] == day_financial.SCHEMA
+        and type(financial["artifact_schema_version"]) is int
+        and financial["artifact_schema_version"] == day_financial.SCHEMA_VERSION
+        and financial["campaign_id"] == identity["campaign_id"]
+        and type(financial["logical_day_sequence"]) is int
+        and financial["logical_day_sequence"] == sequence
+        and financial["source_revision"] == identity["source_revision"],
+        "financial_invariants: descriptor identity/schema/verdict mismatch",
+    )
+    require(
+        isinstance(financial["artifact_sha256"], str)
+        and HEX64.fullmatch(financial["artifact_sha256"]) is not None,
+        "financial_invariants: artifact SHA invalid",
+    )
+    financial_path = _safe_relative_artifact(
+        campaign_path,
+        financial["relative_path"],
+        financial_name,
+        FINANCIAL_CHECK,
+    )
+    require(sha256(financial_path) == financial["artifact_sha256"],
+            "financial_invariants: retained file SHA mismatch")
+    financial_artifact = load_json(financial_path)
+    financial_subject = day_financial.validate(
+        financial_artifact,
+        plan=day_cardinality.plan_for(identity["campaign_id"], sequence),
+        source_revision=identity["source_revision"],
+    )
+    require(financial["subject"] == financial_subject,
+            "financial_invariants: descriptor subject mismatches independently re-derived proof")
+
+    financial_by_payment = {
+        row["merchant_payment_id"]: row
+        for row in financial_artifact["observations"]
+    }
+    require(set(financial_by_payment) == set(cardinality_by_payment),
+            "financial_invariants: Merchant payment membership differs from day provider-cardinality proof")
+    for payment_id, financial_row in financial_by_payment.items():
+        day_provider = cardinality_by_payment[payment_id]
+        raw_provider = financial_row["provider"]
+        day_timeline = day_provider["timeline"]
+        require(day_timeline is not None,
+                "financial_invariants: accepted financial slot lacks provider timeline")
+        day_payment = day_timeline["payment"]
+        require(
+            raw_provider["id"] == day_provider["provider_payment_id"] == day_payment["id"],
+            "financial_invariants: provider identity differs from day provider-cardinality proof",
+        )
+        for field in ("status", "authorized_amount", "captured_amount", "refunded_amount", "version"):
+            require(
+                raw_provider[field] == day_payment[field],
+                f"financial_invariants: provider {field} differs from day provider-cardinality proof",
+            )
+
+    require(
+        financial_subject["settlement_eligible_count"] == roster_subject["eligible_payment_count"]
+        and financial_subject["captured_total_minor"] == settlement_subject["captured_total_minor"]
+        and financial_subject["refunded_total_minor"] == settlement_subject["refunded_total_minor"]
+        and financial_subject["net_settlement_total_minor"] == settlement_subject["net_settlement_total_minor"],
+        "financial_invariants: settlement totals differ from independent settlement proof",
+    )
+
+    financial_reconciliation_pairs = {
+        (row["merchant_payment_id"], row["provider"]["id"])
+        for row in financial_artifact["observations"]
+        if row["provider"]["status"] in {"authorized", "captured", "refunded"}
+    }
+    reconciliation_pairs = {
+        (row["merchant_payment_id"], row["provider_payment_id"])
+        for row in reconciliation_artifact["producer_report"]["snapshot"]["internal"]
+    }
+    require(
+        financial_reconciliation_pairs == reconciliation_pairs,
+        "financial_invariants: Merchant/provider identity pairs differ from reconciliation snapshot",
+    )
+
+    recovery_by_payment = {
+        entry["candidate"]["merchant_payment_id"]: entry
+        for entry in recovery_artifact["candidates"]
+    }
+    for payment_id, entry in recovery_by_payment.items():
+        require(payment_id in financial_by_payment,
+                "financial_invariants: recovery candidate missing from financial proof")
+        financial_row = financial_by_payment[payment_id]
+        proof = financial_row["proof"]
+        result = entry["result"]
+        require(
+            proof.get("canonical_payment_state") == result["final_canonical_payment_state"]
+            and proof.get("canonical_operation_state") == result["final_canonical_operation_state"]
+            and proof.get("provider_status") == result["final_provider_status"],
+            "financial_invariants: recovered canonical/provider state differs from financial proof",
+        )
+
     return sha256(path)
 
 

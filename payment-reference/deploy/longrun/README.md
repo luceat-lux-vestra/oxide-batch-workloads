@@ -464,15 +464,15 @@ authoritative CLOSED row, and retains a non-accepting deterministic settlement
 verification artifact.
 
 
-## Day-independent verification v3
+## Day-independent verification v4
 
 Terminal-day verification now requires settlement checks to bind the actual
 retained independent artifacts rather than generic PASS + SHA claims. See
 [DAY_VERIFICATION.md](DAY_VERIFICATION.md).
 
-The v3 scanner verifies campaign/day/source identity, safe relative paths,
+The v4 scanner verifies campaign/day/source identity, safe relative paths,
 exact retained-file hashes, settlement subjects, and the cross-artifact
-roster/statement linkage. Versions 1 and 2 day-independent verification are rejected.
+roster/statement linkage. Versions 1 through 3 day-independent verification are rejected.
 Provider side-effect cardinality now also uses a bound retained artifact
 rather than generic PASS + SHA. The independent
 [`campaign_day_cardinality.py`](campaign_day_cardinality.py) producer requires
@@ -491,4 +491,6 @@ Recovery now also uses a bound retained artifact. `campaign_day_recovery.py` rep
 
 Reconciliation now also uses a bound retained artifact. `campaign_day_reconciliation.py` replays the retained v0.7.0 reconciliation oracle over the exact logical-day snapshot, requires CLEAR/one-publication convergence, binds scheduled crash execution evidence, and cross-checks the reconciliation provider snapshot against the separately retained EOD day-cardinality proof. See [DAY_RECONCILIATION.md](DAY_RECONCILIATION.md).
 
-Only the financial-invariant check remains on a legacy descriptor pending its separate independent proof contract.
+Financial invariants now also use a bound retained artifact. `campaign_day_financial_invariants.py` replays all 100 retained Merchant/Gateway/Kill Bill/provider EOD snapshots, including qualified fault overlays, and the frontier cross-binds those results to day-cardinality, settlement, reconciliation and recovery proofs. See [DAY_FINANCIAL_INVARIANTS.md](DAY_FINANCIAL_INVARIANTS.md).
+
+Day verification v4 therefore has no remaining controller-authored generic `PASS + SHA` checks.

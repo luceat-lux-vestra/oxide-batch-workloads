@@ -10,6 +10,7 @@ import tempfile
 import unittest
 
 import campaign_day_cardinality as day_cardinality
+import campaign_day_financial_invariants as day_financial
 import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
 
@@ -220,6 +221,105 @@ def recovery_artifact_for_day(root, sequence, day_plan, day_card, provider_timel
     return relative, path, artifact, subject
 
 
+def financial_artifact_for_day(root, sequence, day_plan, day_card):
+    observations = []
+    authorized_total = captured_total = refunded_total = settlement_eligible = 0
+    for item, card_row in zip(day_plan["slots"], day_card["observations"]):
+        provider = copy.deepcopy(card_row["timeline"]["payment"])
+        provider_id = card_row["provider_payment_id"]
+        kb_id = "kb-" + item["merchant_payment_id"]
+        if item["kind"] == "fault_overlay":
+            truth = day_financial.financial.fault_catalog.end_of_day_provider_truth(item["fault_class"])
+            payment_state = "AUTHORIZED" if truth == "AUTHORIZED" else "PAYMENT_FAILED"
+            operation_state = "SUCCEEDED" if truth == "AUTHORIZED" else "FAILED"
+            kb_transactions = [{
+                "transactionType": "AUTHORIZE",
+                "transactionStatus": "SUCCESS" if truth == "AUTHORIZED" else "PAYMENT_FAILURE",
+            }]
+        else:
+            payment_state, _, tx_counts, _, _ = day_financial.financial.EXPECTED[item["kind"]]
+            operation_state = "SUCCEEDED"
+            kb_transactions = [
+                {"transactionType": tx, "transactionStatus": "SUCCESS"}
+                for tx, count in tx_counts.items()
+                for _ in range(count)
+            ]
+        merchant = {
+            "merchantPaymentId": item["merchant_payment_id"],
+            "merchantOrderId": item["merchant_order_id"],
+            "amountMinor": 1000,
+            "currency": "USD",
+            "paymentState": payment_state,
+        }
+        gateway = {
+            "merchantPaymentId": item["merchant_payment_id"],
+            "paymentState": payment_state,
+            "lastOperationState": operation_state,
+            "mapping": {
+                "merchantPaymentId": item["merchant_payment_id"],
+                "killbillPaymentId": kb_id,
+                "providerPaymentId": provider_id,
+            },
+        }
+        killbill = {"paymentId": kb_id, "transactions": kb_transactions}
+        if item["kind"] == "fault_overlay":
+            proof = day_financial.financial.canonical_fault_consistency(
+                payment_id=item["merchant_payment_id"],
+                order_id=item["merchant_order_id"],
+                fault_class=item["fault_class"],
+                merchant=merchant, gateway=gateway, provider=provider, killbill=killbill,
+            )
+        else:
+            proof = day_financial.financial.canonical_consistency(
+                payment_id=item["merchant_payment_id"],
+                order_id=item["merchant_order_id"],
+                case=item["kind"],
+                merchant=merchant, gateway=gateway, provider=provider, killbill=killbill,
+            )
+        expected = day_cardinality.expected(item)
+        authorized_total += expected["authorized_amount_minor"]
+        captured_total += expected["captured_amount_minor"]
+        refunded_total += expected["refunded_amount_minor"]
+        if expected["provider_status"] in {"captured", "refunded"}:
+            settlement_eligible += 1
+        observations.append({
+            "slot": item["slot"],
+            "kind": item["kind"],
+            "fault_class": item["fault_class"],
+            "merchant_payment_id": item["merchant_payment_id"],
+            "merchant_order_id": item["merchant_order_id"],
+            "merchant": merchant,
+            "gateway": gateway,
+            "provider": provider,
+            "killbill": killbill,
+            "proof": proof,
+        })
+    artifact = {
+        "schema": day_financial.SCHEMA,
+        "schema_version": day_financial.SCHEMA_VERSION,
+        "decision": day_financial.DECISION,
+        "campaign_id": root.name,
+        "logical_day_sequence": sequence,
+        "source_revision": SHA40,
+        "day_plan_sha256": day_financial.plan_digest(day_plan),
+        "financial_semantics_sha256": day_financial.file_sha256(day_financial.FINANCIAL_VERIFIER),
+        "observed_slot_count": 100,
+        "normal_slot_count": 90,
+        "fault_slot_count": 10,
+        "authorized_total_minor": authorized_total,
+        "captured_total_minor": captured_total,
+        "refunded_total_minor": refunded_total,
+        "net_settlement_total_minor": captured_total - refunded_total,
+        "settlement_eligible_count": settlement_eligible,
+        "observations": observations,
+    }
+    relative = f"days/day-{sequence:06}.financial-invariants.verification.json"
+    path = root / relative
+    m.create_only(path, m.canonical_bytes(artifact))
+    subject = day_financial.validate(artifact, plan=day_plan, source_revision=SHA40)
+    return relative, path, artifact, subject
+
+
 def reconciliation_artifact_for_day(root, sequence, day_plan, day_card):
     internal = []
     provider_rows = []
@@ -381,6 +481,9 @@ def settlement_artifacts(root, sequence):
     reconciliation_rel, reconciliation_path, reconciliation_artifact, reconciliation_subject = (
         reconciliation_artifact_for_day(root, sequence, day_plan, day_card)
     )
+    financial_rel, financial_path, financial_artifact, financial_subject = (
+        financial_artifact_for_day(root, sequence, day_plan, day_card)
+    )
 
     statement_id = "statement-" + ("5" * 64)
     statement_digest = "sha256:" + ("6" * 64)
@@ -452,6 +555,17 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
+        "financial_invariants": {
+            "verdict": "PASS",
+            "artifact_schema": day_financial.SCHEMA,
+            "artifact_schema_version": day_financial.SCHEMA_VERSION,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": financial_rel,
+            "artifact_sha256": m.sha256(financial_path),
+            "subject": financial_subject,
+        },
         "reconciliation": {
             "verdict": "PASS",
             "artifact_schema": day_reconciliation.SCHEMA,
@@ -513,13 +627,7 @@ def settlement_artifacts(root, sequence):
 def write_terminal(root, sequence, *, started=True):
     if started:
         m.append_event(root, sequence, "day-started", {})
-    checks = {
-        c: {"verdict": "PASS", "artifact_sha256": SHA64}
-        for c in CHECKS
-        if c not in m.SETTLEMENT_CHECKS
-        and c not in {m.CARDINALITY_CHECK, m.RECONCILIATION_CHECK, m.RECOVERY_CHECK}
-    }
-    checks.update(settlement_artifacts(root, sequence))
+    checks = settlement_artifacts(root, sequence)
     verification = {
         "schema": m.DAY_VERIFICATION_SCHEMA,
         "schema_version": m.DAY_VERIFICATION_VERSION,
@@ -764,6 +872,72 @@ class CampaignEvidenceTests(unittest.TestCase):
         verification["checks"]["settlement_close"]["subject"]["line_count"] = 79
         verification_path.write_bytes(m.canonical_bytes(verification))
         with self.assertRaisesRegex(m.EvidenceError, "line count differs"):
+            m.inspect(root)
+
+    def test_financial_invariants_generic_pass_sha_no_longer_advances_frontier(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"]["financial_invariants"] = {"verdict": "PASS", "artifact_sha256": SHA64}
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "financial_invariants: bound descriptor fields mismatch"):
+            m.inspect(root)
+
+    def test_financial_invariants_replay_raw_cross_system_state(self):
+        root = self.init()
+        write_terminal(root, 1)
+        financial_path = root / "days/day-000001.financial-invariants.verification.json"
+        artifact = m.load_json(financial_path)
+        row = next(x for x in artifact["observations"] if x["kind"] == "auth_capture_purchase")
+        row["merchant"]["paymentState"] = "AUTHORIZED"
+        financial_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["financial_invariants"]["artifact_sha256"] = m.sha256(financial_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "Merchant terminal state conflict"):
+            m.inspect(root)
+
+    def test_financial_provider_version_crossbinds_day_cardinality(self):
+        root = self.init()
+        write_terminal(root, 1)
+        financial_path = root / "days/day-000001.financial-invariants.verification.json"
+        artifact = m.load_json(financial_path)
+        artifact["observations"][0]["provider"]["version"] += 1
+        financial_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["financial_invariants"]["artifact_sha256"] = m.sha256(financial_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "provider version differs"):
+            m.inspect(root)
+
+    def test_financial_merchant_provider_pairs_crossbind_reconciliation(self):
+        root = self.init()
+        write_terminal(root, 1)
+        reconciliation_path = root / "days/day-000001.reconciliation.verification.json"
+        artifact = m.load_json(reconciliation_path)
+        snapshot = artifact["producer_report"]["snapshot"]
+        snapshot["internal"][0]["merchant_payment_id"] = "tampered-payment"
+        snapshot["metadata"]["internal_snapshot_digest"] = (
+            day_reconciliation.qualification.row_digest(snapshot["internal"])
+        )
+        artifact["producer_report"]["oracle"] = day_reconciliation.qualification.oracle(snapshot)
+        reconciliation_path.write_bytes(m.canonical_bytes(artifact))
+
+        subject = day_reconciliation.validate(
+            artifact,
+            plan=day_cardinality.plan_for(root.name, 1),
+            source_revision=SHA40,
+            workload_binary_sha256=SHA64,
+        )
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["reconciliation"]["artifact_sha256"] = m.sha256(reconciliation_path)
+        verification["checks"]["reconciliation"]["subject"] = subject
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "Merchant/provider identity pairs differ"):
             m.inspect(root)
 
     def test_reconciliation_generic_pass_sha_no_longer_advances_frontier(self):

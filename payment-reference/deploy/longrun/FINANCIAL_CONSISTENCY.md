@@ -1,8 +1,8 @@
 # Read-only cross-system financial consistency probe (#318)
 
-This bounded slice supplies an **independent read path** for normal terminal
-Merchant payments. It is *not* the complete independent campaign verifier and
-cannot by itself advance the #318 completed-day frontier.
+This bounded slice supplies the pure cross-system checker used by the day-level
+financial-invariants proof. The CLI remains a **single-payment diagnostic read
+path** and cannot by itself advance the #318 completed-day frontier.
 
 The command performs only these reads on the existing bound OCI Compose host:
 
@@ -58,26 +58,22 @@ Its four normal case contracts are:
 Successful output has the **non-acceptance** decision
 `CROSS_SYSTEM_CONSISTENT_NOT_CAMPAIGN_ACCEPTED`. Any identity, cardinality,
 terminal-state or monetary mismatch is a hard `BLOCK` (exit code 75).
-The `fault_overlay` category intentionally cannot pass this normal-case
-verifier: it needs an independently qualified ambiguity/recovery procedure.
+The CLI still exposes only the four normal cases. The module additionally exposes
+`canonical_fault_consistency` for the five qualified fault-overlay classes at the
+post-recovery end-of-day boundary. That pure helper is consumed by the 100-slot
+`campaign_day_financial_invariants.py` verifier; it is not a standalone campaign
+PASS and does not replace recovery or provider-cardinality evidence.
 
-## Gaps deliberately left unresolved
+## Day-level authority boundary
 
-Even a successful four-system snapshot does **not** prove:
+A single successful four-system snapshot still proves none of the surrounding
+campaign authorities by itself. Day verification v4 closes that gap only by
+binding the 100-slot financial artifact to the separately produced provider
+cardinality, settlement, reconciliation and recovery proofs.
 
-- exact provider mutation side-effect cardinality from the provider operation
-  journal, including lost-response replay and duplicate webhooks;
-- correct **provider-settlement roster and immutable statement**;
-- Merchant settlement close idempotence, replay/conflict and batch accounting;
-- published OxideBatch 0.7.0 recovery/reconciliation outputs and PostgreSQL
-  batch execution history;
-- signed/bound snapshots, crash recovery, longitudinal resource evidence,
-  or the per-day independent-verification artifact owner.
-
-The next work units must implement these gates and feed verified SHA-256
-artifacts into the canonical `campaign-evidence.py` day-completion protocol.
-Do not replace the independent verifier with a synthetic JSON PASS envelope,
-or treat the existing 30-minute idle observation as new campaign evidence.
+See [DAY_FINANCIAL_INVARIANTS.md](DAY_FINANCIAL_INVARIANTS.md). The live
+100-slot read-only collector/controller remains a separate implementation slice;
+this module must not be replaced by a synthetic JSON PASS envelope.
 
 ## Testing
 
@@ -85,7 +81,7 @@ or treat the existing 30-minute idle observation as new campaign evidence.
 python3 payment-reference/deploy/longrun/test-campaign-financial-consistency.py
 ```
 
-Tests use mock read-only endpoints and complete normal-case fixtures; they
+Tests use mock read-only endpoints and complete normal/fault EOD fixtures; they
 intentionally reject wrong payment/order/provider identity, amount/currency,
 terminal state, Kill Bill extra/missing/failed transactions, unsafe URLs,
 unknown financial cases and missing Kill Bill credentials. They cannot prove

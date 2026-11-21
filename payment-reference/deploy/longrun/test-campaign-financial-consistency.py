@@ -41,6 +41,36 @@ def fixture(case):
     return merchant, gateway, provider, kb
 
 
+def fault_fixture(fault_class):
+    truth = financial.fault_catalog.end_of_day_provider_truth(fault_class)
+    authorized = truth == "AUTHORIZED"
+    payment_state = "AUTHORIZED" if authorized else "PAYMENT_FAILED"
+    operation_state = "SUCCEEDED" if authorized else "FAILED"
+    provider_status = "authorized" if authorized else "failed"
+    transaction_status = "SUCCESS" if authorized else "PAYMENT_FAILURE"
+    merchant = {
+        "merchantPaymentId": "payment-318", "merchantOrderId": "order-318",
+        "amountMinor": 1000, "currency": "USD", "paymentState": payment_state,
+    }
+    gateway = {
+        "merchantPaymentId": "payment-318", "paymentState": payment_state,
+        "lastOperationState": operation_state, "mapping": {
+            "merchantPaymentId": "payment-318",
+            "killbillPaymentId": "kb-318",
+            "providerPaymentId": "provider-318",
+        },
+    }
+    provider = {
+        "id": "provider-318", "amount": 1000, "currency": "USD",
+        "status": provider_status, "authorized_amount": 1000 if authorized else 0,
+        "captured_amount": 0, "refunded_amount": 0, "version": 2,
+    }
+    kb = {"paymentId": "kb-318", "transactions": [{
+        "transactionType": "AUTHORIZE", "transactionStatus": transaction_status,
+    }]}
+    return merchant, gateway, provider, kb
+
+
 def check(case, values):
     a, b, c, d = values
     return financial.canonical_consistency(
@@ -60,6 +90,58 @@ class FinancialConsistencyTests(unittest.TestCase):
                 self.assertEqual(len(summary["unverified"]), 5)
                 self.assertIn("provider_mutation_side_effect_cardinality", summary["unverified"])
                 self.assertIn("provider_settlement_statement", summary["unverified"])
+
+    def test_all_five_fault_overlay_eod_cases_are_partial_only(self):
+        for fault_class in financial.fault_catalog.classes():
+            with self.subTest(fault_class=fault_class):
+                merchant, gateway, provider, kb = fault_fixture(fault_class)
+                summary = financial.canonical_fault_consistency(
+                    payment_id="payment-318",
+                    order_id="order-318",
+                    fault_class=fault_class,
+                    merchant=merchant,
+                    gateway=gateway,
+                    provider=provider,
+                    killbill=kb,
+                )
+                self.assertEqual(
+                    summary["decision"],
+                    "FAULT_CROSS_SYSTEM_CONSISTENT_NOT_CAMPAIGN_ACCEPTED",
+                )
+                self.assertEqual(summary["fault_class"], fault_class)
+                self.assertEqual(summary["case"], "fault_overlay")
+                self.assertEqual(summary["provider_payment_id"], "provider-318")
+
+    def test_fault_overlay_state_provider_and_killbill_drift_rejected(self):
+        fault_class = "async-failure"
+        cases = [
+            ("merchant", "paymentState", "AUTHORIZED"),
+            ("gateway", "lastOperationState", "SUCCEEDED"),
+            ("provider", "status", "authorized"),
+            ("provider", "authorized_amount", 1000),
+            ("killbill", "transactionStatus", "SUCCESS"),
+        ]
+        for section, field, value in cases:
+            with self.subTest(section=section, field=field):
+                merchant, gateway, provider, kb = fault_fixture(fault_class)
+                if section == "merchant":
+                    merchant[field] = value
+                elif section == "gateway":
+                    gateway[field] = value
+                elif section == "provider":
+                    provider[field] = value
+                else:
+                    kb["transactions"][0][field] = value
+                with self.assertRaises(financial.Block):
+                    financial.canonical_fault_consistency(
+                        payment_id="payment-318",
+                        order_id="order-318",
+                        fault_class=fault_class,
+                        merchant=merchant,
+                        gateway=gateway,
+                        provider=provider,
+                        killbill=kb,
+                    )
 
     def test_merchant_identity_state_amount_currency_rejections(self):
         for field, new_value in [

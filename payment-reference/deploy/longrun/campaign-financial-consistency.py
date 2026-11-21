@@ -18,6 +18,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import campaign_fault_catalog as fault_catalog
+
 SCHEMA = "oxide-batch-workloads.payment-reference-cross-system-consistency"
 KINDS = {"auth_capture_purchase", "authorize_capture", "authorize_cancel", "auth_capture_refund"}
 SAFE_ID = re.compile(r"[a-zA-Z0-9_-]{1,120}\Z")
@@ -108,6 +110,98 @@ def canonical_consistency(
             "provider_settlement_statement",
             "merchant_settlement_close",
             "batch_reconciliation_recovery_truth",
+            "campaign_evidence_ownership",
+        ],
+    }
+
+
+def canonical_fault_consistency(
+    *,
+    payment_id: str,
+    order_id: str,
+    fault_class: str,
+    merchant: dict[str, Any],
+    gateway: dict[str, Any],
+    provider: dict[str, Any],
+    killbill: dict[str, Any],
+) -> dict[str, Any]:
+    """Pure EOD cross-system checker for the five qualified fault-overlay classes."""
+    demand(isinstance(payment_id, str) and SAFE_ID.fullmatch(payment_id) is not None, "invalid payment identity")
+    demand(isinstance(order_id, str) and SAFE_ID.fullmatch(order_id) is not None, "invalid order identity")
+    demand(fault_class in fault_catalog.classes(), "unsupported fault class")
+    for name, value in (("merchant", merchant), ("gateway", gateway), ("provider", provider), ("killbill", killbill)):
+        object_(value, name)
+
+    truth = fault_catalog.end_of_day_provider_truth(fault_class)
+    if truth == "AUTHORIZED":
+        expected_payment_state = "AUTHORIZED"
+        expected_operation_state = "SUCCEEDED"
+        provider_status = "authorized"
+        killbill_status = "SUCCESS"
+        authorized = 1000
+    else:
+        demand(truth == "FAILED", "unsupported fault EOD truth")
+        expected_payment_state = "PAYMENT_FAILED"
+        expected_operation_state = "FAILED"
+        provider_status = "failed"
+        killbill_status = "PAYMENT_FAILURE"
+        authorized = 0
+
+    demand(merchant.get("merchantPaymentId") == payment_id, "Merchant payment identity conflict")
+    demand(merchant.get("merchantOrderId") == order_id, "Merchant order identity conflict")
+    demand(type(merchant.get("amountMinor")) is int and merchant["amountMinor"] == 1000, "Merchant prepared amount drift")
+    demand(merchant.get("currency") == "USD", "Merchant currency drift")
+    demand(merchant.get("paymentState") == expected_payment_state, "Merchant fault EOD state conflict")
+
+    demand(gateway.get("merchantPaymentId") == payment_id, "Gateway payment identity conflict")
+    demand(gateway.get("paymentState") == expected_payment_state, "Gateway fault EOD state conflict")
+    demand(gateway.get("lastOperationState") == expected_operation_state, "Gateway fault EOD operation state conflict")
+    mapping = object_(gateway.get("mapping"), "Gateway mapping")
+    demand(mapping.get("merchantPaymentId") == payment_id, "Gateway mapping payment identity conflict")
+    kb_id = mapping.get("killbillPaymentId")
+    provider_id = mapping.get("providerPaymentId")
+    demand(isinstance(kb_id, str) and SAFE_ID.fullmatch(kb_id) is not None, "missing Kill Bill payment mapping")
+    demand(isinstance(provider_id, str) and SAFE_ID.fullmatch(provider_id) is not None, "missing provider payment mapping")
+
+    demand(killbill.get("paymentId") == kb_id, "Kill Bill payment identity conflict")
+    transactions = killbill.get("transactions")
+    demand(isinstance(transactions, list) and len(transactions) == 1, "fault-overlay Kill Bill transaction cardinality mismatch")
+    transaction = object_(transactions[0], "Kill Bill transaction")
+    demand(transaction.get("transactionType") == "AUTHORIZE", "fault-overlay Kill Bill transaction type mismatch")
+    demand(transaction.get("transactionStatus") == killbill_status, "fault-overlay Kill Bill transaction status mismatch")
+
+    demand(provider.get("id") == provider_id, "provider payment identity conflict")
+    demand(provider.get("amount") == 1000 and provider.get("currency") == "USD", "provider original amount/currency mismatch")
+    demand(provider.get("status") == provider_status, "provider fault EOD state conflict")
+    demand(provider.get("authorized_amount") == authorized, "provider authorized_amount mismatch")
+    demand(provider.get("captured_amount") == 0, "provider captured_amount mismatch")
+    demand(provider.get("refunded_amount") == 0, "provider refunded_amount mismatch")
+
+    return {
+        "schema": SCHEMA,
+        "schema_version": 1,
+        "decision": "FAULT_CROSS_SYSTEM_CONSISTENT_NOT_CAMPAIGN_ACCEPTED",
+        "payment_id": payment_id,
+        "order_id": order_id,
+        "case": "fault_overlay",
+        "fault_class": fault_class,
+        "killbill_payment_id": kb_id,
+        "provider_payment_id": provider_id,
+        "canonical_payment_state": expected_payment_state,
+        "canonical_operation_state": expected_operation_state,
+        "provider_status": provider_status,
+        "authorized_amount_minor": authorized,
+        "captured_amount_minor": 0,
+        "refunded_amount_minor": 0,
+        "net_settlement_amount_minor": 0,
+        "killbill_transactions_by_type": {"AUTHORIZE": 1},
+        "killbill_transaction_status": killbill_status,
+        "unverified": [
+            "provider_mutation_side_effect_cardinality",
+            "recovery_candidate_binding",
+            "provider_settlement_statement",
+            "merchant_settlement_close",
+            "batch_reconciliation_truth",
             "campaign_evidence_ownership",
         ],
     }
