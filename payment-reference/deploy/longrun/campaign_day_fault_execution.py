@@ -395,9 +395,7 @@ def validate_completed_fault_slot(
         pilot.read_object(day / "identity.json") == pilot.day_identity(plan, source_sha, provenance_hashes),
         "fault slot day identity drift",
     )
-    _normal_summary_required(
-        plan=plan, day=day, source_sha=source_sha, provenance_hashes=provenance_hashes,
-    )
+    require(pilot.validate_setup(day / "setup", plan["merchant_setup"]), "day setup not validated")
     folder = day / f"slot-{item['slot']:03}"
     require(folder.is_dir() and not folder.is_symlink(), "fault slot directory missing/unsafe")
     result_path = folder / "result.json"
@@ -444,11 +442,17 @@ def execute_fault_slot(
     require(item.get("fault_class") in fault_catalog.classes(), "fault slot class not in canonical catalog")
     root = evidence_root.resolve()
     day = pilot.day_path(root, plan)
-    require(day.is_dir() and not day.is_symlink(), "normal day evidence must exist before fault execution")
+    require(day.is_dir() and not day.is_symlink(), "day evidence must exist before fault execution")
     require(pilot.read_object(day / "identity.json") == pilot.day_identity(plan, source_sha, provenance_hashes),
             "fault day source/provenance/plan drift")
-    _normal_summary_required(plan=plan, day=day, source_sha=source_sha, provenance_hashes=provenance_hashes)
     require(pilot.validate_setup(day / "setup", plan["merchant_setup"]), "day setup not validated")
+    pilot.require_canonical_slot_intent(
+        day=day,
+        plan=plan,
+        item=item,
+        source_sha=source_sha,
+        provenance_hashes=provenance_hashes,
+    )
 
     folder = day / f"slot-{item['slot']:03}"
     folder.mkdir(mode=0o700, exist_ok=False)
@@ -683,30 +687,36 @@ def execute_fault_day(
     results: list[dict[str, Any]] = []
     executed: list[int] = []
     reused: list[int] = []
-    with (day / ".lock").open("a+b") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for item in faults:
-            folder = day / f"slot-{item['slot']:03}"
-            if folder.exists():
-                results.append(validate_slot(
-                    plan=plan, item=item, evidence_root=root, source_sha=source_sha,
-                    provenance_hashes=provenance_hashes,
-                ))
-                reused.append(item["slot"])
-                continue
-            results.append(run_slot(
-                plan=plan, item=item, evidence_root=root, source_sha=source_sha,
-                provenance_hashes=provenance_hashes, fault_proxy_base=fault_proxy_base,
-                fault_control_timeout_seconds=fault_control_timeout_seconds,
-                provider_control_timeout_seconds=provider_control_timeout_seconds,
-            ))
-            executed.append(item["slot"])
-
-        summary = _summary(
-            plan=plan, faults=faults, results=results,
-            source_sha=source_sha, provenance_hashes=provenance_hashes,
+    with pilot.online_controller_lock_path(root, plan).open("a+b") as controller_lock:
+        fcntl.flock(controller_lock, fcntl.LOCK_EX)
+        require(
+            not (day / "online-order").exists(),
+            "canonical online controller owns this day; fault lane cannot mutate it",
         )
-        retention = normal_day.retain_exact(day / "fault-traffic.summary.json", summary)
+        with (day / ".lock").open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for item in faults:
+                folder = day / f"slot-{item['slot']:03}"
+                if folder.exists():
+                    results.append(validate_slot(
+                        plan=plan, item=item, evidence_root=root, source_sha=source_sha,
+                        provenance_hashes=provenance_hashes,
+                    ))
+                    reused.append(item["slot"])
+                    continue
+                results.append(run_slot(
+                    plan=plan, item=item, evidence_root=root, source_sha=source_sha,
+                    provenance_hashes=provenance_hashes, fault_proxy_base=fault_proxy_base,
+                    fault_control_timeout_seconds=fault_control_timeout_seconds,
+                    provider_control_timeout_seconds=provider_control_timeout_seconds,
+                ))
+                executed.append(item["slot"])
+
+            summary = _summary(
+                plan=plan, faults=faults, results=results,
+                source_sha=source_sha, provenance_hashes=provenance_hashes,
+            )
+            retention = normal_day.retain_exact(day / "fault-traffic.summary.json", summary)
     return {
         "decision": DECISION,
         "fault_slot_count": len(faults),

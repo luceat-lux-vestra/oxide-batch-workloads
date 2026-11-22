@@ -10,6 +10,7 @@ before any resume.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import os
@@ -141,10 +142,35 @@ def execute_normal_day(
     reused: list[int] = []
     day = pilot.day_path(root, plan)
 
-    for item in normal:
-        slot = item["slot"]
-        slot_dir = day / f"slot-{slot:03}"
-        if slot_dir.exists():
+    with pilot.online_controller_lock_path(root, plan).open("a+b") as controller_lock:
+        fcntl.flock(controller_lock, fcntl.LOCK_EX)
+        if day.exists():
+            require(
+                not (day / "online-order").exists(),
+                "canonical online controller owns this day; lane coordinator cannot mutate it",
+            )
+
+        for item in normal:
+            slot = item["slot"]
+            slot_dir = day / f"slot-{slot:03}"
+            if slot_dir.exists():
+                validate_slot(
+                    plan=plan,
+                    slot=slot,
+                    evidence_root=root,
+                    source_sha=source_sha,
+                    provenance_hashes=provenance_hashes,
+                )
+                reused.append(slot)
+                continue
+
+            run_slot(
+                plan=plan,
+                slot=slot,
+                evidence_root=root,
+                source_sha=source_sha,
+                provenance_hashes=provenance_hashes,
+            )
             validate_slot(
                 plan=plan,
                 slot=slot,
@@ -152,34 +178,17 @@ def execute_normal_day(
                 source_sha=source_sha,
                 provenance_hashes=provenance_hashes,
             )
-            reused.append(slot)
-            continue
+            executed_now.append(slot)
 
-        run_slot(
+        require(day.is_dir() and not day.is_symlink(), "normal traffic day evidence missing after execution")
+        summary = _summary(
             plan=plan,
-            slot=slot,
-            evidence_root=root,
             source_sha=source_sha,
             provenance_hashes=provenance_hashes,
+            normal=normal,
+            faults=faults,
         )
-        validate_slot(
-            plan=plan,
-            slot=slot,
-            evidence_root=root,
-            source_sha=source_sha,
-            provenance_hashes=provenance_hashes,
-        )
-        executed_now.append(slot)
-
-    require(day.is_dir() and not day.is_symlink(), "normal traffic day evidence missing after execution")
-    summary = _summary(
-        plan=plan,
-        source_sha=source_sha,
-        provenance_hashes=provenance_hashes,
-        normal=normal,
-        faults=faults,
-    )
-    retention = retain_exact(day / "normal-traffic.summary.json", summary)
+        retention = retain_exact(day / "normal-traffic.summary.json", summary)
     return {
         "decision": DECISION,
         "normal_slot_count": len(normal),
