@@ -21,6 +21,8 @@ import campaign_day_cardinality as day_cardinality
 import campaign_day_financial_invariants as day_financial
 import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
+import campaign_day_online_verification as day_online
+import campaign_day_quiescence_verification as day_quiescence
 
 CONTRACT_PATH = core.CONTRACT_PATH
 SCHEMA = "oxide-batch-workloads.payment-reference-campaign"
@@ -39,8 +41,10 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
-DAY_VERIFICATION_VERSION = 4
+DAY_VERIFICATION_VERSION = 5
 FINANCIAL_CHECK = "financial_invariants"
+ONLINE_CHECK = "canonical_online"
+QUIESCENCE_CHECK = "quiescence"
 RECONCILIATION_CHECK = "reconciliation"
 RECOVERY_CHECK = "recovery"
 SETTLEMENT_CHECKS = {"settlement_roster", "settlement_close"}
@@ -236,7 +240,7 @@ def _day_files(campaign_path: Path) -> tuple[dict[int, Path], dict[int, Path]]:
             seq = int(path.name[:6])
             require(seq > 0, "day zero verification file invalid")
             verifications[seq] = path
-        elif re.fullmatch(r"day-[0-9]{6}\.(?:recovery|reconciliation|financial-invariants)\.verification\.json", path.name):
+        elif re.fullmatch(r"day-[0-9]{6}\.(?:recovery|reconciliation|financial-invariants|online|quiescence)\.verification\.json", path.name):
             seq = int(path.name[4:10])
             require(seq > 0, "day zero auxiliary verification file invalid")
             # Auxiliary proofs are validated only through their exact bound
@@ -544,7 +548,10 @@ def validate_verification(
         "independent verification identity/verdict mismatch",
     )
     checks = record["checks"]
-    expected = SETTLEMENT_CHECKS | {CARDINALITY_CHECK, FINANCIAL_CHECK, RECONCILIATION_CHECK, RECOVERY_CHECK}
+    expected = SETTLEMENT_CHECKS | {
+        CARDINALITY_CHECK, FINANCIAL_CHECK, RECONCILIATION_CHECK, RECOVERY_CHECK,
+        ONLINE_CHECK, QUIESCENCE_CHECK,
+    }
     require(isinstance(checks, dict) and set(checks) == expected, "missing verification coverage")
 
     roster_artifact, roster_subject = _validate_bound_settlement_check(
@@ -850,6 +857,86 @@ def validate_verification(
             and proof.get("provider_status") == result["final_provider_status"],
             "financial_invariants: recovered canonical/provider state differs from financial proof",
         )
+
+
+    online = checks[ONLINE_CHECK]
+    online_name = f"day-{sequence:06}.online.verification.json"
+    require(type(online) is dict and set(online) == expected_fields,
+            "canonical_online: bound descriptor fields mismatch")
+    require(
+        online["verdict"] == "PASS"
+        and online["artifact_schema"] == day_online.SCHEMA
+        and online["artifact_schema_version"] == day_online.SCHEMA_VERSION
+        and online["campaign_id"] == identity["campaign_id"]
+        and online["logical_day_sequence"] == sequence
+        and online["source_revision"] == identity["source_revision"],
+        "canonical_online: descriptor identity/schema/verdict mismatch",
+    )
+    require(
+        isinstance(online["artifact_sha256"], str)
+        and HEX64.fullmatch(online["artifact_sha256"]) is not None,
+        "canonical_online: artifact SHA invalid",
+    )
+    online_path = _safe_relative_artifact(
+        campaign_path, online["relative_path"], online_name, ONLINE_CHECK,
+    )
+    require(
+        sha256(online_path) == online["artifact_sha256"],
+        "canonical_online: retained file SHA mismatch",
+    )
+    online_artifact = load_json(online_path)
+    online_subject = day_online.validate(
+        online_artifact,
+        plan=day_online.plan_for(identity["campaign_id"], sequence),
+        source_revision=identity["source_revision"],
+        provenance_hashes=identity["provenance_sha256"],
+    )
+    require(
+        online["subject"] == online_subject,
+        "canonical_online: descriptor subject mismatches independently re-derived proof",
+    )
+    require(
+        online_subject["primary_lifecycle_count"] == plan_day(sequence)["primary_lifecycles"],
+        "canonical_online: primary lifecycle count differs from campaign day plan",
+    )
+
+    quiescence = checks[QUIESCENCE_CHECK]
+    quiescence_name = f"day-{sequence:06}.quiescence.verification.json"
+    require(type(quiescence) is dict and set(quiescence) == expected_fields,
+            "quiescence: bound descriptor fields mismatch")
+    require(
+        quiescence["verdict"] == "PASS"
+        and quiescence["artifact_schema"] == day_quiescence.SCHEMA
+        and quiescence["artifact_schema_version"] == day_quiescence.SCHEMA_VERSION
+        and quiescence["campaign_id"] == identity["campaign_id"]
+        and quiescence["logical_day_sequence"] == sequence
+        and quiescence["source_revision"] == identity["source_revision"],
+        "quiescence: descriptor identity/schema/verdict mismatch",
+    )
+    require(
+        isinstance(quiescence["artifact_sha256"], str)
+        and HEX64.fullmatch(quiescence["artifact_sha256"]) is not None,
+        "quiescence: artifact SHA invalid",
+    )
+    quiescence_path = _safe_relative_artifact(
+        campaign_path, quiescence["relative_path"], quiescence_name, QUIESCENCE_CHECK,
+    )
+    require(
+        sha256(quiescence_path) == quiescence["artifact_sha256"],
+        "quiescence: retained file SHA mismatch",
+    )
+    quiescence_artifact = load_json(quiescence_path)
+    quiescence_subject = day_quiescence.validate(
+        quiescence_artifact,
+        campaign_dir=campaign_path,
+        plan=plan_day(sequence),
+        source_revision=identity["source_revision"],
+        expected_services=sorted(identity["images"]["services"]),
+    )
+    require(
+        quiescence["subject"] == quiescence_subject,
+        "quiescence: descriptor subject mismatches independently re-derived proof",
+    )
 
     return sha256(path)
 
