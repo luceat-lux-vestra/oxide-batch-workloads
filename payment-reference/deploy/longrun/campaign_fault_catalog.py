@@ -128,13 +128,8 @@ def _render(value: Any, payment_id: str | None) -> Any:
     return copy.deepcopy(value)
 
 
-def render_plan(fault_class: str, logical_business_time: str, payment_id: str | None = None) -> dict[str, Any]:
-    require(isinstance(logical_business_time, str) and logical_business_time.strip(), "logical business time must be non-blank")
+def _plan(entry: dict[str, Any], logical_business_time: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
     catalog = _load()
-    entry = fault(fault_class)
-    steps = _render(entry["steps"], payment_id)
-    rendered = json.dumps(steps, sort_keys=True)
-    require(PLACEHOLDER not in rendered, "unresolved provider payment id placeholder")
     return {
         "fault_plan_version": catalog["fault_plan_version"],
         "scenario_version": entry["scenario_version"],
@@ -147,6 +142,45 @@ def render_plan(fault_class: str, logical_business_time: str, payment_id: str | 
     }
 
 
+def render_plan(fault_class: str, logical_business_time: str, payment_id: str | None = None) -> dict[str, Any]:
+    """Render an exact provider-bound plan for standalone qualification/replay."""
+    require(isinstance(logical_business_time, str) and logical_business_time.strip(), "logical business time must be non-blank")
+    entry = fault(fault_class)
+    steps = _render(entry["steps"], payment_id)
+    rendered = json.dumps(steps, sort_keys=True)
+    require(PLACEHOLDER not in rendered, "unresolved provider payment id placeholder")
+    return _plan(entry, logical_business_time, steps)
+
+
+def render_runtime_plan(fault_class: str, logical_business_time: str) -> dict[str, Any]:
+    """Render the live service-shaped plan before Kill Bill allocates its payment UUID.
+
+    Payment-bound selectors intentionally retain the catalog placeholder.  The
+    qualified fault adapter binds that placeholder exactly once from the first
+    matching provider request and resolves every later selector to that same
+    identity.  The catalog, not the controller, therefore remains the source
+    of the request shape while the runtime remains the source of provider ID.
+    """
+    require(isinstance(logical_business_time, str) and logical_business_time.strip(), "logical business time must be non-blank")
+    entry = fault(fault_class)
+    steps = copy.deepcopy(entry["steps"])
+    rendered = json.dumps(steps, sort_keys=True)
+    if PLACEHOLDER in rendered:
+        require(
+            any(
+                isinstance(step.get("request_match"), dict)
+                and any(
+                    PLACEHOLDER in value
+                    for value in step["request_match"].values()
+                    if isinstance(value, str)
+                )
+                for step in steps
+            ),
+            "provider placeholder must occur only in request selectors",
+        )
+    return _plan(entry, logical_business_time, steps)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="#318 canonical deterministic fault catalog")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -156,6 +190,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fault-class", required=True)
     p.add_argument("--logical-business-time", required=True)
     p.add_argument("--payment-id")
+    runtime = sub.add_parser("render-runtime")
+    runtime.add_argument("--fault-class", required=True)
+    runtime.add_argument("--logical-business-time", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
@@ -167,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
             }
         elif args.command == "classes":
             output = list(classes())
+        elif args.command == "render-runtime":
+            output = render_runtime_plan(args.fault_class, args.logical_business_time)
         else:
             output = render_plan(args.fault_class, args.logical_business_time, args.payment_id)
         print(json.dumps(output, sort_keys=True, separators=(",", ":")))

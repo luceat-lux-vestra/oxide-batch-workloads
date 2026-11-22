@@ -259,6 +259,7 @@ python3 longrun/test-campaign-day-financial-invariants.py
 python3 longrun/test-campaign-quiescence.py
 python3 longrun/test-campaign-core.py
 python3 longrun/test-campaign-fault-catalog.py
+python3 fault-proxy/test_request_fault_adapter.py
 
 python3 longrun/test-campaign-traffic-plan.py
 
@@ -269,6 +270,8 @@ python3 longrun/test-campaign-settlement-verification.py
 
 python3 longrun/test-campaign-online-pilot.py
 python3 longrun/test-campaign-day-online-traffic.py
+python3 longrun/test-campaign-day-fault-execution.py
+python3 longrun/test-campaign-hard-crash.py
 
 python3 longrun/test-oci-deployment.py
 

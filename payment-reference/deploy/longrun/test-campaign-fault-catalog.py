@@ -153,6 +153,73 @@ class CampaignFaultCatalogTests(unittest.TestCase):
         self.assertEqual(blocked.returncode, 75)
         self.assertEqual(json.loads(blocked.stderr)["decision"], "BLOCK")
 
+    def test_runtime_renderer_preserves_provider_placeholder_until_first_real_provider_request(self) -> None:
+        for fault_class in catalog.classes():
+            with self.subTest(fault_class=fault_class):
+                plan = catalog.render_runtime_plan(
+                    fault_class,
+                    "2026-11-14T00:00:00Z",
+                )
+                rendered = json.dumps(plan, sort_keys=True)
+                if fault_class == "webhook-ordering-duplicate-drop-retry":
+                    self.assertNotIn(catalog.PLACEHOLDER, rendered)
+                    continue
+
+                self.assertIn(catalog.PLACEHOLDER, rendered)
+                runtime = adapter.RequestFaultPlanAdapter()
+                runtime.load(plan)
+                runtime.advance(0)
+                request_point = next(
+                    step["point"]
+                    for step in plan["steps"]
+                    if step["point"] in {
+                        "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                        "REQUEST_AFTER_PROVIDER_COMMIT",
+                    }
+                )
+                consume = (
+                    runtime.consume_before
+                    if request_point == "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT"
+                    else runtime.consume_after_commit
+                )
+                decision = consume(
+                    "POST",
+                    "/payments/kb-runtime-catalog/authorize",
+                )
+                self.assertIsNotNone(decision)
+                self.assertEqual(
+                    "kb-runtime-catalog",
+                    runtime.snapshot()["provider_payment_id"],
+                )
+                self.assertNotIn(
+                    catalog.PLACEHOLDER,
+                    json.dumps(decision["step"], sort_keys=True),
+                )
+
+    def test_runtime_cli_is_deterministic_without_inventing_provider_identity(self) -> None:
+        command = [
+            sys.executable,
+            str(HERE / "campaign_fault_catalog.py"),
+            "render-runtime",
+            "--fault-class",
+            "async-success-stale-convergence",
+            "--logical-business-time",
+            "2026-11-14T00:00:00Z",
+        ]
+        first = subprocess.run(command, text=True, capture_output=True, check=False)
+        second = subprocess.run(command, text=True, capture_output=True, check=False)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        value = json.loads(first.stdout)
+        self.assertIn(catalog.PLACEHOLDER, json.dumps(value, sort_keys=True))
+        self.assertEqual(
+            value,
+            catalog.render_runtime_plan(
+                "async-success-stale-convergence",
+                "2026-11-14T00:00:00Z",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

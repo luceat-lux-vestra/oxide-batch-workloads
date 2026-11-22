@@ -1,3 +1,26 @@
+FROM golang:1.25.7-bookworm AS campaign-control-build
+
+ARG PAYMENT_SANDBOX_SOURCE_REPOSITORY=https://github.com/proxynth/payment-sandbox.git
+ARG PAYMENT_SANDBOX_SOURCE_REVISION=3b6d6e1864ea5a6d017fcb005f547cf26c37352a
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git init /src \
+    && cd /src \
+    && git remote add origin "$PAYMENT_SANDBOX_SOURCE_REPOSITORY" \
+    && git fetch --depth=1 origin "$PAYMENT_SANDBOX_SOURCE_REVISION" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$PAYMENT_SANDBOX_SOURCE_REVISION"
+
+COPY campaign-control/main.go /src/cmd/payment-sandbox-campaign-control/main.go
+
+RUN cd /src \
+    && CGO_ENABLED=0 go build -trimpath -o /out/payment-sandbox-campaign-control \
+        ./cmd/payment-sandbox-campaign-control
+
+
 FROM debian:bookworm-slim
 
 ARG PAYMENT_SANDBOX_VERSION=1.5.4
@@ -22,6 +45,8 @@ RUN set -eux; \
     test -n "$binary"; \
     install -m 0755 "$binary" /usr/local/bin/payment-sandbox; \
     rm -rf /tmp/*
+
+COPY --from=campaign-control-build /out/payment-sandbox-campaign-control /usr/local/bin/payment-sandbox-campaign-control
 
 RUN useradd --system --uid 10001 --create-home payment-sandbox \
     && mkdir -p /var/lib/payment-sandbox \

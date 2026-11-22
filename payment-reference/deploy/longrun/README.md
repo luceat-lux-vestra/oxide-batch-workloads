@@ -497,4 +497,6 @@ Per-day quiescence now has a dedicated read-only resource sampler. `campaign_qui
 
 Day-wide normal online traffic now has a coordinator over the existing write-ahead one-slot pilot. It safely executes or resumes every non-fault slot while retaining the fault-overlay slots as an explicit external dependency; it cannot mark a day complete. See [ONLINE_TRAFFIC.md](ONLINE_TRAFFIC.md).
 
+The complementary fault-overlay executor now loads the canonical catalog before each provider mutation, binds the real Kill Bill-derived provider identity at runtime, retains fail-closed write-ahead evidence, and durably materializes the catalog's asynchronous provider failure through a non-networked control helper built from the exact pinned payment-sandbox source. Scheduled hard crashes use a separate semantic-marker/SIGKILL supervisor derived from the frozen day plan; neither layer can accept a day. See [FAULT_EXECUTION.md](FAULT_EXECUTION.md).
+
 Day verification v4 therefore has no remaining controller-authored generic `PASS + SHA` checks.

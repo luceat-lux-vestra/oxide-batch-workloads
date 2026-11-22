@@ -289,6 +289,127 @@ class RequestFaultPlanAdapterTest(unittest.TestCase):
         with self.assertRaises(FaultPlanValidationError):
             adapter.advance(99)
 
+    def test_runtime_provider_placeholder_binds_once_and_resolves_consumed_selector(self):
+        adapter = RequestFaultPlanAdapter()
+        adapter.load(
+            plan(
+                request_step(
+                    "defer",
+                    1,
+                    0,
+                    "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                    "/payments/{provider_payment_id}/authorize",
+                    {"kind": "DEFER_ASYNC", "operation_id": "async-bound"},
+                ),
+                request_step(
+                    "stale",
+                    2,
+                    50,
+                    "STATUS_INQUIRY",
+                    "/payments/{provider_payment_id}",
+                    {"kind": "STATUS_VISIBILITY", "visibility": "STALE"},
+                    method="GET",
+                ),
+                {
+                    "step_id": "transition",
+                    "sequence": 3,
+                    "offset_ms": 100,
+                    "point": "PROVIDER_TRANSITION",
+                    "action": {
+                        "kind": "PROVIDER_TRANSITION",
+                        "operation_id": "async-bound",
+                        "outcome": "SUCCEEDED",
+                    },
+                },
+            )
+        )
+        adapter.advance(0)
+        decision = adapter.consume_before("POST", "/payments/kb-runtime-1/authorize")
+        self.assertEqual("kb-runtime-1", adapter.snapshot()["provider_payment_id"])
+        self.assertEqual(
+            "/payments/kb-runtime-1/authorize",
+            decision["step"]["request_match"]["path_suffix"],
+        )
+        due = adapter.advance(50)["due_events"]
+        self.assertEqual("/payments/kb-runtime-1", due[0]["request_match"]["path_suffix"])
+
+    def test_runtime_provider_placeholder_rejects_timeline_before_binding(self):
+        adapter = RequestFaultPlanAdapter()
+        adapter.load(
+            plan(
+                request_step(
+                    "defer",
+                    1,
+                    100,
+                    "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                    "/payments/{provider_payment_id}/authorize",
+                    {"kind": "DEFER_ASYNC", "operation_id": "async-late"},
+                ),
+                request_step(
+                    "stale",
+                    2,
+                    50,
+                    "STATUS_INQUIRY",
+                    "/payments/{provider_payment_id}",
+                    {"kind": "STATUS_VISIBILITY", "visibility": "STALE"},
+                    method="GET",
+                ),
+            )
+        )
+        with self.assertRaisesRegex(FaultPlanValidationError, "bound first"):
+            adapter.advance(50)
+
+    def test_runtime_provider_placeholder_does_not_rebind_to_different_payment(self):
+        adapter = RequestFaultPlanAdapter()
+        adapter.load(
+            plan(
+                request_step(
+                    "first",
+                    1,
+                    0,
+                    "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                    "/payments/{provider_payment_id}/authorize",
+                    {"kind": "HTTP_FAILURE", "status": 503},
+                ),
+                request_step(
+                    "second",
+                    2,
+                    0,
+                    "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                    "/payments/{provider_payment_id}/capture",
+                    {"kind": "HTTP_FAILURE", "status": 503},
+                ),
+            )
+        )
+        adapter.advance(0)
+        self.assertIsNotNone(adapter.consume_before("POST", "/payments/kb-runtime-a/authorize"))
+        self.assertIsNone(adapter.consume_before("POST", "/payments/kb-runtime-b/capture"))
+        second = adapter.consume_before("POST", "/payments/kb-runtime-a/capture")
+        self.assertIsNotNone(second)
+        self.assertEqual("kb-runtime-a", adapter.snapshot()["provider_payment_id"])
+
+    def test_provider_placeholder_must_be_single_path_segment(self):
+        adapter = RequestFaultPlanAdapter()
+        for suffix in (
+            "/payments/{provider_payment_id}/{provider_payment_id}/authorize",
+            "/payments/prefix-{provider_payment_id}/authorize",
+            "/payments/{provider_payment_id}-suffix/authorize",
+        ):
+            with self.subTest(suffix=suffix):
+                with self.assertRaises(FaultPlanValidationError):
+                    adapter.load(
+                        plan(
+                            request_step(
+                                "bad-placeholder",
+                                1,
+                                0,
+                                "REQUEST_BEFORE_PROVIDER_SIDE_EFFECT",
+                                suffix,
+                                {"kind": "HTTP_FAILURE", "status": 503},
+                            )
+                        )
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

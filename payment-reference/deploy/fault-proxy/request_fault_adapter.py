@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import re
 import threading
 
 FAULT_PLAN_VERSION = 1
@@ -8,6 +9,8 @@ REQUEST_AFTER = "REQUEST_AFTER_PROVIDER_COMMIT"
 STATUS_INQUIRY = "STATUS_INQUIRY"
 PROVIDER_TRANSITION = "PROVIDER_TRANSITION"
 WEBHOOK_DELIVERY = "WEBHOOK_DELIVERY"
+PROVIDER_PAYMENT_PLACEHOLDER = "{provider_payment_id}"
+PROVIDER_PAYMENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 _SELECTOR_POINTS = {REQUEST_BEFORE, REQUEST_AFTER, STATUS_INQUIRY}
 _REQUEST_POINTS = {REQUEST_BEFORE, REQUEST_AFTER}
@@ -34,6 +37,7 @@ class RequestFaultPlanAdapter:
     def reset(self):
         with self._lock:
             self._identity = None
+            self._provider_payment_id = None
             self._now_ms = 0
             self._scheduled_request = []
             self._active_request = []
@@ -74,7 +78,10 @@ class RequestFaultPlanAdapter:
                 self._scheduled_timeline
                 and self._scheduled_timeline[0]["offset_ms"] <= offset_ms
             ):
-                step = self._scheduled_timeline.pop(0)
+                step = self._resolve_step_unlocked(
+                    self._scheduled_timeline.pop(0),
+                    require_bound=True,
+                )
                 due_events.append(copy.deepcopy(step))
                 self._dispatched_timeline.append(
                     {
@@ -154,9 +161,12 @@ class RequestFaultPlanAdapter:
             if (
                 step["point"] == point
                 and method == match["method"]
-                and path.endswith(match["path_suffix"])
+                and self._request_matches_unlocked(match, path)
             ):
-                consumed = self._active_request.pop(index)
+                consumed = self._resolve_step_unlocked(
+                    self._active_request.pop(index),
+                    require_bound=True,
+                )
                 self._consumed_request.append(
                     {
                         "step_id": consumed["step_id"],
@@ -171,9 +181,49 @@ class RequestFaultPlanAdapter:
                 return copy.deepcopy(consumed)
         return None
 
+    def _request_matches_unlocked(self, match, path):
+        selector = "path_suffix" if "path_suffix" in match else "path_prefix"
+        expected = match[selector]
+        if PROVIDER_PAYMENT_PLACEHOLDER not in expected:
+            return path.endswith(expected) if selector == "path_suffix" else path.startswith(expected)
+
+        if self._provider_payment_id is None:
+            candidate = _provider_id_from_selector(expected, path, selector)
+            if candidate is None:
+                return False
+            self._provider_payment_id = candidate
+
+        resolved = expected.replace(
+            PROVIDER_PAYMENT_PLACEHOLDER,
+            self._provider_payment_id,
+        )
+        return path.endswith(resolved) if selector == "path_suffix" else path.startswith(resolved)
+
+    def _resolve_step_unlocked(self, step, require_bound):
+        resolved = copy.deepcopy(step)
+        match = resolved.get("request_match")
+        if match is None:
+            return resolved
+        for selector in ("path_suffix", "path_prefix"):
+            value = match.get(selector)
+            if not isinstance(value, str) or PROVIDER_PAYMENT_PLACEHOLDER not in value:
+                continue
+            if self._provider_payment_id is None:
+                if require_bound:
+                    raise FaultPlanValidationError(
+                        "fault timeline requires the provider payment identity to be bound first"
+                    )
+                continue
+            match[selector] = value.replace(
+                PROVIDER_PAYMENT_PLACEHOLDER,
+                self._provider_payment_id,
+            )
+        return resolved
+
     def _snapshot_unlocked(self):
         return {
             "identity": copy.deepcopy(self._identity),
+            "provider_payment_id": self._provider_payment_id,
             "now_ms": self._now_ms,
             "scheduled_request_steps": copy.deepcopy(self._scheduled_request),
             "active_request_steps": copy.deepcopy(self._active_request),
@@ -352,12 +402,49 @@ def _normalize_request_match(raw, allow_prefix=False):
         path_suffix = _non_blank(path_suffix, "request_match.path_suffix")
         if not path_suffix.startswith("/"):
             raise FaultPlanValidationError("request_match.path_suffix must begin with /")
+        _validate_provider_placeholder(path_suffix, "request_match.path_suffix")
         return {"method": method, "path_suffix": path_suffix}
 
     path_prefix = _non_blank(path_prefix, "request_match.path_prefix")
     if not path_prefix.startswith("/"):
         raise FaultPlanValidationError("request_match.path_prefix must begin with /")
+    _validate_provider_placeholder(path_prefix, "request_match.path_prefix")
     return {"method": method, "path_prefix": path_prefix}
+
+
+def _validate_provider_placeholder(value, field):
+    count = value.count(PROVIDER_PAYMENT_PLACEHOLDER)
+    if count > 1:
+        raise FaultPlanValidationError(
+            f"{field} may contain at most one provider payment placeholder"
+        )
+    if count == 1:
+        index = value.index(PROVIDER_PAYMENT_PLACEHOLDER)
+        before = value[index - 1] if index > 0 else ""
+        after_index = index + len(PROVIDER_PAYMENT_PLACEHOLDER)
+        after = value[after_index:after_index + 1]
+        if before != "/" or after not in {"", "/"}:
+            raise FaultPlanValidationError(
+                f"{field} provider payment placeholder must occupy a path segment"
+            )
+
+
+def _provider_id_from_selector(selector_value, path, selector_kind):
+    escaped = re.escape(selector_value)
+    token = re.escape(PROVIDER_PAYMENT_PLACEHOLDER)
+    pattern = escaped.replace(
+        token,
+        rf"(?P<provider>{PROVIDER_PAYMENT_ID.pattern[:-2]})",
+    )
+    match = (
+        re.search(pattern + r"\Z", path)
+        if selector_kind == "path_suffix"
+        else re.match(r"\A" + pattern, path)
+    )
+    if match is None:
+        return None
+    candidate = match.group("provider")
+    return candidate if PROVIDER_PAYMENT_ID.fullmatch(candidate) is not None else None
 
 
 def _normalize_action(point, raw):
