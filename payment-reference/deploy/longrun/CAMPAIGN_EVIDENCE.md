@@ -76,8 +76,9 @@ must call this status boundary before selecting the next day; a started day
 with no completed terminal evidence is **not** silently re-run.
 
 The per-day `*.verification.json` format requires bound retained artifacts for
-recovery, reconciliation, settlement roster, settlement close, financial
-invariants, and external side-effect cardinality. The current v4 scanner
+canonical online execution, quiescence, recovery, reconciliation, settlement
+roster, settlement close, financial invariants, and external side-effect
+cardinality. The current v5 scanner
 independently revalidates those artifacts and their cross-bindings before a day
 can advance the frontier. Synthetic test fixtures are never campaign evidence.
 
@@ -86,9 +87,9 @@ already-completed `payment-reconciliation-postgres` state. Day financial
 invariants likewise have a 100-slot read-only collector/retainer over completed
 EOD state. Per-day quiescence now has a read-only resource sampler that binds
 host/container/process/PostgreSQL/filesystem observations to the deterministic
-day window and appends them to `samples.jsonl`. Full online traffic,
-fault/crash orchestration, and terminal-day orchestration remain separate
-implementation slices.
+day window and appends them to `samples.jsonl`. Canonical online traffic and its independent compact proof are implemented.
+Fault/crash execution remains separate from terminal acceptance, and
+terminal-day orchestration remains a later implementation slice.
 
 See [QUIESCENCE.md](QUIESCENCE.md) for the sampler contract. The sampler does
 not itself establish the no-work phase boundary; the future terminal-day

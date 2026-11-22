@@ -13,6 +13,10 @@ import campaign_day_cardinality as day_cardinality
 import campaign_day_financial_invariants as day_financial
 import campaign_day_reconciliation as day_reconciliation
 import campaign_day_recovery as day_recovery
+import campaign_day_online_verification as day_online
+import campaign_day_quiescence_verification as day_quiescence
+import campaign_day_online_canonical as canonical_online
+import campaign_quiescence as quiescence
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("campaign_evidence", HERE / "campaign-evidence.py")
@@ -24,7 +28,10 @@ m = module
 SHA40 = "a" * 40
 SHA64 = "b" * 64
 SERVICES = ("merchant", "gateway", "killbill", "payment-sandbox", "payment-sandbox-fault-proxy", "merchant-db", "gateway-db", "killbill-db")
-CHECKS = ("recovery", "reconciliation", "settlement_roster", "settlement_close", "financial_invariants", "side_effect_cardinality")
+CHECKS = (
+    "recovery", "reconciliation", "settlement_roster", "settlement_close",
+    "financial_invariants", "side_effect_cardinality", "canonical_online", "quiescence",
+)
 
 
 def fixture(root):
@@ -438,6 +445,181 @@ def reconciliation_artifact_for_day(root, sequence, day_plan, day_card):
     return relative, path, artifact, subject
 
 
+
+def frontier_v5_artifacts(root, sequence):
+    identity = m.load_json(root / "campaign.json")["identity"]
+
+    online_plan = day_online.plan_for(root.name, sequence)
+    journal_identity = canonical_online.journal_identity(
+        online_plan, SHA40, identity["provenance_sha256"],
+    )
+    previous = canonical_online.pilot.sha(canonical_online.pilot.stable(journal_identity))
+    slot_chain = []
+    completion_hashes = []
+    fault_results = []
+    for item in online_plan["slots"]:
+        intent = canonical_online.expected_intent(item, previous)
+        result_sha = f"{item['slot']:064x}"
+        completion = canonical_online.expected_completion(
+            item,
+            canonical_online.pilot.sha(canonical_online.pilot.stable(intent)),
+            {"result.json": result_sha},
+        )
+        previous = canonical_online.pilot.sha(
+            canonical_online.pilot.stable(completion)
+        )
+        completion_hashes.append({"slot": item["slot"], "sha256": previous})
+        slot_chain.append({
+            "slot": item["slot"], "intent": intent, "completion": completion,
+        })
+        if item["kind"] == "fault_overlay":
+            fault_results.append({"recovery_reconciliation_required": True})
+    online_summary = canonical_online.summary(
+        plan=online_plan,
+        source_sha=SHA40,
+        provenance_hashes=identity["provenance_sha256"],
+        journal_identity_sha256=canonical_online.pilot.sha(
+            canonical_online.pilot.stable(journal_identity)
+        ),
+        completion_hashes=completion_hashes,
+        fault_results=fault_results,
+    )
+    online_artifact = day_online.artifact_from_components(
+        plan=online_plan,
+        source_revision=SHA40,
+        provenance_hashes=identity["provenance_sha256"],
+        journal_identity=journal_identity,
+        slot_chain=slot_chain,
+        online_summary=online_summary,
+    )
+    online_rel = f"days/day-{sequence:06}.online.verification.json"
+    online_path = root / online_rel
+    m.create_only(online_path, m.canonical_bytes(online_artifact))
+    online_subject = day_online.validate(
+        online_artifact,
+        plan=online_plan,
+        source_revision=SHA40,
+        provenance_hashes=identity["provenance_sha256"],
+    )
+
+    q_contract = quiescence.load_contract()
+    expected_services = sorted(identity["images"]["services"])
+    duration = m.plan_day(sequence)["minimum_quiet_seconds"]
+    interval = q_contract["target_sample_interval_seconds"]
+    seconds = list(range(0, duration, interval))
+    if not seconds or seconds[-1] != duration:
+        seconds.append(duration)
+    existing_lines = (root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
+    next_ordinal = len(existing_lines) + 1
+    observation = {
+        "host": {
+            "memory_total_bytes": 16 * 1024**3,
+            "memory_available_bytes": 8 * 1024**3,
+            "swap_total_bytes": 0,
+            "swap_used_bytes": 0,
+            "load_average_1m": 0.1,
+            "load_average_5m": 0.1,
+            "load_average_15m": 0.1,
+        },
+        "filesystems": [
+            {
+                "role": "campaign-evidence", "path": str(root),
+                "total_bytes": 1000, "used_bytes": 100, "available_bytes": 900,
+            },
+            {
+                "role": "campaign-data", "path": str(root),
+                "total_bytes": 1000, "used_bytes": 100, "available_bytes": 900,
+            },
+        ],
+        "containers": [
+            {
+                "service": service, "running": True, "oom_killed": False,
+                "restart_count": 0,
+            }
+            for service in expected_services
+        ],
+        "postgres": [
+            {
+                "service": service, "database": service,
+                "total_connections": 1, "active_connections": 0,
+                "database_size_bytes": 1024, "oxide_batch_tables": [],
+            }
+            for service in ("gateway-db", "killbill-db", "merchant-db")
+        ],
+    }
+    q_records = []
+    for index, second in enumerate(seconds):
+        kind = (
+            "quiescence-start" if index == 0 else
+            "quiescence-end" if index == len(seconds) - 1 else
+            "quiescence-periodic"
+        )
+        value = quiescence.sample_record(
+            campaign_id=root.name,
+            sequence=sequence,
+            source_revision=SHA40,
+            contract=q_contract,
+            contract_sha256=m.sha256(quiescence.CONTRACT_PATH),
+            kind=kind,
+            window_sample_index=index,
+            timestamp_unix_nanos_utc=(
+                sequence * 1_000_000_000_000 + second * 1_000_000_000 + 1
+            ),
+            monotonic_elapsed_nanos=second * 1_000_000_000,
+            observation=copy.deepcopy(observation),
+        )
+        value["ordinal"] = next_ordinal + index
+        q_records.append(value)
+    with (root / "samples.jsonl").open("a", encoding="utf-8") as handle:
+        for value in q_records:
+            handle.write(json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ) + "\n")
+
+    quiescence_artifact = day_quiescence.artifact_from_records(
+        plan=m.plan_day(sequence),
+        campaign_id=root.name,
+        source_revision=SHA40,
+        expected_services=expected_services,
+        records=q_records,
+    )
+    quiescence_rel = f"days/day-{sequence:06}.quiescence.verification.json"
+    quiescence_path = root / quiescence_rel
+    m.create_only(quiescence_path, m.canonical_bytes(quiescence_artifact))
+    quiescence_subject = day_quiescence.validate(
+        quiescence_artifact,
+        campaign_dir=root,
+        plan=m.plan_day(sequence),
+        source_revision=SHA40,
+        expected_services=expected_services,
+    )
+
+    return {
+        "canonical_online": {
+            "verdict": "PASS",
+            "artifact_schema": day_online.SCHEMA,
+            "artifact_schema_version": day_online.SCHEMA_VERSION,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": online_rel,
+            "artifact_sha256": m.sha256(online_path),
+            "subject": online_subject,
+        },
+        "quiescence": {
+            "verdict": "PASS",
+            "artifact_schema": day_quiescence.SCHEMA,
+            "artifact_schema_version": day_quiescence.SCHEMA_VERSION,
+            "campaign_id": root.name,
+            "logical_day_sequence": sequence,
+            "source_revision": SHA40,
+            "relative_path": quiescence_rel,
+            "artifact_sha256": m.sha256(quiescence_path),
+            "subject": quiescence_subject,
+        },
+    }
+
+
 def settlement_artifacts(root, sequence):
     plan = m.plan_day(sequence)
     day_plan = day_cardinality.plan_for(root.name, sequence)
@@ -555,6 +737,7 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
+        **frontier_v5_artifacts(root, sequence),
         "financial_invariants": {
             "verdict": "PASS",
             "artifact_schema": day_financial.SCHEMA,
@@ -805,6 +988,65 @@ class CampaignEvidenceTests(unittest.TestCase):
         m.create_only(day_path, m.canonical_bytes(day))
         m.append_event(root, 1, "day-terminal-success", {"day_sha256": m.sha256(day_path)})
         with self.assertRaisesRegex(m.EvidenceError, "independent verification fields mismatch"):
+            m.inspect(root)
+
+
+    def test_v5_rejects_v4_day_verification(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["schema_version"] = 4
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "independent verification schema mismatch"):
+            m.inspect(root)
+
+    def test_v5_requires_canonical_online_check(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"].pop("canonical_online")
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
+            m.inspect(root)
+
+    def test_v5_requires_quiescence_check(self):
+        root = self.init()
+        write_terminal(root, 1)
+        path = root / "days/000001.verification.json"
+        record = m.load_json(path)
+        record["checks"].pop("quiescence")
+        path.write_bytes(m.canonical_bytes(record))
+        with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
+            m.inspect(root)
+
+    def test_v5_replays_canonical_online_chain_not_controller_boolean(self):
+        root = self.init()
+        write_terminal(root, 1)
+        online_path = root / "days/day-000001.online.verification.json"
+        artifact = m.load_json(online_path)
+        artifact["slot_chain"][0]["intent"]["merchant_payment_id"] = "forged-payment"
+        online_path.write_bytes(m.canonical_bytes(artifact))
+        verification_path = root / "days/000001.verification.json"
+        verification = m.load_json(verification_path)
+        verification["checks"]["canonical_online"]["artifact_sha256"] = m.sha256(online_path)
+        verification_path.write_bytes(m.canonical_bytes(verification))
+        with self.assertRaisesRegex(m.EvidenceError, "exact plan/chain"):
+            m.inspect(root)
+
+    def test_v5_replays_quiescence_raw_window_not_descriptor_only(self):
+        root = self.init()
+        write_terminal(root, 1)
+        lines = (root / "samples.jsonl").read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first["monotonic_elapsed_nanos"] = 1
+        lines[0] = json.dumps(first, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        (root / "samples.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            (m.EvidenceError, quiescence.QuiescenceError),
+            "digest mismatch|start elapsed time",
+        ):
             m.inspect(root)
 
     def test_settlement_descriptor_must_bind_real_safe_artifact_file(self):
