@@ -37,6 +37,11 @@ DAY_SCHEMA = "payment-reference-pilot-day-v1"
 INTENT_SCHEMA = "payment-reference-pilot-intent-v1"
 RESPONSE_SCHEMA = "payment-reference-pilot-response-v1"
 RESULT_DECISION = "ONE_SLOT_EXECUTED_NOT_FINANCIALLY_VERIFIED"
+CANONICAL_ORDER_DIR = "online-order"
+CANONICAL_ORDER_SCHEMA_VERSION = 1
+CANONICAL_ORDER_JOURNAL_SCHEMA = "oxide-batch-workloads.payment-reference-online-order-journal"
+CANONICAL_ORDER_INTENT_SCHEMA = "oxide-batch-workloads.payment-reference-online-order-intent"
+HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def load_traffic():
@@ -106,6 +111,12 @@ def day_path(evidence_root: Path, plan: dict[str, Any]) -> Path:
     return evidence_root.resolve() / f'{plan["campaign_id"]}-day{plan["logical_day_sequence"]:06}'
 
 
+def online_controller_lock_path(evidence_root: Path, plan: dict[str, Any]) -> Path:
+    return evidence_root.resolve() / (
+        f'.{plan["campaign_id"]}-day{plan["logical_day_sequence"]:06}.online-controller.lock'
+    )
+
+
 def day_identity(
     plan: dict[str, Any], source_sha: str, provenance_hashes: dict[str, str],
 ) -> dict[str, Any]:
@@ -117,6 +128,105 @@ def day_identity(
         "day_plan_sha256": sha(stable(plan)),
         "provenance_sha256": provenance_hashes,
     }
+
+
+def canonical_order_identity(
+    plan: dict[str, Any],
+    source_sha: str,
+    provenance_hashes: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "schema": CANONICAL_ORDER_JOURNAL_SCHEMA,
+        "schema_version": CANONICAL_ORDER_SCHEMA_VERSION,
+        "campaign_id": plan["campaign_id"],
+        "logical_day_sequence": plan["logical_day_sequence"],
+        "source_revision": source_sha,
+        "day_plan_sha256": sha(stable(plan)),
+        "fault_catalog_sha256": plan["fault_catalog_sha256"],
+        "provenance_sha256": provenance_hashes,
+        "primary_lifecycles": plan["primary_lifecycles"],
+    }
+
+
+def canonical_order_files(order_dir: Path, slot: int) -> tuple[Path, Path]:
+    require(type(slot) is int and slot > 0, "canonical slot must be positive")
+    return (
+        order_dir / f"slot-{slot:03d}.intent.json",
+        order_dir / f"slot-{slot:03d}.complete.json",
+    )
+
+
+def canonical_order_intent(
+    item: dict[str, Any],
+    previous_chain_sha256: str,
+) -> dict[str, Any]:
+    require(
+        isinstance(previous_chain_sha256, str)
+        and HEX64_RE.fullmatch(previous_chain_sha256) is not None,
+        "canonical previous-chain SHA invalid",
+    )
+    return {
+        "schema": CANONICAL_ORDER_INTENT_SCHEMA,
+        "schema_version": CANONICAL_ORDER_SCHEMA_VERSION,
+        "ordinal": item["slot"],
+        "slot": item["slot"],
+        "kind": item["kind"],
+        "fault_class": item["fault_class"],
+        "merchant_payment_id": item["merchant_payment_id"],
+        "merchant_order_id": item["merchant_order_id"],
+        "previous_chain_sha256": previous_chain_sha256,
+    }
+
+
+def require_canonical_slot_intent(
+    *,
+    day: Path,
+    plan: dict[str, Any],
+    item: dict[str, Any],
+    source_sha: str,
+    provenance_hashes: dict[str, str],
+) -> bool:
+    """If a canonical journal owns the day, require its exact durable slot intent."""
+    order_dir = day / CANONICAL_ORDER_DIR
+    if not order_dir.exists():
+        return False
+
+    require(order_dir.is_dir() and not order_dir.is_symlink(), "canonical order journal path unsafe")
+    identity_path = order_dir / "identity.json"
+    require(
+        read_object(identity_path) == canonical_order_identity(plan, source_sha, provenance_hashes),
+        "canonical order journal identity drift",
+    )
+    slot = item["slot"]
+    require(
+        type(slot) is int and 1 <= slot <= plan["primary_lifecycles"],
+        "canonical slot outside day plan",
+    )
+    intent_path, completion_path = canonical_order_files(order_dir, slot)
+    require(
+        intent_path.is_file() and not intent_path.is_symlink(),
+        "canonical slot mutation requires retained exact order intent",
+    )
+    require(not completion_path.exists(), "canonical slot already has completion evidence")
+
+    if slot == 1:
+        previous_chain_sha256 = sha(identity_path.read_bytes())
+    else:
+        previous_item = plan["slots"][slot - 2]
+        require(previous_item.get("slot") == slot - 1, "canonical predecessor slot sequence drift")
+        previous_intent, previous_completion = canonical_order_files(order_dir, slot - 1)
+        require(
+            previous_intent.is_file() and not previous_intent.is_symlink()
+            and previous_completion.is_file() and not previous_completion.is_symlink(),
+            "canonical slot predecessor is not durably complete",
+        )
+        previous_chain_sha256 = sha(previous_completion.read_bytes())
+
+    require(
+        read_object(intent_path) == canonical_order_intent(item, previous_chain_sha256),
+        "canonical slot order intent differs from exact plan/chain authority",
+    )
+    return True
 
 
 def slot_requests(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -331,15 +441,15 @@ def validate_setup(folder: Path, setup: list[dict[str, Any]]) -> bool:
     return True
 
 
-def run_one(
-    *, plan: dict[str, Any], slot: int, evidence_root: Path, source_sha: str,
+def ensure_day_setup(
+    *,
+    plan: dict[str, Any],
+    evidence_root: Path,
+    source_sha: str,
     provenance_hashes: dict[str, str],
     post: Callable[[str, str, dict[str, Any]], tuple[int, bytes]] = http_post,
-    get: Callable[[str, str], dict[str, Any]] = http_get,
-) -> dict[str, Any]:
-    require(type(slot) is int and 1 <= slot <= 100, "slot outside 1..100")
-    item = plan["slots"][slot - 1]
-    require(item["slot"] == slot and item["kind"] in NORMAL, "fault overlay is not eligible for normal pilot")
+) -> Path:
+    """Create/verify day identity and shared Merchant setup without a primary slot."""
     require(not plan["executable"] and plan["external_verification_required"], "planner claim boundary changed")
     require(not evidence_root.is_symlink(), "operator evidence root must not be a symlink")
     root = evidence_root.resolve()
@@ -366,6 +476,39 @@ def run_one(
             for i, request in enumerate(setup, 1):
                 record_post(setup_dir, i, request, 201, None, post)
         require(validate_setup(setup_dir, setup), "day setup not validated")
+    return day
+
+
+def run_one(
+    *, plan: dict[str, Any], slot: int, evidence_root: Path, source_sha: str,
+    provenance_hashes: dict[str, str],
+    post: Callable[[str, str, dict[str, Any]], tuple[int, bytes]] = http_post,
+    get: Callable[[str, str], dict[str, Any]] = http_get,
+) -> dict[str, Any]:
+    require(type(slot) is int and 1 <= slot <= 100, "slot outside 1..100")
+    item = plan["slots"][slot - 1]
+    require(item["slot"] == slot and item["kind"] in NORMAL, "fault overlay is not eligible for normal pilot")
+    day = ensure_day_setup(
+        plan=plan,
+        evidence_root=evidence_root,
+        source_sha=source_sha,
+        provenance_hashes=provenance_hashes,
+        post=post,
+    )
+    with (day / ".lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        require(
+            read_object(day / "identity.json") == day_identity(plan, source_sha, provenance_hashes),
+            "pilot day source/provenance/plan drift",
+        )
+        require(validate_setup(day / "setup", plan["merchant_setup"]), "day setup not validated")
+        require_canonical_slot_intent(
+            day=day,
+            plan=plan,
+            item=item,
+            source_sha=source_sha,
+            provenance_hashes=provenance_hashes,
+        )
         item_dir = day / f"slot-{slot:03}"
         # A previous attempted slot is NEVER automatically replayed, even
         # when its last response was durably observed.

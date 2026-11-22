@@ -499,4 +499,12 @@ Day-wide normal online traffic now has a coordinator over the existing write-ahe
 
 The complementary fault-overlay executor now loads the canonical catalog before each provider mutation, binds the real Kill Bill-derived provider identity at runtime, retains fail-closed write-ahead evidence, and durably materializes the catalog's asynchronous provider failure through a non-networked control helper built from the exact pinned payment-sandbox source. Scheduled hard crashes use a separate semantic-marker/SIGKILL supervisor derived from the frozen day plan; neither layer can accept a day. See [FAULT_EXECUTION.md](FAULT_EXECUTION.md).
 
+The real campaign online path now has a separate canonical controller that
+interleaves normal and fault slots in the exact deterministic 1..N plan order.
+It writes a durable hash-chained order intent/completion journal and refuses to
+retroactively promote evidence produced by the lane-first development
+coordinators. Completing this journal authorizes the combined online order but
+still cannot accept the logical day. See
+[ONLINE_CANONICAL.md](ONLINE_CANONICAL.md).
+
 Day verification v4 therefore has no remaining controller-authored generic `PASS + SHA` checks.
