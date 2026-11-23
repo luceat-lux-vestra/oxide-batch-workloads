@@ -78,7 +78,7 @@ with no completed terminal evidence is **not** silently re-run.
 The per-day `*.verification.json` format requires bound retained artifacts for
 canonical online execution, quiescence, recovery, reconciliation, settlement
 roster, settlement close, financial invariants, and external side-effect
-cardinality. The current v5 scanner
+cardinality. The canonical scanner
 independently revalidates those artifacts and their cross-bindings before a day
 can advance the frontier. Synthetic test fixtures are never campaign evidence.
 
