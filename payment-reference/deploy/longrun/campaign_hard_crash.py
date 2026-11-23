@@ -70,15 +70,31 @@ def scheduled_spec(plan: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _marker(path: Path) -> tuple[int, str, str | None]:
+def _marker(
+    path: Path,
+    *,
+    expected_target: str | None,
+) -> tuple[int, str, str | None] | None:
+    """Return a complete marker, or None while publication is still incomplete."""
     raw = path.read_text(encoding="utf-8")
+    expected_lines = 3 if expected_target is not None else 2
+
+    # Marker writers currently publish with ordinary file writes. File creation
+    # can therefore become visible before the full newline-terminated payload.
+    # Treat only structurally incomplete publication as transient; once the
+    # expected shape is fully present, all identity validation remains strict.
+    if not raw.endswith("\n"):
+        return None
     lines = raw.splitlines()
-    require(len(lines) in {2, 3}, "hard-crash marker line count mismatch")
+    if len(lines) < expected_lines:
+        return None
+
+    require(len(lines) == expected_lines, "hard-crash marker line count mismatch")
     require(lines[0].isdigit(), "hard-crash marker PID invalid")
     pid = int(lines[0])
     require(pid > 1, "hard-crash marker PID invalid")
     require(lines[1], "hard-crash marker label missing")
-    target = lines[2] if len(lines) == 3 else None
+    target = lines[2] if expected_target is not None else None
     require(target is None or target != "", "hard-crash marker target blank")
     return pid, lines[1], target
 
@@ -148,8 +164,12 @@ def kill_at_marker(
                     f"hard-crash target exited before semantic marker: {code}"
                 )
             if marker_path.is_file() and not marker_path.is_symlink():
-                marker = _marker(marker_path)
-                break
+                marker = _marker(
+                    marker_path,
+                    expected_target=expected_marker_target,
+                )
+                if marker is not None:
+                    break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise HardCrashError("hard-crash semantic marker timeout")
