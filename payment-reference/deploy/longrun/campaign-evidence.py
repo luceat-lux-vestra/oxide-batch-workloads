@@ -41,7 +41,7 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 CAMPAIGN_ID = core.CAMPAIGN_ID
 DAY_VERIFICATION_SCHEMA = "oxide-batch-workloads.payment-reference-day-independent-verification"
-DAY_VERIFICATION_VERSION = 5
+DAY_VERIFICATION_SCHEMA_VERSION = 1
 FINANCIAL_CHECK = "financial_invariants"
 ONLINE_CHECK = "canonical_online"
 QUIESCENCE_CHECK = "quiescence"
@@ -536,7 +536,7 @@ def validate_verification(
     require(
         record["schema"] == DAY_VERIFICATION_SCHEMA
         and type(record["schema_version"]) is int
-        and record["schema_version"] == DAY_VERIFICATION_VERSION,
+        and record["schema_version"] == DAY_VERIFICATION_SCHEMA_VERSION,
         "independent verification schema mismatch",
     )
     require(

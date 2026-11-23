@@ -1,18 +1,18 @@
-# Day-independent verification contract v5 (#318)
+# Canonical day-independent verification contract (#318)
 
 A terminal campaign day may advance the evidence frontier only from retained,
 independently revalidated proof. Controller-authored PASS flags are never an
 acceptance authority.
 
-## Version boundary
+## Canonical contract boundary
 
-`oxide-batch-workloads.payment-reference-day-independent-verification` is
-`schema_version: 5`.
+`oxide-batch-workloads.payment-reference-day-independent-verification` uses
+`schema_version: 1` as the single current schema.
 
-Versions 1 through 4 are rejected. v5 is intentionally backward incompatible:
-the frontier now requires exactly **eight** bound proof descriptors.
-
-The existing six remain mandatory:
+The campaign has no external consumer that requires compatibility with
+development-era day-verification shapes. The frontier therefore implements only
+the current canonical contract and requires exactly **eight** bound proof
+descriptors:
 
 - `settlement_roster`
 - `settlement_close`
@@ -20,9 +20,6 @@ The existing six remain mandatory:
 - `recovery`
 - `reconciliation`
 - `financial_invariants`
-
-v5 adds:
-
 - `canonical_online`
 - `quiescence`
 
@@ -51,7 +48,7 @@ Before retaining
 - the immutable `online-traffic.summary.json` and its authority boundary.
 
 The compact proof retains the exact journal identity, all 100 intent/completion
-objects and the online summary. Frontier v5 replays that compact chain again
+objects and the online summary. The frontier replays that compact chain again
 from the deterministic plan and re-derives the descriptor subject. Therefore a
 boolean, reordered slot list, forged intent, broken predecessor digest,
 completion/evidence mismatch, source/provenance mismatch or summary tamper
@@ -78,7 +75,7 @@ The producer reuses `campaign_quiescence.verify_window` and binds:
 - observed duration and maximum sample gap;
 - stable PostgreSQL target set.
 
-Frontier v5 does more than validate the compact artifact: it re-reads the
+The frontier does more than validate the compact artifact: it re-reads the
 current append-only `samples.jsonl`, extracts the exact day window, replays
 `verify_window`, recomputes the record digest and compares the compact
 subject. Later days may append samples without changing an earlier window's
@@ -86,12 +83,12 @@ identity.
 
 This proves the required per-day 60-second / every-tenth-day 600-second window.
 The campaign-final >=1800-second quiescence remains a separate final-acceptance
-boundary and is not claimed by v5.
+boundary and is not claimed by this per-day contract.
 
 ## Existing six proof families
 
 Settlement roster/close, provider side-effect cardinality, recovery,
-reconciliation and financial-invariant semantics remain those of v4. Their
+reconciliation and financial-invariant semantics retain their existing semantics. Their
 safe relative-path, retained-file SHA, schema, source identity and cross-system
 financial consistency checks are unchanged.
 
@@ -107,9 +104,9 @@ See:
 Lifecycle events remain sequencing records, not proof. A future terminal-day
 controller may emit events and assemble descriptors, but
 `campaign-evidence.py::inspect()` independently rejects a terminal success
-unless all eight v5 proofs are present and valid.
+unless all eight canonical proofs are present and valid.
 
-v5 still does not:
+This contract still does not:
 
 - create terminal day records;
 - execute traffic/recovery/reconciliation/settlement;

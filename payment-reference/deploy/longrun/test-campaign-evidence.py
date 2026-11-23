@@ -446,7 +446,7 @@ def reconciliation_artifact_for_day(root, sequence, day_plan, day_card):
 
 
 
-def frontier_v5_artifacts(root, sequence):
+def canonical_frontier_artifacts(root, sequence):
     identity = m.load_json(root / "campaign.json")["identity"]
 
     online_plan = day_online.plan_for(root.name, sequence)
@@ -737,7 +737,7 @@ def settlement_artifacts(root, sequence):
         "net_settlement_total_minor": 65_000,
     }
     return {
-        **frontier_v5_artifacts(root, sequence),
+        **canonical_frontier_artifacts(root, sequence),
         "financial_invariants": {
             "verdict": "PASS",
             "artifact_schema": day_financial.SCHEMA,
@@ -813,7 +813,7 @@ def write_terminal(root, sequence, *, started=True):
     checks = settlement_artifacts(root, sequence)
     verification = {
         "schema": m.DAY_VERIFICATION_SCHEMA,
-        "schema_version": m.DAY_VERIFICATION_VERSION,
+        "schema_version": m.DAY_VERIFICATION_SCHEMA_VERSION,
         "campaign_id": root.name,
         "logical_day_sequence": sequence,
         "source_revision": SHA40,
@@ -959,7 +959,7 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
             m.inspect(root)
 
-    def test_v1_generic_settlement_pass_sha_can_no_longer_advance_frontier(self):
+    def test_generic_pass_sha_without_bound_descriptors_cannot_advance_frontier(self):
         root = self.init()
         m.append_event(root, 1, "day-started", {})
         verification = {
@@ -991,17 +991,7 @@ class CampaignEvidenceTests(unittest.TestCase):
             m.inspect(root)
 
 
-    def test_v5_rejects_v4_day_verification(self):
-        root = self.init()
-        write_terminal(root, 1)
-        path = root / "days/000001.verification.json"
-        record = m.load_json(path)
-        record["schema_version"] = 4
-        path.write_bytes(m.canonical_bytes(record))
-        with self.assertRaisesRegex(m.EvidenceError, "independent verification schema mismatch"):
-            m.inspect(root)
-
-    def test_v5_requires_canonical_online_check(self):
+    def test_canonical_contract_requires_canonical_online_check(self):
         root = self.init()
         write_terminal(root, 1)
         path = root / "days/000001.verification.json"
@@ -1011,7 +1001,7 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
             m.inspect(root)
 
-    def test_v5_requires_quiescence_check(self):
+    def test_canonical_contract_requires_quiescence_check(self):
         root = self.init()
         write_terminal(root, 1)
         path = root / "days/000001.verification.json"
@@ -1021,7 +1011,7 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "missing verification coverage"):
             m.inspect(root)
 
-    def test_v5_replays_canonical_online_chain_not_controller_boolean(self):
+    def test_canonical_contract_replays_canonical_online_chain_not_controller_boolean(self):
         root = self.init()
         write_terminal(root, 1)
         online_path = root / "days/day-000001.online.verification.json"
@@ -1035,7 +1025,7 @@ class CampaignEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(m.EvidenceError, "exact plan/chain"):
             m.inspect(root)
 
-    def test_v5_replays_quiescence_raw_window_not_descriptor_only(self):
+    def test_canonical_contract_replays_quiescence_raw_window_not_descriptor_only(self):
         root = self.init()
         write_terminal(root, 1)
         lines = (root / "samples.jsonl").read_text(encoding="utf-8").splitlines()

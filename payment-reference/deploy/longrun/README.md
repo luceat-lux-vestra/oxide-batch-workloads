@@ -464,15 +464,16 @@ authoritative CLOSED row, and retains a non-accepting deterministic settlement
 verification artifact.
 
 
-## Day-independent verification v5
+## Canonical day-independent verification
 
 Terminal-day verification now requires settlement checks to bind the actual
 retained independent artifacts rather than generic PASS + SHA claims. See
 [DAY_VERIFICATION.md](DAY_VERIFICATION.md).
 
-The v5 scanner verifies campaign/day/source identity, safe relative paths,
-exact retained-file hashes, settlement subjects, and the cross-artifact
-roster/statement linkage. Versions 1 through 4 day-independent verification are rejected.
+The canonical scanner verifies campaign/day/source identity, safe relative
+paths, exact retained-file hashes, settlement subjects, and the cross-artifact
+roster/statement linkage. Development-era day-verification record shapes are
+not a compatibility surface; the current schema is the sole accepted contract.
 Provider side-effect cardinality now also uses a bound retained artifact
 rather than generic PASS + SHA. The independent
 [`campaign_day_cardinality.py`](campaign_day_cardinality.py) producer requires
@@ -507,7 +508,7 @@ coordinators. Completing this journal authorizes the combined online order but
 still cannot accept the logical day. See
 [ONLINE_CANONICAL.md](ONLINE_CANONICAL.md).
 
-Day verification v5 now also requires independently retained canonical-online
+Canonical day verification also requires independently retained canonical-online
 and quiescence proofs. The frontier replays the compact canonical order chain
 and re-reads the exact quiescence window from `samples.jsonl`; no
 controller-authored generic `PASS + SHA` check remains.
