@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Review dependency changes
         if: github.event.pull_request.draft == false
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: moderate
 
@@ -307,7 +307,7 @@ jobs:
 
       - name: Setup ARM Java 25 for PostgreSQL/Java workload
         if: ${{ matrix.name == 'postgres-postgres' }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
@@ -814,7 +814,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Java 11 for payment-reference adapter core
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 11
