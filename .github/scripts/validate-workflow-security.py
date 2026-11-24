@@ -158,11 +158,11 @@ def validate_audit_permission_boundaries(root=ROOT):
 
 
 def validate_registered_cargo_updaters(root=ROOT):
-    """Reconcile explicit native Cargo entries against the workload registry.
+    """Reconcile native Cargo ownership against the canonical workload registry.
 
-    This deliberately accepts the repository's reviewed block-style single
-    directory syntax; a schema change needs a corresponding validator change.
-    It is not a general-purpose YAML parser.
+    Accept Dependabot's single directory or explicit multi-directory block
+    list. Reject ambiguous entries; glob expansion would need exact ownership
+    reconciliation before it could be accepted.
     """
     import json
 
@@ -175,17 +175,25 @@ def validate_registered_cargo_updaters(root=ROOT):
         ecosystem, _, body = entry.partition("\n")
         if ecosystem.strip("'\" \t") != "cargo":
             continue
-        directories = re.findall(r"(?m)^    directory:[ \t]*['\"]?(/[^'\"\s]*)['\"]?[ \t]*$", body)
-        if len(directories) != 1:
-            fail("Cargo updater must declare exactly one explicit directory")
-        directory = directories[0]
-        if directory in cargo:
-            fail("duplicate Cargo updater directory: " + directory)
+        single = re.findall(r"(?m)^    directory:[ \t]*['\"]?(/[^'\"\s]*)['\"]?[ \t]*$", body)
+        multi = re.findall(r"(?m)^    directories:[ \t]*\n((?:      - [^\n]+\n?)+)", body)
+        declarations = re.findall(r"(?m)^    director(?:y|ies):", body)
+        if len(declarations) != 1 or len(single) + len(multi) != 1:
+            fail("Cargo updater must declare one unambiguous directory or directories block")
+        directories = single if single else [
+            line.strip().removeprefix("- ").strip("'\"")
+            for line in multi[0].splitlines()
+        ]
+        if not directories or any(not re.fullmatch(r"/[A-Za-z0-9_./-]+", d) or any(p in {"", ".", ".."} for p in d[1:].split("/")) for d in directories):
+            fail("Cargo updater requires explicit canonical directory paths")
         if not re.search(r"(?m)^      interval:[ \t]*(daily|weekly|monthly|quarterly|semiannually|yearly)[ \t]*$", body):
-            fail("Cargo updater missing supported schedule: " + directory)
+            fail("Cargo updater missing supported schedule: " + str(directories))
         if re.search(r"(?m)^    open-pull-requests-limit:[ \t]*0[ \t]*$", body):
-            fail("Cargo version updater disabled: " + directory)
-        cargo[directory] = body
+            fail("Cargo version updater disabled: " + str(directories))
+        for directory in directories:
+            if directory in cargo:
+                fail("duplicate Cargo updater directory: " + directory)
+            cargo[directory] = body
     for kind in ("workloads", "fixtures"):
         for item in registry[kind]:
             directory = "/" + item["path"].strip("/")
@@ -197,6 +205,7 @@ def validate_registered_cargo_updaters(root=ROOT):
                 fail("blanket Cargo ignore: " + directory)
             if kind == "workloads" and "oxide-batch*" not in ignored:
                 fail("published OxideBatch subject must remain campaign-owned: " + directory)
+
 
 
 def validate(root=ROOT):

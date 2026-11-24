@@ -103,6 +103,17 @@ class CargoUpdaterOwnershipTests(unittest.TestCase):
                     MODULE.validate_registered_cargo_updaters(root)
             config.write_text("version: 2\nupdates:\n" + work + fixture, encoding="utf-8")
             MODULE.validate_registered_cargo_updaters(root)
+            grouped = work.replace("    directory: /work\n", "    directories:\n      - /work\n      - /fixture\n")
+            config.write_text("version: 2\nupdates:\n" + grouped, encoding="utf-8")
+            MODULE.validate_registered_cargo_updaters(root)
+            for invalid, expected in (
+                (grouped + fixture, "duplicate Cargo updater"),
+                (grouped.replace("      - /fixture", "      - /*"), "explicit canonical"),
+                (grouped.replace("    directories:", "    directory: /work\n    directories:"), "unambiguous directory"),
+            ):
+                config.write_text("version: 2\nupdates:\n" + invalid, encoding="utf-8")
+                with self.assertRaisesRegex(MODULE.WorkflowSecurityError, expected):
+                    MODULE.validate_registered_cargo_updaters(root)
 
 
 if __name__ == "__main__":
