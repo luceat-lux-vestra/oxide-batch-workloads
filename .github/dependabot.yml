@@ -22,6 +22,103 @@ updates:
     labels:
       - dependencies
 
+  - package-ecosystem: cargo
+    directory: /payment-reconciliation-postgres
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:05"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Exact first-party validation subjects advance only by explicit campaign.
+      - dependency-name: "oxide-batch*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: cargo
+    directory: /payment-recovery-postgres
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:10"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Exact first-party validation subjects advance only by explicit campaign.
+      - dependency-name: "oxide-batch*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: cargo
+    directory: /postgres-local-partition
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Exact first-party validation subjects advance only by explicit campaign.
+      - dependency-name: "oxide-batch*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: cargo
+    directory: /postgres-postgres
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:20"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Exact first-party validation subjects advance only by explicit campaign.
+      - dependency-name: "oxide-batch*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: cargo
+    directory: /fixture-heterogeneous
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:25"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+
   - package-ecosystem: maven
     directory: /postgres-postgres/benchmark/java
     schedule:

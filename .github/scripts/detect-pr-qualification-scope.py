@@ -82,6 +82,8 @@ def classify(paths: Iterable[str]) -> dict[str, bool]:
         ".github/scripts/reconcile-labels.py",
         ".github/scripts/validate-label-taxonomy.py",
         ".github/scripts/validate-workflow-security.py",
+        ".github/scripts/test-validate-workflow-security.py",
+        ".github/scripts/trusted-codeql-runtime-validation.py",
         ".github/scripts/test-hardening-drift-audit.py",
         ".github/scripts/test-cache-producer-guards.py",
         ".github/scripts/test-scheduled-supply-chain-audit.py",

@@ -71,13 +71,23 @@ def require_supported_codeql_patch(record: dict) -> None:
     patch = record.get("patch")
     if not isinstance(patch, str) or not patch:
         reject("codeql.yml patch is missing or truncated; refusing coverage claim")
+    # Explicit one-step native ARM64 migration contract, not a wildcard runner
+    # allowlist. Trust this change only after this classifier reaches main.
+    # Upstream GA: https://github.com/actions/runner-images/issues/14747
+    changed_lines = [
+        line for line in patch.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    ]
+    if changed_lines == [
+        "-    runs-on: ubuntu-24.04-arm",
+        "+    runs-on: ubuntu-26.04-arm",
+    ]:
+        return
     changed: list[tuple[str, str, str]] = []
-    for line in patch.splitlines():
-        if line.startswith(("+++", "---", "@@")) or not line.startswith(("+", "-")):
-            continue
+    for line in changed_lines:
         match = ACTION_LINE.fullmatch(line[1:])
         if match is None:
-            reject("unsupported codeql.yml mutation outside immutable init/analyze pin lines")
+            reject("unsupported codeql.yml mutation outside paired immutable init/analyze pins or reviewed native ARM64 migration")
         changed.append((line[0], match.group("action"), match.group("sha")))
     shape = Counter((sign, action) for sign, action, _ in changed)
     expected = Counter({("-", "init"): 1, ("+", "init"): 1, ("-", "analyze"): 1, ("+", "analyze"): 1})
@@ -307,6 +317,24 @@ def self_test() -> None:
         pass
     else:
         raise AssertionError("unsupported codeql.yml mutation was accepted")
+    runner_patch = "@@ -1 +1 @@\n-    runs-on: ubuntu-24.04-arm\n+    runs-on: ubuntu-26.04-arm"
+    assert classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": runner_patch}]], repo=repo, base=base, head=head, head_repo=head_repo)
+    for invalid_patch in (
+        runner_patch.replace("ubuntu-26.04-arm", "ubuntu-latest"),
+        runner_patch.replace("ubuntu-26.04-arm", "ubuntu-26.04"),
+        runner_patch.replace("ubuntu-26.04-arm", "ubuntu-22.04-arm"),
+        runner_patch.replace("ubuntu-26.04-arm", "ubuntu-24.04-arm"),
+        runner_patch + "\n+      security-events: write",
+        runner_patch + "\n" + allowed_patch,
+        runner_patch + "\n" + runner_patch,
+        runner_patch.replace("+    runs-on:", "+      runs-on:"),
+    ):
+        try:
+            classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": invalid_patch}]], repo=repo, base=base, head=head, head_repo=head_repo)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsafe or mixed CodeQL runner migration accepted")
     for pages in ([[]], [[{"status": "modified", "filename": "../unsafe"}]], [[{"status": "mystery", "filename": "README.md"}]]):
         try:
             classify(pr(), pages, repo=repo, base=base, head=head, head_repo=head_repo)

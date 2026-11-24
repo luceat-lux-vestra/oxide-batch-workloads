@@ -157,7 +157,50 @@ def validate_audit_permission_boundaries(root=ROOT):
             fail(f"{filename} reporting job must isolate issues: write")
 
 
+def validate_registered_cargo_updaters(root=ROOT):
+    """Reconcile explicit native Cargo entries against the workload registry.
+
+    This deliberately accepts the repository's reviewed block-style single
+    directory syntax; a schema change needs a corresponding validator change.
+    It is not a general-purpose YAML parser.
+    """
+    import json
+
+    registry = json.loads((root / "workloads.json").read_text(encoding="utf-8"))
+    config = (root / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    active = "\n".join(line for line in config.splitlines() if not line.lstrip().startswith("#"))
+    entries = re.split(r"(?m)^  - package-ecosystem:[ \t]*", active)[1:]
+    cargo = {}
+    for entry in entries:
+        ecosystem, _, body = entry.partition("\n")
+        if ecosystem.strip("'\" \t") != "cargo":
+            continue
+        directories = re.findall(r"(?m)^    directory:[ \t]*['\"]?(/[^'\"\s]*)['\"]?[ \t]*$", body)
+        if len(directories) != 1:
+            fail("Cargo updater must declare exactly one explicit directory")
+        directory = directories[0]
+        if directory in cargo:
+            fail("duplicate Cargo updater directory: " + directory)
+        if not re.search(r"(?m)^      interval:[ \t]*(daily|weekly|monthly|quarterly|semiannually|yearly)[ \t]*$", body):
+            fail("Cargo updater missing supported schedule: " + directory)
+        if re.search(r"(?m)^    open-pull-requests-limit:[ \t]*0[ \t]*$", body):
+            fail("Cargo version updater disabled: " + directory)
+        cargo[directory] = body
+    for kind in ("workloads", "fixtures"):
+        for item in registry[kind]:
+            directory = "/" + item["path"].strip("/")
+            if directory not in cargo:
+                fail("missing native Cargo updater: " + directory)
+            body = cargo[directory]
+            ignored = re.findall(r"(?m)^      - dependency-name:[ \t]*['\"]?([^'\"\n]+?)['\"]?[ \t]*$", body)
+            if "*" in ignored:
+                fail("blanket Cargo ignore: " + directory)
+            if kind == "workloads" and "oxide-batch*" not in ignored:
+                fail("published OxideBatch subject must remain campaign-owned: " + directory)
+
+
 def validate(root=ROOT):
+    validate_registered_cargo_updaters(root)
     validate_action_pins(root)
     validate_ephemeral_workflow_lifecycle(root)
     validate_label_automation_boundary(root)
