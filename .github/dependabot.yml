@@ -1,7 +1,12 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: /csv-postgres
+    directories:
+      - /csv-postgres
+      - /payment-reconciliation-postgres
+      - /payment-recovery-postgres
+      - /postgres-local-partition
+      - /postgres-postgres
     schedule:
       interval: weekly
       day: monday
@@ -15,10 +20,26 @@ updates:
           - minor
           - patch
     ignore:
-      # A workload's first-party OxideBatch crates are its validation subject.
-      # Advancing any oxide-batch* crate is a deliberate validation campaign,
-      # never routine dependency churn.
+      # Published first-party validation subjects advance only by explicit campaign.
       - dependency-name: "oxide-batch*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: cargo
+    directories:
+      - /fixture-heterogeneous
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:10"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
 

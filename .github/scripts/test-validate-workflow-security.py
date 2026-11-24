@@ -67,5 +67,54 @@ class ActionPinValidationTests(unittest.TestCase):
             MODULE.validate_action_pins(root)
 
 
+class CargoUpdaterOwnershipTests(unittest.TestCase):
+    def test_actual_registered_roots(self):
+        MODULE.validate_registered_cargo_updaters()
+
+    def test_missing_duplicate_disabled_and_unfrozen_subject_rejected(self):
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / ".github").mkdir()
+            (root / "workloads.json").write_text(json.dumps({
+                "workloads": [{"path": "work"}],
+                "fixtures": [{"path": "fixture"}],
+            }), encoding="utf-8")
+            work = (
+                "  - package-ecosystem: cargo\n"
+                "    directory: /work\n"
+                "    schedule:\n"
+                "      interval: weekly\n"
+                "    ignore:\n"
+                '      - dependency-name: "oxide-batch*"\n'
+            )
+            fixture = work.replace("/work", "/fixture").split("    ignore:")[0]
+            config = root / ".github" / "dependabot.yml"
+            for invalid, expected in (
+                (work, "missing native Cargo updater"),
+                (work + work + fixture, "duplicate Cargo updater"),
+                (work + fixture.replace("      interval: weekly", "      interval: weekly\n    open-pull-requests-limit: 0"), "disabled"),
+                (work.replace("oxide-batch*", "other") + fixture, "subject must remain campaign-owned"),
+                (work.replace("oxide-batch*", "*") + fixture, "blanket Cargo ignore"),
+            ):
+                config.write_text("version: 2\nupdates:\n" + invalid, encoding="utf-8")
+                with self.assertRaisesRegex(MODULE.WorkflowSecurityError, expected):
+                    MODULE.validate_registered_cargo_updaters(root)
+            config.write_text("version: 2\nupdates:\n" + work + fixture, encoding="utf-8")
+            MODULE.validate_registered_cargo_updaters(root)
+            grouped = work.replace("    directory: /work\n", "    directories:\n      - /work\n      - /fixture\n")
+            config.write_text("version: 2\nupdates:\n" + grouped, encoding="utf-8")
+            MODULE.validate_registered_cargo_updaters(root)
+            for invalid, expected in (
+                (grouped + fixture, "duplicate Cargo updater"),
+                (grouped.replace("      - /fixture", "      - /*"), "explicit canonical"),
+                (grouped.replace("    directories:", "    directory: /work\n    directories:"), "unambiguous directory"),
+            ):
+                config.write_text("version: 2\nupdates:\n" + invalid, encoding="utf-8")
+                with self.assertRaisesRegex(MODULE.WorkflowSecurityError, expected):
+                    MODULE.validate_registered_cargo_updaters(root)
+
+
 if __name__ == "__main__":
     unittest.main()
