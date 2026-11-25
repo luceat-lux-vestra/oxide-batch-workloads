@@ -565,7 +565,7 @@
       ],
       "strategy": "REVIEWED_FREEZE",
       "authority": "payment-reference/README.md and adapter POM",
-      "mechanism": "Adapter compatibility lane and Docker build; native third-party updates outside compatibility floor",
+      "mechanism": "Freeze only the shipped OSGi bundle Java 11 compiler release and pinned Kill Bill runtime; build/test JDK follows current Java LTS and Maven builder receives native Docker updates",
       "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
       "validation": "Required exact-head CI and applicable native updater/runtime evidence",
       "provenance": {
@@ -573,7 +573,7 @@
       },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "Kill Bill Java 11 OSGi runtime compatibility.",
+        "rationale": "Kill Bill Java 11 OSGi runtime compatibility; build and test JDK are not frozen by this constraint.",
         "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
         "evidence": "payment-reference/README.md and adapter POM"
       }
