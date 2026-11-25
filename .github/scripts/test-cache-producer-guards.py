@@ -82,6 +82,10 @@ def test_producers() -> None:
             assert not selected(path, paths), (filename, path)
         source = (WORKFLOWS / filename).read_text(encoding="utf-8")
         assert "Verify protected-main authority" in source
+        assert 'test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"' in source
+        assert 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"' in source
+        assert 'git cat-file -e "$EXPECTED_SHA^{commit}"' in source
+        assert "git log -1 --check" not in source
         assert source.index("Install maintained sccache") < source.index("compiler-cache identity")
         assert 'sha256sum "$(command -v sccache)"' in source
         assert "VERSION_ID=" in source
