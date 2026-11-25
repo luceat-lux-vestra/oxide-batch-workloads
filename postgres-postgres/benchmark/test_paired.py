@@ -117,6 +117,27 @@ class PairedHarnessTests(unittest.TestCase):
             self.assertEqual(package["source"], "registry+https://github.com/rust-lang/crates.io-index")
             self.assertEqual(package["checksum"], "deadbeef")
 
+    def test_lock_direct_dependency_resolves_actual_version_and_rejects_ambiguity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "Cargo.lock"
+            owner = (
+                'version = 4\n\n[[package]]\nname = "raw-sqlx"\n'
+                'version = "0.1.0"\ndependencies = ["sqlx"]\n'
+            )
+            registry = 'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+            first = '\n[[package]]\nname = "sqlx"\nversion = "0.9.1"\n' + registry + 'checksum = "one"\n'
+            second = '\n[[package]]\nname = "sqlx"\nversion = "0.9.2"\n' + registry + 'checksum = "two"\n'
+            path.write_text(owner + second, encoding="utf-8")
+            self.assertEqual(paired.lock_direct_dependency(path, "raw-sqlx", "sqlx")["version"], "0.9.2")
+            path.write_text(owner + first + second, encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "expected exactly one Cargo.lock package"):
+                paired.lock_direct_dependency(path, "raw-sqlx", "sqlx")
+            path.write_text(owner.replace('"sqlx"', '"sqlx 0.9.2"') + first + second, encoding="utf-8")
+            self.assertEqual(paired.lock_direct_dependency(path, "raw-sqlx", "sqlx")["checksum"], "two")
+            path.write_text(owner.replace('"sqlx"', '"other"') + second, encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "expected exactly one direct"):
+                paired.lock_direct_dependency(path, "raw-sqlx", "sqlx")
+
     def test_sample_database_names_are_safe_and_distinct(self):
         names = {
             paired.sample_database_name(mode, kind, ordinal, candidate)

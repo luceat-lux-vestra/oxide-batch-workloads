@@ -206,6 +206,36 @@ def lock_package(lock_path: Path, name: str, version: str) -> dict[str, Any]:
     }
 
 
+def lock_direct_dependency(lock_path: Path, owner: str, name: str) -> dict[str, Any]:
+    """Resolve the direct dependency edge of a local Cargo.lock package."""
+    packages = tomllib.loads(lock_path.read_text(encoding="utf-8")).get("package", [])
+    owners = [p for p in packages if p.get("name") == owner and not p.get("source")]
+    if len(owners) != 1:
+        raise RuntimeError(f"expected exactly one local Cargo.lock package {owner}")
+    edges = [
+        edge for edge in owners[0].get("dependencies", [])
+        if edge.split(" ", 1)[0] == name
+    ]
+    if len(edges) != 1:
+        raise RuntimeError(f"expected exactly one direct Cargo.lock dependency {owner} -> {name}")
+    edge = edges[0]
+    matches = []
+    for package in packages:
+        if package.get("name") != name:
+            continue
+        version = package.get("version")
+        source = package.get("source")
+        identifiers = {name, f"{name} {version}", f"{name} {version} ({source})"}
+        if edge in identifiers:
+            matches.append(package)
+    if len(matches) != 1:
+        raise RuntimeError(f"expected exactly one Cargo.lock package for {owner} -> {edge}")
+    package = matches[0]
+    if not package.get("version") or not package.get("source") or not package.get("checksum"):
+        raise RuntimeError(f"incomplete registry provenance for {owner} -> {edge}")
+    return {key: package[key] for key in ("name", "version", "source", "checksum")}
+
+
 def optional(command: list[str]) -> str | None:
     try:
         return run_checked(command).stdout.strip()
@@ -237,7 +267,7 @@ def host_provenance(oxide_binary: Path, raw_binary: Path) -> dict[str, Any]:
         "postgres_configured_images": (optional(["docker", "compose", "config", "--images"]) or "").splitlines(),
         "postgres_image_id": optional(["docker", "compose", "images", "-q", "postgres"]),
         "oxide_batch_subject": lock_package(lock_path, "oxide-batch", "0.7.0"),
-        "raw_sqlx_subject": lock_package(lock_path, "sqlx", "0.9.0"),
+        "raw_sqlx_subject": lock_direct_dependency(lock_path, "raw-sqlx", "sqlx"),
         "binaries": {
             "oxide": {"path": str(oxide_binary), "sha256": sha256_file(oxide_binary)},
             "raw": {"path": str(raw_binary), "sha256": sha256_file(raw_binary)},
