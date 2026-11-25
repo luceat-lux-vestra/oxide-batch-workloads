@@ -3,13 +3,14 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: deploy-oci.sh --manifest <image-manifest.json> --data-path <persistent-data-root>
+usage: deploy-oci.sh --manifest <image-manifest.json> --data-path <persistent-data-root> [--contract <host-qualification-contract.json>]
 EOF
   exit 64
 }
 
 manifest=""
 data_path=""
+contract=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --manifest)
@@ -20,6 +21,11 @@ while [ "$#" -gt 0 ]; do
     --data-path)
       [ "$#" -ge 2 ] || usage
       data_path="$2"
+      shift 2
+      ;;
+    --contract)
+      [ "$#" -ge 2 ] || usage
+      contract="$2"
       shift 2
       ;;
     *)
@@ -34,10 +40,13 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
 cd "$repo_root"
 
+contract="${contract:-$script_dir/host-qualification-contract.json}"
 manifest="$(realpath "$manifest")"
 data_path="$(realpath "$data_path")"
+contract="$(realpath "$contract")"
 [ -f "$manifest" ] || { echo "manifest not found: $manifest" >&2; exit 66; }
 [ -d "$data_path" ] || { echo "data path not found: $data_path" >&2; exit 66; }
+[ -f "$contract" ] || { echo "qualification contract not found: $contract" >&2; exit 66; }
 
 required_runtime_env=(
   KILLBILL_USERNAME
@@ -77,8 +86,10 @@ actual_sha="$(git rev-parse HEAD)"
 
 python3 payment-reference/deploy/longrun/image-manifest.py verify   --manifest "$manifest"   --source-sha "$actual_sha"
 
-runtime_dir="$data_path/payment-reference-runtime"
+runtime_root="$data_path/payment-reference-runtime"
+runtime_dir="$runtime_root/$source_sha"
 mkdir -p "$runtime_dir"
+chmod 0700 "$runtime_dir"
 manifest_copy="$runtime_dir/image-manifest.json"
 env_file="$runtime_dir/images.env"
 
@@ -134,13 +145,13 @@ for name, service in services.items():
         raise SystemExit(f"OCI Compose service {name!r} is not digest-pinned: {image!r}")
 PY
 
-python3 payment-reference/deploy/longrun/check-admission.py --data-path "$data_path"
+python3 payment-reference/deploy/longrun/check-admission.py --data-path "$data_path" --contract "$contract"
 
 docker compose --env-file "$env_file" -f "$compose_file" pull
 
 # Pulling images consumes durable disk and may perturb host pressure. Re-admit
 # immediately before process creation.
-python3 payment-reference/deploy/longrun/check-admission.py --data-path "$data_path"
+python3 payment-reference/deploy/longrun/check-admission.py --data-path "$data_path" --contract "$contract"
 
 if ! docker compose \
   --env-file "$env_file" \
@@ -184,4 +195,6 @@ echo "OCI payment-reference runtime started without host-side image builds."
 echo "compose_file=$compose_file"
 echo "env_file=$env_file"
 echo "manifest=$manifest_copy"
+echo "runtime_dir=$runtime_dir"
+echo "contract=$contract"
 echo "source_sha=$source_sha"
