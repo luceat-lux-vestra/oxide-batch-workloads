@@ -1,4 +1,4 @@
-FROM golang:1.25.7-bookworm AS campaign-control-build
+FROM golang:1.27.3-bookworm AS campaign-control-build
 
 ARG PAYMENT_SANDBOX_SOURCE_REPOSITORY=https://github.com/proxynth/payment-sandbox.git
 ARG PAYMENT_SANDBOX_SOURCE_REVISION=3b6d6e1864ea5a6d017fcb005f547cf26c37352a
