@@ -88,16 +88,18 @@ invariants likewise have a 100-slot read-only collector/retainer over completed
 EOD state. Per-day quiescence now has a read-only resource sampler that binds
 host/container/process/PostgreSQL/filesystem observations to the deterministic
 day window and appends them to `samples.jsonl`. Canonical online traffic and its independent compact proof are implemented.
-Fault/crash execution remains separate from terminal acceptance, and
-terminal-day orchestration remains a later implementation slice.
+Fault/crash execution remains separate from terminal acceptance. The minimal
+terminal-day sequencer now orders the qualified producers and delegates final
+day materialization back to this independent scanner; controller exit codes are
+not acceptance authority.
 
 See [QUIESCENCE.md](QUIESCENCE.md) for the sampler contract. The sampler does
-not itself establish the no-work phase boundary; the future terminal-day
-controller must invoke it only after day-close mutation has stopped.
+not itself establish the no-work phase boundary; the terminal-day sequencer
+invokes it only after all preceding mutation stages have stopped.
 
-No CLI for writing completed days is exposed in this slice, so operators
-cannot use it to manufacture a completed campaign. There is no `summary.json`
-acceptance verifier yet. Changing controller source HEAD, OCI image digests,
+The terminal-day CLI can materialize a completed day only through the canonical
+eight-proof validator and a final frontier re-scan. It cannot manufacture
+campaign acceptance. There is no `summary.json` acceptance verifier yet. Changing controller source HEAD, OCI image digests,
 OxideBatch dependency/lock provenance or qualified host baseline requires
 reviewing and refreshing the **new** campaign identity; never edit old immutable
 provenance or existing business evidence in place.

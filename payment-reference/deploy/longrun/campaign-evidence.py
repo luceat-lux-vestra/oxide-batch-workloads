@@ -519,13 +519,12 @@ def _validate_bound_settlement_check(
     return artifact, subject
 
 
-def validate_verification(
-    path: Path,
+def validate_verification_record(
+    record: Any,
     campaign_path: Path,
     identity: dict[str, Any],
     sequence: int,
-) -> str:
-    record = load_json(path)
+) -> None:
     require(
         set(record) == {
             "schema", "schema_version", "campaign_id",
@@ -938,7 +937,311 @@ def validate_verification(
         "quiescence: descriptor subject mismatches independently re-derived proof",
     )
 
+
+    return None
+
+
+def validate_verification(
+    path: Path,
+    campaign_path: Path,
+    identity: dict[str, Any],
+    sequence: int,
+) -> str:
+    validate_verification_record(load_json(path), campaign_path, identity, sequence)
     return sha256(path)
+
+
+def _bound_descriptor(
+    *,
+    check: str,
+    artifact_path: Path,
+    campaign_path: Path,
+    artifact_schema: str,
+    artifact_schema_version: int,
+    campaign_id: str,
+    sequence: int,
+    source_revision: str,
+    subject: dict[str, Any],
+) -> dict[str, Any]:
+    require(
+        artifact_path.is_file() and not artifact_path.is_symlink(),
+        f"{check}: required retained artifact missing/unsafe",
+    )
+    return {
+        "verdict": "PASS",
+        "artifact_schema": artifact_schema,
+        "artifact_schema_version": artifact_schema_version,
+        "campaign_id": campaign_id,
+        "logical_day_sequence": sequence,
+        "source_revision": source_revision,
+        "relative_path": artifact_path.relative_to(campaign_path).as_posix(),
+        "artifact_sha256": sha256(artifact_path),
+        "subject": subject,
+    }
+
+
+def build_day_verification(campaign_path: Path, sequence: int) -> dict[str, Any]:
+    """Assemble one candidate from retained proofs, then validate all cross-bindings."""
+    require(type(sequence) is int and sequence > 0, "day sequence must be positive")
+    campaign_path = campaign_path.resolve()
+    record = load_json(campaign_path / "campaign.json")
+    identity = record.get("identity")
+    require(isinstance(identity, dict), "campaign identity missing")
+    verify_identity(identity)
+    require(identity["campaign_id"] == campaign_path.name, "campaign directory identity mismatch")
+
+    campaign_id = identity["campaign_id"]
+    source_revision = identity["source_revision"]
+    plan = day_cardinality.plan_for(campaign_id, sequence)
+    statement_dir = campaign_path / "statements"
+    day_dir = campaign_path / "days"
+
+    paths = {
+        "settlement_roster": statement_dir / f"day-{sequence:06}.roster.verification.json",
+        "settlement_close": statement_dir / f"day-{sequence:06}.settlement.verification.json",
+        CARDINALITY_CHECK: statement_dir / f"day-{sequence:06}.provider-cardinality.verification.json",
+        RECOVERY_CHECK: day_dir / f"day-{sequence:06}.recovery.verification.json",
+        RECONCILIATION_CHECK: day_dir / f"day-{sequence:06}.reconciliation.verification.json",
+        FINANCIAL_CHECK: day_dir / f"day-{sequence:06}.financial-invariants.verification.json",
+        ONLINE_CHECK: day_dir / f"day-{sequence:06}.online.verification.json",
+        QUIESCENCE_CHECK: day_dir / f"day-{sequence:06}.quiescence.verification.json",
+    }
+    for check, path in paths.items():
+        require(path.is_file() and not path.is_symlink(), f"{check}: retained proof missing/unsafe")
+
+    roster = load_json(paths["settlement_roster"])
+    settlement = load_json(paths["settlement_close"])
+    cardinality = load_json(paths[CARDINALITY_CHECK])
+    recovery = load_json(paths[RECOVERY_CHECK])
+    reconciliation = load_json(paths[RECONCILIATION_CHECK])
+    financial = load_json(paths[FINANCIAL_CHECK])
+    online = load_json(paths[ONLINE_CHECK])
+    quiescence = load_json(paths[QUIESCENCE_CHECK])
+
+    subjects = {
+        "settlement_roster": _roster_subject(roster),
+        "settlement_close": _settlement_subject(settlement),
+        CARDINALITY_CHECK: day_cardinality.validate(
+            cardinality,
+            plan=plan,
+            source_revision=source_revision,
+            roster_verification=roster,
+        ),
+        RECOVERY_CHECK: day_recovery.validate(
+            recovery,
+            plan=plan,
+            source_revision=source_revision,
+            workload_binary_sha256=identity["batch_binaries"]["payment-recovery-postgres"]["sha256"],
+        ),
+        RECONCILIATION_CHECK: day_reconciliation.validate(
+            reconciliation,
+            plan=plan,
+            source_revision=source_revision,
+            workload_binary_sha256=identity["batch_binaries"]["payment-reconciliation-postgres"]["sha256"],
+        ),
+        FINANCIAL_CHECK: day_financial.validate(
+            financial,
+            plan=plan,
+            source_revision=source_revision,
+        ),
+        ONLINE_CHECK: day_online.validate(
+            online,
+            plan=day_online.plan_for(campaign_id, sequence),
+            source_revision=source_revision,
+            provenance_hashes=identity["provenance_sha256"],
+        ),
+        QUIESCENCE_CHECK: day_quiescence.validate(
+            quiescence,
+            campaign_dir=campaign_path,
+            plan=plan_day(sequence),
+            source_revision=source_revision,
+            expected_services=sorted(identity["images"]["services"]),
+        ),
+    }
+
+    schemas = {
+        "settlement_roster": (SETTLEMENT_ROSTER_SCHEMA, 1),
+        "settlement_close": (SETTLEMENT_VERIFICATION_SCHEMA, 1),
+        CARDINALITY_CHECK: (day_cardinality.SCHEMA, 1),
+        RECOVERY_CHECK: (day_recovery.SCHEMA, day_recovery.SCHEMA_VERSION),
+        RECONCILIATION_CHECK: (day_reconciliation.SCHEMA, day_reconciliation.SCHEMA_VERSION),
+        FINANCIAL_CHECK: (day_financial.SCHEMA, day_financial.SCHEMA_VERSION),
+        ONLINE_CHECK: (day_online.SCHEMA, day_online.SCHEMA_VERSION),
+        QUIESCENCE_CHECK: (day_quiescence.SCHEMA, day_quiescence.SCHEMA_VERSION),
+    }
+    checks = {
+        check: _bound_descriptor(
+            check=check,
+            artifact_path=paths[check],
+            campaign_path=campaign_path,
+            artifact_schema=schemas[check][0],
+            artifact_schema_version=schemas[check][1],
+            campaign_id=campaign_id,
+            sequence=sequence,
+            source_revision=source_revision,
+            subject=subjects[check],
+        )
+        for check in paths
+    }
+    candidate = {
+        "schema": DAY_VERIFICATION_SCHEMA,
+        "schema_version": DAY_VERIFICATION_SCHEMA_VERSION,
+        "campaign_id": campaign_id,
+        "logical_day_sequence": sequence,
+        "source_revision": source_revision,
+        "verdict": "PASS",
+        "checks": checks,
+    }
+    validate_verification_record(candidate, campaign_path, identity, sequence)
+    return candidate
+
+
+def retain_exact_json(path: Path, value: dict[str, Any]) -> str:
+    raw = canonical_bytes(value)
+    if path.exists():
+        require(path.is_file() and not path.is_symlink(), "retained terminal path unsafe")
+        require(path.read_bytes() == raw, "retained terminal artifact immutable conflict")
+        return "replay"
+    create_only(path, raw)
+    return "created"
+
+
+def lifecycle_state(campaign_path: Path) -> dict[str, Any]:
+    """Validate event ordering without interpreting proof files, for crash-safe resume."""
+    campaign_path = campaign_path.resolve()
+    record = load_json(campaign_path / "campaign.json")
+    identity = record.get("identity")
+    require(isinstance(identity, dict), "campaign identity missing")
+    verify_identity(identity)
+    require(identity["campaign_id"] == campaign_path.name, "campaign directory identity mismatch")
+
+    events = iter_events(campaign_path / "events.jsonl", identity["campaign_id"])
+    first = next(events, None)
+    require(
+        first is not None
+        and first["phase"] == "campaign-initialized"
+        and first["logical_day_sequence"] == 0,
+        "missing first initialization event",
+    )
+
+    frontier = 0
+    active = None
+    terminal_failure = None
+    for event in events:
+        require(terminal_failure is None, "events exist after terminal day failure")
+        sequence = event["logical_day_sequence"]
+        phase = event["phase"]
+        if phase in CAMPAIGN_PHASES - {"campaign-initialized"}:
+            require(sequence == 0, "controller event must have sequence zero")
+            continue
+        require(sequence > 0, "day lifecycle event on sequence zero")
+        if phase == "day-started":
+            require(active is None and sequence == frontier + 1,
+                    "day-start event gap/duplicate/out-of-order")
+            active = sequence
+            continue
+        require(active == sequence, "day event without matching start")
+        if phase in DAY_PHASES - {"day-started", "day-terminal-success", "day-terminal-failure"}:
+            continue
+        if phase == "day-terminal-failure":
+            terminal_failure = sequence
+            active = None
+            continue
+        require(phase == "day-terminal-success", "unknown day lifecycle event")
+        frontier = sequence
+        active = None
+
+    return {
+        "frontier_sequence": frontier,
+        "active_day": active,
+        "terminal_failure": terminal_failure,
+    }
+
+
+def materialize_terminal_day(campaign_path: Path, sequence: int) -> dict[str, Any]:
+    """Materialize terminal PASS only after the canonical eight-proof verifier passes."""
+    require(type(sequence) is int and sequence > 0, "day sequence must be positive")
+    campaign_path = campaign_path.resolve()
+    state = lifecycle_state(campaign_path)
+    require(state["terminal_failure"] is None, "campaign already contains terminal day failure")
+    require(
+        state["active_day"] == sequence and state["frontier_sequence"] == sequence - 1,
+        "terminal materialization requires the matching active next day",
+    )
+
+    campaign = load_json(campaign_path / "campaign.json")
+    identity = campaign["identity"]
+    verification_path = campaign_path / "days" / f"{sequence:06}.verification.json"
+    day_path = campaign_path / "days" / f"{sequence:06}.json"
+
+    require(
+        not any((campaign_path / "failures").iterdir()),
+        "failure artifacts retained before terminal materialization",
+    )
+    if not verification_path.exists() and not day_path.exists():
+        preflight = inspect(campaign_path)
+        require(
+            preflight.get("decision") == "BLOCK"
+            and preflight.get("reason") == f"nonterminal day {sequence}"
+            and preflight.get("frontier_sequence") == sequence - 1,
+            "active day failed independent pre-terminal frontier validation",
+        )
+    else:
+        require(
+            verification_path.exists(),
+            "terminal day artifact exists without independent verification artifact",
+        )
+
+    verification = build_day_verification(campaign_path, sequence)
+    verification_retention = retain_exact_json(verification_path, verification)
+    verification_sha = validate_verification(
+        verification_path, campaign_path, identity, sequence
+    )
+
+    day = {
+        "schema": DAY_SCHEMA,
+        "schema_version": 1,
+        "campaign_id": identity["campaign_id"],
+        "logical_day_sequence": sequence,
+        "plan": plan_day(sequence),
+        "verdict": "PASS",
+        "independent_verification_sha256": verification_sha,
+    }
+    day_retention = retain_exact_json(day_path, day)
+    state = lifecycle_state(campaign_path)
+    require(
+        state["terminal_failure"] is None
+        and state["active_day"] == sequence
+        and state["frontier_sequence"] == sequence - 1,
+        "day lifecycle changed during terminal materialization",
+    )
+    require(
+        not any((campaign_path / "failures").iterdir()),
+        "failure artifacts retained before terminal success event",
+    )
+    append_event(
+        campaign_path,
+        sequence,
+        "day-terminal-success",
+        {"day_sha256": sha256(day_path)},
+    )
+
+    status = inspect(campaign_path)
+    require(
+        status.get("decision") == "READY"
+        and status.get("frontier_sequence") == sequence,
+        "terminal materialization did not advance the independently verified frontier",
+    )
+    return {
+        "decision": "DAY_TERMINAL_SUCCESS_INDEPENDENTLY_VERIFIED",
+        "logical_day_sequence": sequence,
+        "verification_retention": verification_retention,
+        "day_retention": day_retention,
+        "verification_sha256": verification_sha,
+        "day_sha256": sha256(day_path),
+        "frontier_sequence": sequence,
+        "campaign_acceptance_authorized": False,
+    }
 
 
 def inspect(campaign_path: Path) -> dict[str, Any]:

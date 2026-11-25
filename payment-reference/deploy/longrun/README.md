@@ -512,3 +512,15 @@ Canonical day verification also requires independently retained canonical-online
 and quiescence proofs. The frontier replays the compact canonical order chain
 and re-reads the exact quiescence window from `samples.jsonl`; no
 controller-authored generic `PASS + SHA` check remains.
+
+
+## Terminal-day orchestration
+
+The minimal terminal-day sequencer is now implemented in
+[`campaign_day_terminal.py`](campaign_day_terminal.py). It owns ordering, not
+acceptance: a day can advance only when `campaign-evidence.py` independently
+revalidates all eight canonical proof families, retains the terminal records,
+and re-scans the frontier. See [TERMINAL_DAY.md](TERMINAL_DAY.md).
+
+Campaign-wide >=24h / >=30-day / >=3000-flow acceptance and final >=1800-second
+quiescence remain separate.

@@ -843,6 +843,54 @@ class CampaignEvidenceTests(unittest.TestCase):
     def init(self):
         return m.initialize(self.base / "evidence", self.identity, self.provenance)
 
+
+    def test_terminal_materialization_advances_only_after_all_eight_proofs_validate(self):
+        root = self.init()
+        m.append_event(root, 1, "day-started", {})
+        settlement_artifacts(root, 1)
+
+        result = m.materialize_terminal_day(root, 1)
+
+        self.assertEqual(result["decision"], "DAY_TERMINAL_SUCCESS_INDEPENDENTLY_VERIFIED")
+        self.assertFalse(result["campaign_acceptance_authorized"])
+        self.assertEqual(result["frontier_sequence"], 1)
+        self.assertEqual(m.inspect(root)["frontier_sequence"], 1)
+        verification = m.load_json(root / "days/000001.verification.json")
+        self.assertEqual(set(verification["checks"]), {
+            "settlement_roster", "settlement_close", "side_effect_cardinality",
+            "recovery", "reconciliation", "financial_invariants",
+            "canonical_online", "quiescence",
+        })
+
+    def test_terminal_materialization_blocks_before_writing_terminal_files_when_proof_missing(self):
+        root = self.init()
+        m.append_event(root, 1, "day-started", {})
+        settlement_artifacts(root, 1)
+        (root / "days/day-000001.online.verification.json").unlink()
+
+        with self.assertRaisesRegex(m.EvidenceError, "canonical_online: retained proof missing"):
+            m.materialize_terminal_day(root, 1)
+
+        self.assertFalse((root / "days/000001.verification.json").exists())
+        self.assertFalse((root / "days/000001.json").exists())
+        self.assertEqual(m.lifecycle_state(root)["active_day"], 1)
+
+    def test_terminal_materialization_resumes_exact_partial_verification_retention(self):
+        root = self.init()
+        m.append_event(root, 1, "day-started", {})
+        settlement_artifacts(root, 1)
+        candidate = m.build_day_verification(root, 1)
+        path = root / "days/000001.verification.json"
+        self.assertEqual(m.retain_exact_json(path, candidate), "created")
+
+        result = m.materialize_terminal_day(root, 1)
+
+        self.assertEqual(result["verification_retention"], "replay")
+        self.assertEqual(result["day_retention"], "created")
+        events = m.read_events(root / "events.jsonl", root.name)
+        self.assertEqual(sum(e["phase"] == "day-started" for e in events), 1)
+        self.assertEqual(sum(e["phase"] == "day-terminal-success" for e in events), 1)
+
     def test_plan_geometry_seed_calendar_crash_and_quiet_schedule(self):
         for seq in range(1, 31):
             plan = m.plan_day(seq)

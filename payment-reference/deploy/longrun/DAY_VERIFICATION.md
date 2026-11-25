@@ -101,16 +101,17 @@ See:
 
 ## Frontier authority
 
-Lifecycle events remain sequencing records, not proof. A future terminal-day
-controller may emit events and assemble descriptors, but
-`campaign-evidence.py::inspect()` independently rejects a terminal success
-unless all eight canonical proofs are present and valid.
+Lifecycle events remain sequencing records, not proof.
+`campaign_day_terminal.py` sequences the qualified producers, while
+`campaign-evidence.py` alone assembles and independently revalidates all eight
+bound proof descriptors before it may retain terminal day records and append
+`day-terminal-success`.
 
 This contract still does not:
 
-- create terminal day records;
-- execute traffic/recovery/reconciliation/settlement;
-- implement the terminal-day orchestrator;
+- make controller exit codes an acceptance authority;
+- execute the separately qualified recovery/reconciliation workload lifecycle
+  or scheduled hard-crash injection on behalf of those workloads;
 - enforce the campaign-wide >=24h / >=30-day / >=3000-flow floor;
 - enforce final >=1800-second quiescence;
 - advance campaign acceptance beyond the existing per-day frontier semantics.
