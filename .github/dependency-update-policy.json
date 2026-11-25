@@ -1,0 +1,692 @@
+{
+  "schema": "engineering-governance/dependency-update-policy/v1",
+  "entries": [
+    {
+      "id": "cargo-csv-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "csv-postgres/Cargo.lock",
+        "csv-postgres/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "csv-postgres/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/csv-postgres"
+      }
+    },
+    {
+      "id": "cargo-payment-reconciliation-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reconciliation-postgres/Cargo.lock",
+        "payment-reconciliation-postgres/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "payment-reconciliation-postgres/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/payment-reconciliation-postgres"
+      }
+    },
+    {
+      "id": "cargo-payment-recovery-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-recovery-postgres/Cargo.lock",
+        "payment-recovery-postgres/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "payment-recovery-postgres/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/payment-recovery-postgres"
+      }
+    },
+    {
+      "id": "cargo-postgres-local-partition",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-local-partition/Cargo.lock",
+        "postgres-local-partition/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "postgres-local-partition/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/postgres-local-partition"
+      }
+    },
+    {
+      "id": "cargo-postgres-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-postgres/Cargo.lock",
+        "postgres-postgres/Cargo.toml",
+        "postgres-postgres/benchmark/raw-sqlx/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "postgres-postgres/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/postgres-postgres"
+      }
+    },
+    {
+      "id": "cargo-fixture-heterogeneous",
+      "kind": "dependency_root",
+      "source_paths": [
+        "fixture-heterogeneous/Cargo.lock",
+        "fixture-heterogeneous/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "fixture-heterogeneous/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/fixture-heterogeneous"
+      }
+    },
+    {
+      "id": "cargo-payment-reference",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/Cargo.toml",
+        "payment-reference/crates/fault-plan/Cargo.toml",
+        "payment-reference/crates/payment-contract/Cargo.toml",
+        "payment-reference/gateway/Cargo.toml",
+        "payment-reference/merchant/Cargo.toml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "payment-reference/Cargo.toml",
+      "mechanism": "Native Cargo Dependabot workspace ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "cargo",
+        "directory": "/payment-reference"
+      }
+    },
+    {
+      "id": "maven-postgres-postgres-benchmark-java",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-postgres/benchmark/java/jberet/pom.xml",
+        "postgres-postgres/benchmark/java/pom.xml",
+        "postgres-postgres/benchmark/java/raw-jdbc/pom.xml",
+        "postgres-postgres/benchmark/java/spring-batch/pom.xml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "postgres-postgres/benchmark/java/pom.xml",
+      "mechanism": "Native Maven Dependabot reactor ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "maven",
+        "directory": "/postgres-postgres/benchmark/java"
+      }
+    },
+    {
+      "id": "maven-payment-reference-adapters-killbill-payment-sandbox",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/adapters/killbill-payment-sandbox/pom.xml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "payment-reference/adapters/killbill-payment-sandbox/pom.xml",
+      "mechanism": "Native Maven Dependabot reactor ownership",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "maven",
+        "directory": "/payment-reference/adapters/killbill-payment-sandbox"
+      }
+    },
+    {
+      "id": "actionlint-go",
+      "kind": "dependency_root",
+      "source_paths": [
+        ".github/tools/actionlint/go.mod"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://github.com/rhysd/actionlint",
+      "mechanism": "Native Go module updater; go build authenticates modules through the Go checksum database",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "gomod",
+        "directory": "/.github/tools/actionlint"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-fault-proxy",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/fault-proxy/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/fault-proxy"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-gateway",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/gateway/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/gateway"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-killbill-db",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/killbill-db/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/killbill-db"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-killbill",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/killbill/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/killbill"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-merchant",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/merchant/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/merchant"
+      }
+    },
+    {
+      "id": "docker-payment-reference-deploy-payment-sandbox",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/payment-sandbox/Dockerfile"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "Dockerfile and runtime qualification",
+      "mechanism": "Native Docker updates FROM images, subject to qualification and explicit provider constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker",
+        "directory": "/payment-reference/deploy/payment-sandbox"
+      }
+    },
+    {
+      "id": "compose-csv-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "csv-postgres/docker-compose.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/csv-postgres"
+      }
+    },
+    {
+      "id": "compose-payment-reconciliation-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reconciliation-postgres/docker-compose.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/payment-reconciliation-postgres"
+      }
+    },
+    {
+      "id": "compose-payment-recovery-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-recovery-postgres/docker-compose.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/payment-recovery-postgres"
+      }
+    },
+    {
+      "id": "compose-payment-reference-deploy",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/compose.yaml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/payment-reference/deploy"
+      }
+    },
+    {
+      "id": "compose-postgres-local-partition",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-local-partition/docker-compose.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/postgres-local-partition"
+      }
+    },
+    {
+      "id": "compose-postgres-postgres",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-postgres/docker-compose.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories",
+      "mechanism": "Native Compose updates static image declarations",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/postgres-postgres"
+      }
+    },
+    {
+      "id": "benchmark-scale-compose",
+      "kind": "dependency_root",
+      "source_paths": [
+        "postgres-local-partition/benchmark/docker-compose.scale.yml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "postgres-local-partition/README.md and retained scaling evidence",
+      "mechanism": "Explicit benchmark rerun and reviewed input update; no native coverage claim",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/postgres-local-partition/benchmark"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Noncanonical benchmark Compose filename and controlled comparison input.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "postgres-local-partition/README.md and retained scaling evidence"
+      }
+    },
+    {
+      "id": "published-oci-model",
+      "kind": "dependency_root",
+      "source_paths": [
+        "payment-reference/deploy/longrun/compose.oci.yaml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "payment-reference/deploy/longrun/README.md",
+      "mechanism": "Source-versioned deployment bundle with required immutable image digest references",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "docker-compose",
+        "directory": "/payment-reference/deploy/longrun"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "OCI model consumes published digests, not independently updatable image tags.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "payment-reference/deploy/longrun/README.md"
+      }
+    },
+    {
+      "id": "native-arm64-runner",
+      "kind": "runner",
+      "source_paths": [
+        ".github/workflows/benchmark-oxide-csv-postgres.yml",
+        ".github/workflows/benchmark-postgres-local-partition-scale.yml",
+        ".github/workflows/benchmark-postgres-postgres-allocator.yml",
+        ".github/workflows/benchmark-postgres-postgres-four-way.yml",
+        ".github/workflows/benchmark-postgres-postgres-paired.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/fast-branch.yml",
+        ".github/workflows/hardening-drift-audit-policy.yml",
+        ".github/workflows/hardening-drift-audit.yml",
+        ".github/workflows/jberet-clean.yml",
+        ".github/workflows/jberet-crash.yml",
+        ".github/workflows/label-automation.yml",
+        ".github/workflows/payment-reference-images.yml",
+        ".github/workflows/pr4-four-way-semantic.yml",
+        ".github/workflows/probe-perfetto-heap-capability.yml",
+        ".github/workflows/profile-postgres-postgres-allocator-native.yml",
+        ".github/workflows/profile-postgres-postgres-cpu.yml",
+        ".github/workflows/profile-postgres-postgres-heap.yml",
+        ".github/workflows/profile-postgres-postgres-os-process.yml",
+        ".github/workflows/profile-postgres-postgres-perfetto-heap.yml",
+        ".github/workflows/profile-postgres-postgres-smoke.yml",
+        ".github/workflows/profile-postgres-postgres-timeline.yml",
+        ".github/workflows/release-codeql-preflight.yml",
+        ".github/workflows/sccache-final-main-producer.yml",
+        ".github/workflows/sccache-main-producer.yml",
+        ".github/workflows/scheduled-supply-chain-audit.yml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/actions/runner-images/issues/14747",
+      "mechanism": "Select latest GA native ARM64 label; update all coupled paths in a reviewed PR",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "label": "ubuntu-26.04-arm"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "No moving native ARM64 alias. Current latest GA selected; preserve architecture and actual benchmark evidence.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "https://github.com/actions/runner-images/issues/14747"
+      }
+    },
+    {
+      "id": "actionlint-runner-table",
+      "kind": "constraint",
+      "source_paths": [
+        ".github/actionlint.yaml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/rhysd/actionlint; https://github.com/actions/runner-images/issues/14747",
+      "mechanism": "Exact known GA label recognition; remove after upstream support",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "label": "ubuntu-26.04-arm"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Current actionlint table predates this provider GA label; other labels remain checked.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "https://github.com/rhysd/actionlint; https://github.com/actions/runner-images/issues/14747"
+      }
+    },
+    {
+      "id": "published-oxidebatch-subjects",
+      "kind": "constraint",
+      "source_paths": [
+        "csv-postgres/Cargo.toml",
+        "payment-reconciliation-postgres/Cargo.toml",
+        "payment-recovery-postgres/Cargo.toml",
+        "postgres-local-partition/Cargo.toml",
+        "postgres-postgres/Cargo.toml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "workloads.json and workload README/evidence manifests",
+      "mechanism": "Published release qualification campaigns advance exact subjects deliberately",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "dependency": "oxide-batch*"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Exact published framework under test, not routine third-party dependency.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "workloads.json and workload README/evidence manifests"
+      }
+    },
+    {
+      "id": "workload-msrv",
+      "kind": "constraint",
+      "source_paths": [
+        "csv-postgres/Cargo.toml",
+        "payment-reconciliation-postgres/Cargo.toml",
+        "payment-recovery-postgres/Cargo.toml",
+        "postgres-local-partition/Cargo.toml",
+        "postgres-postgres/Cargo.toml",
+        "postgres-postgres/benchmark/raw-sqlx/Cargo.toml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "workloads.json and .github/workflows/ci.yml",
+      "mechanism": "Stable primary lane and per-manifest MSRV lane",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "field": "rust-version"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Minimum supported toolchain is a tested compatibility floor, not maintenance target.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "workloads.json and .github/workflows/ci.yml"
+      }
+    },
+    {
+      "id": "benchmark-comparison",
+      "kind": "constraint",
+      "source_paths": [
+        "postgres-postgres/Cargo.toml",
+        "postgres-postgres/benchmark/java/jberet/pom.xml",
+        "postgres-postgres/benchmark/java/pom.xml",
+        "postgres-postgres/benchmark/java/raw-jdbc/pom.xml",
+        "postgres-postgres/benchmark/java/spring-batch/pom.xml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "postgres-postgres/README.md; benchmark Java policy and supply-chain hook",
+      "mechanism": "Explicit benchmark requalification; native updates outside reviewed comparison constraints",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "scope": "comparison subjects, allocator and Java baseline"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Comparison evidence binds exact inputs; Java 25 current LTS, Maven/build/allocator and dependency comparison contracts need explicit refresh.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "postgres-postgres/README.md; benchmark Java policy and supply-chain hook"
+      }
+    },
+    {
+      "id": "killbill-adapter-java-floor",
+      "kind": "constraint",
+      "source_paths": [
+        "payment-reference/adapters/killbill-payment-sandbox/pom.xml",
+        ".github/workflows/ci.yml",
+        "payment-reference/deploy/killbill/Dockerfile"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "payment-reference/README.md and adapter POM",
+      "mechanism": "Adapter compatibility lane and Docker build; native third-party updates outside compatibility floor",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "java": "11"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Kill Bill Java 11 OSGi runtime compatibility.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "payment-reference/README.md and adapter POM"
+      }
+    },
+    {
+      "id": "killbill-ddl-source",
+      "kind": "constraint",
+      "source_paths": [
+        "payment-reference/adapters/killbill-payment-sandbox/pom.xml",
+        "payment-reference/deploy/killbill-db/Dockerfile",
+        "payment-reference/deploy/killbill-db/killbill-ddl.lock",
+        "payment-reference/deploy/killbill/Dockerfile"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "payment-reference/deploy/killbill-db/Dockerfile; killbill-ddl.lock",
+      "mechanism": "Paired schema/application/API migration with lock and integration checks",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "scope": "Kill Bill application/schema/API paired source"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Application schema and plugin ABI must match pinned Kill Bill release; source commit and blob hashes coupled.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "payment-reference/deploy/killbill-db/Dockerfile; killbill-ddl.lock"
+      }
+    },
+    {
+      "id": "payment-sandbox-release",
+      "kind": "constraint",
+      "source_paths": [
+        "payment-reference/deploy/payment-sandbox/Dockerfile",
+        "payment-reference/deploy/compose.yaml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "payment-reference/deploy/longrun/README.md; payment-sandbox/Dockerfile",
+      "mechanism": "Paired release/control-source/hash migration; requalify campaign contract",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "scope": "upstream release, control source and architecture hashes"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "Campaign depends on provider control API and exact release provenance; version and source cannot advance independently.",
+        "trigger": "New upstream GA/release, qualification campaign, security exposure or review deadline",
+        "evidence": "payment-reference/deploy/longrun/README.md; payment-sandbox/Dockerfile"
+      }
+    },
+    {
+      "id": "workflow-actions",
+      "kind": "tool",
+      "source_paths": [
+        ".github/workflows/benchmark-oxide-csv-postgres.yml",
+        ".github/workflows/benchmark-postgres-local-partition-scale.yml",
+        ".github/workflows/benchmark-postgres-postgres-allocator.yml",
+        ".github/workflows/benchmark-postgres-postgres-four-way.yml",
+        ".github/workflows/benchmark-postgres-postgres-paired.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/fast-branch.yml",
+        ".github/workflows/hardening-drift-audit-policy.yml",
+        ".github/workflows/hardening-drift-audit.yml",
+        ".github/workflows/jberet-clean.yml",
+        ".github/workflows/jberet-crash.yml",
+        ".github/workflows/label-automation.yml",
+        ".github/workflows/payment-reference-images.yml",
+        ".github/workflows/pr4-four-way-semantic.yml",
+        ".github/workflows/probe-perfetto-heap-capability.yml",
+        ".github/workflows/profile-postgres-postgres-allocator-native.yml",
+        ".github/workflows/profile-postgres-postgres-cpu.yml",
+        ".github/workflows/profile-postgres-postgres-heap.yml",
+        ".github/workflows/profile-postgres-postgres-os-process.yml",
+        ".github/workflows/profile-postgres-postgres-perfetto-heap.yml",
+        ".github/workflows/profile-postgres-postgres-smoke.yml",
+        ".github/workflows/profile-postgres-postgres-timeline.yml",
+        ".github/workflows/release-codeql-preflight.yml",
+        ".github/workflows/sccache-final-main-producer.yml",
+        ".github/workflows/sccache-main-producer.yml",
+        ".github/workflows/scheduled-supply-chain-audit.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference",
+      "mechanism": "Native Dependabot immutable workflow action pins",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "github-actions",
+        "directory": "/"
+      }
+    },
+    {
+      "id": "managed-install-action",
+      "kind": "tool",
+      "source_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/fast-branch.yml",
+        ".github/workflows/hardening-drift-audit.yml",
+        ".github/workflows/scheduled-supply-chain-audit.yml",
+        ".github/workflows/sccache-main-producer.yml",
+        ".github/workflows/sccache-final-main-producer.yml"
+      ],
+      "strategy": "DEPENDABOT",
+      "authority": "https://github.com/taiki-e/install-action#security",
+      "mechanism": "Immutable action release, embedded upstream verified manifests, checksum true, fallback none; Dependabot-managed action revision with supply-chain cooldown",
+      "owner": "luceat-lux-vestra/oxide-batch-workloads#371",
+      "validation": "Required exact-head CI and applicable native updater/runtime evidence",
+      "provenance": {
+        "ecosystem": "github-actions",
+        "directory": "/",
+        "action": "taiki-e/install-action"
+      }
+    }
+  ]
+}

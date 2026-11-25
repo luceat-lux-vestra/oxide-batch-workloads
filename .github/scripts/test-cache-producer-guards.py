@@ -82,6 +82,11 @@ def test_producers() -> None:
             assert not selected(path, paths), (filename, path)
         source = (WORKFLOWS / filename).read_text(encoding="utf-8")
         assert "Verify protected-main authority" in source
+        assert source.index("Install maintained sccache") < source.index("compiler-cache identity")
+        assert 'sha256sum "$(command -v sccache)"' in source
+        assert "VERSION_ID=" in source
+        assert 'test "$(uname -m)" = aarch64' in source
+        assert "SCCACHE_VERSION:" not in source
         assert "actions/cache/save@" in source
         assert "steps.restore-sccache.outputs.cache-hit != 'true'" in source
 
@@ -99,6 +104,11 @@ def test_consumers() -> None:
         assert f"steps.{step}.outputs.cache-matched-key == ''" in source
         assert "SCCACHE_LOCAL_RW_MODE=READ_ONLY" in source
         assert "RUSTC_WRAPPER=sccache" in source
+        assert source.index("Install maintained sccache") < source.index("compiler-cache identity")
+        assert 'sha256sum "$(command -v sccache)"' in source
+        assert "VERSION_ID=" in source
+        assert 'test "$(uname -m)" = aarch64' in source
+        assert "SCCACHE_VERSION:" not in source
         assert "cache-hit == 'true'" not in source
         assert "No compatible protected-main" in source
         assert "if read_errors != 0:" in source

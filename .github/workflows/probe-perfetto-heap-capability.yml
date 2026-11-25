@@ -13,7 +13,7 @@ concurrency:
 jobs:
   perfetto-capability:
     name: perfetto-heap-capability
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     env:
       EXPECTED_SHA: ${{ github.sha }}

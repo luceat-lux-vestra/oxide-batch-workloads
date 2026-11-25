@@ -14,7 +14,7 @@ concurrency:
 jobs:
   policy-contract:
     name: repository-governance-policy
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -33,6 +33,9 @@ jobs:
 
       - name: Test workflow security invariants
         run: python3 .github/scripts/test-validate-workflow-security.py
+
+      - name: Test dependency lifecycle ownership
+        run: python3 .github/scripts/test-dependency-lifecycle.py
 
       - name: Validate workflow security invariants
         run: python3 .github/scripts/validate-workflow-security.py

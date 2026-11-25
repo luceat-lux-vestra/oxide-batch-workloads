@@ -47,7 +47,7 @@ Measured rounds must be a multiple of four. Candidate order is a deterministic f
 
 ## Build-once and database isolation
 
-All four candidates execute in one `ubuntu-24.04` GitHub-hosted job against the same PostgreSQL 18 service.
+All four candidates execute in one native Ubuntu ARM64 GitHub-hosted job selected by the current dependency lifecycle policy against the same PostgreSQL 18 service. Retained benchmark results remain tied to the actual runner and environment recorded in their evidence.
 
 - Rust release binaries are built once before timed samples.
 - The Maven reactor and Java runtime dependencies are built/resolved once.

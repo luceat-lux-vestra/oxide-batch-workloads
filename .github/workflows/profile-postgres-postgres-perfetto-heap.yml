@@ -13,7 +13,7 @@ concurrency:
 jobs:
   perfetto-heap-profile:
     name: postgres-postgres-perfetto-heap-profile
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 60
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload

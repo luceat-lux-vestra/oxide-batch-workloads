@@ -125,7 +125,7 @@ class OciDeploymentTests(unittest.TestCase):
         self.assertIn("workflow_dispatch: {}", workflow)
         self.assertNotIn("pull_request:", workflow)
         self.assertIn("packages: write", workflow)
-        self.assertIn("runs-on: ubuntu-24.04-arm", workflow)
+        self.assertRegex(workflow, r"(?m)^    runs-on: ubuntu-\d{2}\.\d{2}-arm$")
         self.assertIn("publish-image.sh", workflow)
         self.assertIn("image-manifest.py assemble", workflow)
         for service in manifest_mod.EXPECTED:

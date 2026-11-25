@@ -54,6 +54,11 @@ def main() -> int:
         payment_reference_runtime=True,
     )
     expect(["workloads.json"], governance=True)
+    expect([".github/dependency-update-policy.json"], governance=True)
+    expect([".github/tools/actionlint/go.mod"], governance=True)
+    expect([".github/scripts/dependency_lifecycle.py"], governance=True)
+    expect([".github/scripts/test-dependency-lifecycle.py"], governance=True)
+    expect([".github/workflows/new.yaml"], governance=True)
     expect([".github/scripts/test-validate-workflow-security.py"], governance=True)
     expect([".github/scripts/trusted-codeql-runtime-validation.py"], governance=True)
     expect([".github/ISSUE_TEMPLATE/config.yml"], governance=True)

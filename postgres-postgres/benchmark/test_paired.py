@@ -136,7 +136,7 @@ class PairedHarnessTests(unittest.TestCase):
         self.assertNotIn("push:", text)
         for value in ('default: "1000000"', 'default: "20260904"', 'default: "1000"', 'default: "500"', 'default: "750"', 'default: "2"', 'default: "7"'):
             self.assertIn(value, text)
-        self.assertIn("runs-on: ubuntu-24.04", text)
+        self.assertRegex(text, r"(?m)^    runs-on: ubuntu-\d{2}\.(?:0[1-9]|1[0-2])-arm$")
         self.assertIn("permissions:\n  contents: read", text)
         self.assertIn("persist-credentials: false", text)
         self.assertIn("continue-on-error: true", text)

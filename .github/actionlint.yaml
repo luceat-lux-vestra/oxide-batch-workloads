@@ -1,0 +1,5 @@
+# Current actionlint built-in table predates the verified GA runner label.
+# Remove after upstream support lands; other runner labels remain checked.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04-arm

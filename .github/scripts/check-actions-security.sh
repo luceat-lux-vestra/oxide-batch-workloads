@@ -5,45 +5,22 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOLS_DIR="${RUNNER_TEMP:-$(mktemp -d)}/oxide-batch-workloads-actions-security"
 mkdir -p "$TOOLS_DIR"
 
-ACTIONLINT_VERSION="1.7.12"
-ZIZMOR_VERSION="1.30.0"
-case "$(uname -m)" in
-  x86_64)
-    ACTIONLINT_PLATFORM="amd64"
-    ACTIONLINT_SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-    ZIZMOR_PLATFORM="x86_64"
-    ZIZMOR_SHA256="ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee4092e5ed"
-    ;;
-  aarch64)
-    ACTIONLINT_PLATFORM="arm64"
-    ACTIONLINT_SHA256="325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"
-    ZIZMOR_PLATFORM="aarch64"
-    ZIZMOR_SHA256="018a024d6b6d09733b07f6ef42838d984c23ec04bc9b2acd55f7d67826aeafe5"
-    ;;
-  *)
-    echo "::error::Unsupported workflow scanner architecture: $(uname -m)" >&2
-    exit 2
-    ;;
-esac
+# Native gomod Dependabot owns actionlint. The maintained install-action
+# supplies the checksum-verified zizmor executable.
+(
+  cd "$ROOT/.github/tools/actionlint"
+  go build -mod=mod -o "$TOOLS_DIR/actionlint" github.com/rhysd/actionlint/cmd/actionlint
+)
+"$TOOLS_DIR/actionlint" -version
+zizmor --version
 
-actionlint_archive="$TOOLS_DIR/actionlint.tar.gz"
-zizmor_archive="$TOOLS_DIR/zizmor.tar.gz"
-
-curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error   "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${ACTIONLINT_PLATFORM}.tar.gz"   --output "$actionlint_archive"
-echo "${ACTIONLINT_SHA256}  $actionlint_archive" | sha256sum -c -
-tar -xzf "$actionlint_archive" -C "$TOOLS_DIR" actionlint
-
-curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error   "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-${ZIZMOR_PLATFORM}-unknown-linux-gnu.tar.gz"   --output "$zizmor_archive"
-echo "${ZIZMOR_SHA256}  $zizmor_archive" | sha256sum -c -
-tar -xzf "$zizmor_archive" -C "$TOOLS_DIR" zizmor
-
-# actionlint 1.7.12 does not yet parse GitHub's documented `$/...` self-repository
+# The current actionlint release does not yet parse GitHub's documented `$/...` self-repository
 # syntax for reusable workflow calls (rhysd/actionlint#711). Keep the canonical
 # GitHub syntax and suppress only that known parser diagnostic until upstream ships support.
 "$TOOLS_DIR/actionlint" \
   -ignore 'reusable workflow call "\$/\.github/workflows/.+" at "uses" is not following the format' \
   "$ROOT"/.github/workflows/*.yml
-"$TOOLS_DIR/zizmor" --no-online-audits --format plain "$ROOT"/.github/workflows/
+zizmor --no-online-audits --format plain "$ROOT"/.github/workflows/
 
 fixture_dir="$TOOLS_DIR/negative/.github/workflows"
 mkdir -p "$fixture_dir"
@@ -67,7 +44,7 @@ if [ "$actionlint_status" -eq 0 ] || ! grep -q 'runner-label' <<<"$actionlint_ou
 fi
 
 zizmor_status=0
-zizmor_output="$("$TOOLS_DIR/zizmor" --no-online-audits --format plain --no-progress "$fixture_dir" 2>&1)" || zizmor_status=$?
+zizmor_output="$(zizmor --no-online-audits --format plain --no-progress "$fixture_dir" 2>&1)" || zizmor_status=$?
 if [ "$zizmor_status" -eq 0 ] || ! grep -q 'unpinned-uses' <<<"$zizmor_output"; then
   echo "zizmor negative control did not prove the expected finding" >&2
   printf '%s\n' "$zizmor_output" >&2
