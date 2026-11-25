@@ -1,4 +1,4 @@
-FROM python:3.13.18-slim-bookworm
+FROM python:3.15.1-slim-bookworm
 
 WORKDIR /app
 COPY payment-reference/deploy/fault-proxy/proxy.py /app/proxy.py
