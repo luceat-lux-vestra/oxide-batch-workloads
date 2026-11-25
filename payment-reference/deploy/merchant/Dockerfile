@@ -10,6 +10,12 @@ RUN cargo build \
 
 FROM debian:bookworm-slim
 
+# Reqwest's platform verifier needs the system CA store, including for HTTP-only clients.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -s /etc/ssl/certs/ca-certificates.crt
+
 RUN useradd --system --uid 10004 --create-home merchant
 
 COPY --from=build /src/payment-reference/target/release/payment-reference-merchant /usr/local/bin/payment-reference-merchant

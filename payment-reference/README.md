@@ -135,7 +135,8 @@ or rotate tenants.
 - `deploy/` — pinned third-party inputs plus the bounded Merchant -> Gateway ->
   Kill Bill -> payment-sandbox runtime and deterministic fault qualification
   harness.
-- `adapters/killbill-payment-sandbox/` — Java 11 Kill Bill OSGi payment plugin,
+- `adapters/killbill-payment-sandbox/` — Java 11-compatible Kill Bill OSGi payment plugin
+  (built and tested on Java 25 LTS),
   transaction journal DAO, payment-sandbox translation core, and focused
   HTTP/identity/idempotency/binding tests.
 
