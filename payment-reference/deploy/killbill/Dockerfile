@@ -1,4 +1,4 @@
-FROM maven:3.9.9-eclipse-temurin-11 AS plugin-build
+FROM maven:3.9-eclipse-temurin-26 AS plugin-build
 
 WORKDIR /src
 COPY payment-reference/adapters/killbill-payment-sandbox/pom.xml ./pom.xml
