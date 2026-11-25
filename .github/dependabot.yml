@@ -76,6 +76,92 @@ updates:
     labels:
       - dependencies
 
+  - package-ecosystem: cargo
+    directories:
+      - /payment-reference
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:20"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: maven
+    directories:
+      - /payment-reference/adapters/killbill-payment-sandbox
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:25"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    ignore:
+      # Provider parent and API are qualified with the deployed Kill Bill release.
+      - dependency-name: "org.kill-bill.*:*"
+    labels:
+      - dependencies
+
+  - package-ecosystem: gomod
+    directories:
+      - /.github/tools/actionlint
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:35"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: docker
+    directories:
+      - /payment-reference/deploy/fault-proxy
+      - /payment-reference/deploy/gateway
+      - /payment-reference/deploy/killbill-db
+      - /payment-reference/deploy/merchant
+      - /payment-reference/deploy/payment-sandbox
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:40"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: docker
+    directory: /payment-reference/deploy/killbill
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:42"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    ignore:
+      # Provider application, DDL source and plugin ABI advance together.
+      - dependency-name: "killbill/killbill"
+    labels:
+      - dependencies
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /csv-postgres
+      - /payment-reconciliation-postgres
+      - /payment-recovery-postgres
+      - /payment-reference/deploy
+      - /postgres-local-partition
+      - /postgres-postgres
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:45"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

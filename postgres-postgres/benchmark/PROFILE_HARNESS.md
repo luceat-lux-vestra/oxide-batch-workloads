@@ -1129,7 +1129,7 @@ attribution-only.
 ### Manual hosted ARM64 qualification workflow
 
 `.github/workflows/probe-perfetto-heap-capability.yml` is manual-only and
-runs on `ubuntu-24.04-arm`. It does not install Rust, start PostgreSQL, or run
+runs on the current native Ubuntu ARM64 image selected by the lifecycle policy. It does not install Rust, start PostgreSQL, or run
 the OxideBatch workload.
 
 The workflow retains:

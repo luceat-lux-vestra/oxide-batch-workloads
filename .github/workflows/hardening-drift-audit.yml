@@ -33,7 +33,7 @@ permissions: {}
 
 jobs:
   detect:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 25
     permissions:
       contents: read
@@ -46,20 +46,48 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Install verified cargo-deny 0.20.2
+      - name: Set up current Go stable for actionlint
+        id: install-go
         if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
         continue-on-error: true
-        run: bash .github/scripts/install-cargo-deny.sh
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+
+      - name: Install maintained zizmor
+        id: install-zizmor
+        if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
+        continue-on-error: true
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: zizmor
+          checksum: true
+          fallback: none
+
+      - name: Install maintained cargo-deny
+        id: install-deny
+        if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
+        continue-on-error: true
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: cargo-deny
+          checksum: true
+          fallback: none
 
       - name: Run hardening drift audit
         id: audit
+        if: always()
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          MANAGED_TOOL_OUTCOMES: ${{ steps.install-go.outcome }},${{ steps.install-zizmor.outcome }},${{ steps.install-deny.outcome }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'live' }}
         run: |
           python3 .github/scripts/run-hardening-drift-audit.py \
             --test-mode "$TEST_MODE" \
+            --tool-install-status "$MANAGED_TOOL_OUTCOMES" \
             --output "${{ runner.temp }}/hardening-drift-audit.json"
 
       - name: Upload trusted audit result
@@ -78,7 +106,7 @@ jobs:
   report:
     needs: detect
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       actions: read

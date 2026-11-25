@@ -11,7 +11,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: "0"
-  SCCACHE_VERSION: "0.18.0"
   SCCACHE_CACHE_SIZE: 768M
   COMPILE_SURFACE: csv-postgres-cargo-check-locked-all-targets-v1
 
@@ -22,7 +21,7 @@ concurrency:
 jobs:
   fast:
     name: fast
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -71,6 +70,13 @@ jobs:
         with:
           workspaces: csv-postgres
 
+      - name: Install maintained sccache
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: sccache
+          checksum: true
+          fallback: none
+
       - name: Resolve trusted compiler-cache identity
         id: cache-id
         shell: bash
@@ -78,6 +84,7 @@ jobs:
           BASE_SHA: ${{ steps.trusted-base.outputs.base_sha }}
         run: |
           set -euo pipefail
+          test "$(uname -m)" = aarch64
           lock_hash="$(sha256sum .fast-trusted-base/csv-postgres/Cargo.lock | awk '{print $1}')"
           env_hash="$(
             {
@@ -86,7 +93,9 @@ jobs:
               printf 'runner_arch=%s\n' "$RUNNER_ARCH"
               printf 'cargo_term_color=%s\n' "$CARGO_TERM_COLOR"
               printf 'cargo_incremental=%s\n' "$CARGO_INCREMENTAL"
-              printf 'sccache_version=%s\n' "$SCCACHE_VERSION"
+              sccache --version
+              sha256sum "$(command -v sccache)" | awk '{print $1}'
+              grep '^VERSION_ID=' /etc/os-release
               printf 'compile_surface=%s\n' "$COMPILE_SURFACE"
             } | sha256sum | awk '{print $1}'
           )"
@@ -108,20 +117,6 @@ jobs:
           restore-keys: |
             ${{ steps.cache-id.outputs.lock_prefix }}
 
-      - name: Verify native ARM64 sccache 0.18.0 even on cold cache
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = "aarch64"
-          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
-          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"             --output "$archive"
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive"             | sha256sum --check --strict
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
-          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable restore-only sccache on compatible main cache
         id: enable-sccache
@@ -177,7 +172,7 @@ jobs:
               f"read_errors={read_errors} write_errors={write_errors} "
               f"successful_writes={successful_writes}"
           )
-          # sccache 0.18.0 records an intentional rejected cache-store operation
+          # In READ_ONLY mode, the qualified sccache records a rejected cache-store operation
           # for each cache miss in READ_ONLY mode. It is not a cache read failure.
           # Fail closed if misses/rejections diverge, reads fail, or any write succeeds.
           if read_errors != 0:

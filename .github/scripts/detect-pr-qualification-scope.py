@@ -15,7 +15,7 @@ def _under(path: str, prefix: str) -> bool:
 
 def _workflow_file(path: str) -> bool:
     prefix = ".github/workflows/"
-    if not path.startswith(prefix) or not path.endswith(".yml"):
+    if not path.startswith(prefix) or not path.endswith((".yml", ".yaml")):
         return False
     return "/" not in path[len(prefix) :]
 
@@ -71,6 +71,10 @@ def classify(paths: Iterable[str]) -> dict[str, bool]:
         "workloads.json",
         ".github/labels.json",
         ".github/dependabot.yml",
+        ".github/dependency-update-policy.json",
+        ".github/actionlint.yaml",
+        ".github/scripts/dependency_lifecycle.py",
+        ".github/scripts/test-dependency-lifecycle.py",
         ".github/repository-settings-policy.json",
         ".github/scripts/audit_issue.py",
         ".github/scripts/discover-supply-chain-workloads.py",
@@ -93,6 +97,7 @@ def classify(paths: Iterable[str]) -> dict[str, bool]:
     }
     governance = any_path(
         lambda path: path in governance_exact
+        or _under(path, ".github/tools/")
         or _under(path, ".github/ISSUE_TEMPLATE/")
         or _workflow_file(path)
     )

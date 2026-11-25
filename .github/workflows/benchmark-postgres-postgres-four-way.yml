@@ -42,7 +42,7 @@ concurrency:
 jobs:
   four-way:
     name: postgres-postgres-four-way
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 240
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload
@@ -64,10 +64,11 @@ jobs:
           persist-credentials: false
 
       - name: Setup native ARM Java 25
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Select native ARM Java 25 and freeze JVM environment
         shell: bash

@@ -12,10 +12,9 @@
 # architecture. `fixtures` entries are bounded CI-orchestration proofs, not
 # supply-chain scanning subjects, and are never checked against this policy.
 #
-# cargo-deny version is pinned repository-wide to exactly 0.20.2 (see the
-# verified, SHA-256-pinned official prebuilt installer at
-# .github/scripts/install-cargo-deny.sh, invoked from .github/workflows/ci.yml).
-# This file is not validated against, and must not rely on, another version's defaults.
+# cargo-deny is installed by the immutable Dependabot-managed install-action
+# with upstream manifest checksum verification and no fallback. Every selected
+# release must pass canonical policy and negative controls.
 #
 # This canonical base remains exception-free. Workload-scoped informational
 # advisory exceptions, when unavoidable, are declared in
@@ -25,7 +24,7 @@
 # add a broad, indefinite, or global bypass here.
 
 [graph]
-# All primary CI runners now build real workloads on ubuntu-24.04-arm.
+# Primary CI builds real workloads on the current native Ubuntu ARM64 runner.
 # Keep the previously validated x86_64 GNU/Linux target for compatibility,
 # and scan native aarch64 GNU/Linux dependencies as well. The union prevents
 # ARM-only dependency edges from escaping advisories/licenses/bans/sources

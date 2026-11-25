@@ -24,7 +24,7 @@ permissions: {}
 
 jobs:
   detect:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     permissions:
       contents: read
@@ -34,21 +34,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install verified cargo-deny 0.20.2
+      - name: Install maintained cargo-deny
         id: install
         if: github.event_name != 'workflow_dispatch' || inputs.test_mode == 'live'
         continue-on-error: true
-        run: bash .github/scripts/install-cargo-deny.sh
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: cargo-deny
+          checksum: true
+          fallback: none
 
       - name: Run canonical supply-chain audit
         id: audit
         if: always()
         continue-on-error: true
         env:
+          MANAGED_TOOL_OUTCOMES: ${{ steps.install.outcome }}
           TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'live' }}
         run: |
           python3 .github/scripts/run-scheduled-supply-chain-audit.py \
             --test-mode "$TEST_MODE" \
+            --tool-install-status "$MANAGED_TOOL_OUTCOMES" \
             --output "${{ runner.temp }}/supply-chain-audit.json"
 
       - name: Upload trusted audit result
@@ -67,7 +73,7 @@ jobs:
   report:
     needs: detect
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       actions: read

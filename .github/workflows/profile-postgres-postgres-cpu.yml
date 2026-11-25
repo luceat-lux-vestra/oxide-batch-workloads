@@ -33,7 +33,7 @@ concurrency:
 jobs:
   cpu-profile:
     name: postgres-postgres-cpu-profile
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 120
     env:
       DATABASE_URL: postgresql://oxide_batch_workload:oxide_batch_workload@localhost:5434/postgres_postgres_workload

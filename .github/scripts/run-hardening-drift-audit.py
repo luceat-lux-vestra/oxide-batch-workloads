@@ -313,9 +313,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--test-mode", choices=("live", "clean", "policy-drift", "infrastructure-failure"), default="live")
+    parser.add_argument("--tool-install-status", help="Managed Go/zizmor/cargo-deny step outcomes; CI must supply this")
     args = parser.parse_args()
     try:
         if args.test_mode == "live":
+            if args.tool_install_status is not None and args.tool_install_status != "success,success,success":
+                raise ApiFailure("managed tool installation failed or was skipped; refusing preinstalled fallback")
             repository = os.environ.get("GITHUB_REPOSITORY")
             token = os.environ.get("GITHUB_TOKEN")
             if not repository or not token:

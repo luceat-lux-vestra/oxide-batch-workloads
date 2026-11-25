@@ -95,9 +95,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--test-mode", choices=("live", "policy-finding", "infrastructure-failure", "clean"), default="live")
+    parser.add_argument("--tool-install-status", help="Managed cargo-deny step outcome; CI must supply this")
     args = parser.parse_args()
 
-    audit = run_live_audit() if args.test_mode == "live" else synthetic_result(args.test_mode)
+    if args.test_mode == "live" and args.tool_install_status is not None and args.tool_install_status != "success":
+        audit = result("infrastructure-failure", "managed cargo-deny installation failed or was skipped; refusing preinstalled fallback")
+    else:
+        audit = run_live_audit() if args.test_mode == "live" else synthetic_result(args.test_mode)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(audit, indent=2))

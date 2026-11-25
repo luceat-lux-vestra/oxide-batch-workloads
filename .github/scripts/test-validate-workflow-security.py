@@ -103,6 +103,9 @@ class CargoUpdaterOwnershipTests(unittest.TestCase):
                     MODULE.validate_registered_cargo_updaters(root)
             config.write_text("version: 2\nupdates:\n" + work + fixture, encoding="utf-8")
             MODULE.validate_registered_cargo_updaters(root)
+            # Flow-style YAML is valid too: verify parsing is structural.
+            config.write_text("version: 2\nupdates:\n" + work.replace("    directory: /work", "    directories: [/work]") + fixture, encoding="utf-8")
+            MODULE.validate_registered_cargo_updaters(root)
             grouped = work.replace("    directory: /work\n", "    directories:\n      - /work\n      - /fixture\n")
             config.write_text("version: 2\nupdates:\n" + grouped, encoding="utf-8")
             MODULE.validate_registered_cargo_updaters(root)

@@ -26,7 +26,7 @@ jobs:
   dependency-review:
     name: dependency-review
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     permissions:
       contents: read
@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Review dependency changes
         if: github.event.pull_request.draft == false
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: moderate
 
@@ -46,7 +46,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read # Fetch exact live PR metadata for CodeQL runtime classification.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     outputs:
       workloads: ${{ steps.discover.outputs.workloads }}
@@ -182,6 +182,22 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/validate-workload-registry.py
 
+      - name: Set up current Go stable for actionlint
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+
+      - name: Install maintained zizmor
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: zizmor
+          checksum: true
+          fallback: none
+
       - name: Validate GitHub Actions semantics and trust boundaries
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: bash .github/scripts/check-actions-security.sh
@@ -268,13 +284,13 @@ jobs:
           matrix=$(python3 .github/scripts/discover-supply-chain-workloads.py)
           echo "workloads=$matrix" >> "$GITHUB_OUTPUT"
 
-      - name: Test cargo-deny installer failure semantics
+      - name: Install maintained cargo-deny
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: bash .github/scripts/test-install-cargo-deny.sh
-
-      - name: Install verified cargo-deny 0.20.2
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: bash .github/scripts/install-cargo-deny.sh
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: cargo-deny
+          checksum: true
+          fallback: none
 
       - name: Test supply-chain validator
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -294,7 +310,7 @@ jobs:
     # pattern workloads-ci's Jobs-API cross-check parses.
     name: ci-shard (${{ matrix.name }})
     needs: discover
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -307,10 +323,11 @@ jobs:
 
       - name: Setup ARM Java 25 for PostgreSQL/Java workload
         if: ${{ matrix.name == 'postgres-postgres' }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 25
+          check-latest: true
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot
@@ -345,6 +362,14 @@ jobs:
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "trusted protected-main SHA: $base_sha"
 
+      - name: Install maintained sccache
+        if: matrix.name == 'csv-postgres'
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: sccache
+          checksum: true
+          fallback: none
+
       - name: Resolve exact Final compiler-cache identity
         if: matrix.name == 'csv-postgres'
         id: final-cache-id
@@ -353,10 +378,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ steps.final-trusted-base.outputs.base_sha }}
           CARGO_INCREMENTAL: "0"
-          SCCACHE_VERSION: "0.18.0"
           COMPILE_SURFACE: csv-postgres-final-ci-v1
         run: |
           set -euo pipefail
+          test "$(uname -m)" = aarch64
           lock_payload="$(gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/$GITHUB_REPOSITORY/contents/csv-postgres/Cargo.lock?ref=$BASE_SHA" \
@@ -370,7 +395,9 @@ jobs:
               printf 'runner_arch=%s\n' "$RUNNER_ARCH"
               printf 'cargo_term_color=%s\n' "$CARGO_TERM_COLOR"
               printf 'cargo_incremental=%s\n' "$CARGO_INCREMENTAL"
-              printf 'sccache_version=%s\n' "$SCCACHE_VERSION"
+              sccache --version
+              sha256sum "$(command -v sccache)" | awk '{print $1}'
+              grep '^VERSION_ID=' /etc/os-release
               printf 'compile_surface=%s\n' "$COMPILE_SURFACE"
             } | sha256sum | awk '{print $1}'
           )"
@@ -393,26 +420,6 @@ jobs:
           restore-keys: |
             ${{ steps.final-cache-id.outputs.lock_prefix }}
 
-      - name: Verify native ARM64 sccache 0.18.0 for Final even on cold cache
-        if: matrix.name == 'csv-postgres'
-        shell: bash
-        env:
-          SCCACHE_VERSION: "0.18.0"
-          SCCACHE_SHA256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = "aarch64"
-          archive="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v$SCCACHE_VERSION"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/sccache-v$SCCACHE_VERSION-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-          echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          test "$("$install_dir/sccache" --version)" = "sccache 0.18.0"
-          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Enable restore-only Final compiler cache on compatible main cache
         if: matrix.name == 'csv-postgres' && steps.restore-final-sccache.outputs.cache-matched-key != ''
@@ -467,7 +474,7 @@ jobs:
               f"read_errors={read_errors} write_errors={write_errors} "
               f"successful_writes={successful_writes}"
           )
-          # sccache 0.18.0 records an intentional rejected cache-store operation
+          # In READ_ONLY mode, the qualified sccache records a rejected cache-store operation
           # for each cache miss in READ_ONLY mode. It is not a cache read failure.
           # Fail closed if misses/rejections diverge, reads fail, or any write succeeds.
           if read_errors != 0:
@@ -519,7 +526,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: msrv-shard (${{ matrix.name }})
     needs: discover
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -579,7 +586,7 @@ jobs:
     name: workloads-ci
     needs: [discover, ci-shard]
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     steps:
       - name: Draft final-gate placeholder
@@ -621,7 +628,7 @@ jobs:
     name: workloads-msrv
     needs: [discover, msrv-shard]
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -676,7 +683,7 @@ jobs:
     name: supply-chain
     needs: discover
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -684,8 +691,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install verified cargo-deny 0.20.2
-        run: bash .github/scripts/install-cargo-deny.sh
+      - name: Install maintained cargo-deny
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: cargo-deny
+          checksum: true
+          fallback: none
 
       - name: Validate every registered real workload
         env:
@@ -724,7 +735,7 @@ jobs:
     name: Payment reference runtime
     needs: discover
     if: ${{ needs.discover.outputs.payment_reference_runtime == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -759,7 +770,7 @@ jobs:
     name: codeql-runtime
     needs: discover
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.discover.outputs.codeql_runtime_required == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 12
     permissions:
       contents: read # exact PR head source
@@ -778,13 +789,13 @@ jobs:
           python3 .github/scripts/trusted-codeql-runtime-validation.py check-contract
 
       - name: Initialize PR-only CodeQL runtime
-        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           languages: actions
           build-mode: none
 
       - name: Analyze PR-only CodeQL runtime without upload
-        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           category: /language:actions
           upload: never
@@ -803,7 +814,7 @@ jobs:
   # canonical real-workload completeness before scanning every workload.
   reserved-cargo-ci:
     name: Reserved Cargo Projects
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -814,10 +825,11 @@ jobs:
           persist-credentials: false
 
       - name: Setup Java 11 for payment-reference adapter core
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
           java-version: 11
+          check-latest: true
           cache: maven
           cache-dependency-path: payment-reference/adapters/killbill-payment-sandbox/pom.xml
 
@@ -868,7 +880,7 @@ jobs:
       - payment-reference-runtime
       - codeql-runtime
     if: always()
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     permissions: {}
     steps:
