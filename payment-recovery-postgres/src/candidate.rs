@@ -469,7 +469,7 @@ pub fn candidate_set_digest(candidates: &[CandidateSnapshot]) -> Result<String> 
     Ok(finish_hex(hasher))
 }
 
-fn candidate_id(
+pub(crate) fn candidate_id(
     merchant_payment_id: &str,
     operation_id: &str,
     operation_kind: InitialOperationKind,

@@ -5,6 +5,7 @@ pub mod job;
 pub mod oracle;
 pub mod processor;
 pub mod replay;
+pub mod verify;
 pub mod writer;
 
 pub const CONTRACT_VERSION: &str = "payment-recovery-v1";

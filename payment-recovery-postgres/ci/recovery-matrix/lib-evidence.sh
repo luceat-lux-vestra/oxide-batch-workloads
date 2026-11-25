@@ -1,7 +1,22 @@
 emit_record() {
-  [[ -n "$evidence_dir" ]] || return 0
   local scenario="$1" scenario_kind="$2" run_id="$3" failure_point_json="$4"
   local phases_file="$5" side_effects_file="$6" provider_id
+  "$binary" verify \
+    --database-url "$DATABASE_URL" \
+    --provider-base-url "$provider_base" \
+    --run-id "$run_id" >"/tmp/$run_id-independent-verify.json"
+  jq -e '
+    .schema == "oxide-batch-workloads.payment-recovery-independent-verification"
+    and .schema_version == 1
+    and .decision == "RECOVERY_SEMANTICS_VERIFIED_SIDE_EFFECT_CARDINALITY_SEPARATE"
+    and .side_effect_cardinality_authority == "SEPARATE_PROVIDER_DAY_PROOF_REQUIRED"
+    and (.violations == [])
+    and (.candidate_count >= 1)
+    and (.attempt_count >= .candidate_count)
+  ' "/tmp/$run_id-independent-verify.json" >/dev/null ||
+    fail "$scenario independent recovery verification did not pass"
+
+  [[ -n "$evidence_dir" ]] || return 0
   mkdir -p "$evidence_dir"
   provider_id="$(provider_id_for_run "$run_id")"
   [[ -n "$provider_id" ]] || fail "$scenario has no provider identity for retained provider truth"

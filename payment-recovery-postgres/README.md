@@ -106,12 +106,13 @@ Checkpoint 5 implements the actual processing path:
 - each attempt stores canonical/provider identities, visibility, status and
   financial observations. Raw replay secrets are never copied into attempt or
   result audit rows;
-- result rows remain `verified = false` until the independent retained-evidence
-  checkpoint proves side-effect cardinality.
+- result rows remain `verified = false`; runtime semantic verification is
+  deliberately read-only and provider mutation cardinality remains a separate
+  external evidence authority.
 
 Checkpoint 6 adds deterministic hard-crash/new-process recovery mechanics.
-Retained evidence and the full `verify` command intentionally remain the next
-durable work unit.
+Checkpoint 7 now adds the workload-native independent `verify` command without
+turning batch completion into proof of external side-effect cardinality.
 
 ## Correctness boundary
 
@@ -224,7 +225,49 @@ The matrix also checks the separate completed-`RETRY_LATER` path: a later
 normal processing cycle advances to a new `processing_generation`, rather
 than misclassifying that cycle as hard-crash recovery.
 
-This checkpoint defines and wires the executable matrix into
-`ci/validate ci`; a PASS from that matrix is not claimed until the executable
-validation checkpoint runs it. Retained evidence construction and negative
-corruption controls remain checkpoint 7.
+The executable matrix is wired into `ci/validate ci`. Every matrix scenario
+must also pass the workload-native independent verifier before retained
+evidence may be emitted.
+
+## Checkpoint 7 — independent runtime verification
+
+`verify` is now implemented as a read-only verifier:
+
+```text
+payment-recovery-postgres verify \
+  --database-url <workload-db> \
+  --provider-base-url <direct-provider-base> \
+  --run-id <frozen-recovery-run>
+```
+
+It independently re-reads workload-owned run/candidate/attempt/result state and
+fails closed unless:
+
+- the run is exact `payment-recovery-v1` on published OxideBatch `0.7.0`;
+- the deterministic candidate ID and whole candidate-set digest recompute;
+- raw replay inputs still match their retained secret-safe digests, while raw
+  values are never serialized into the verification report;
+- attempt numbering is contiguous and processing generations never regress or
+  exceed the run generation;
+- the latest attempt's outcome kind, canonical/provider observation, result
+  classification, oracle violations and result digest independently recompute;
+- a result has not been prematurely promoted to `verified=true`;
+- terminal success/failure is compatible with a fresh supported direct-provider
+  `GET /payments/{providerPaymentId}` read;
+- result and attempt cardinalities match the frozen candidate set.
+
+A clean report uses schema
+`oxide-batch-workloads.payment-recovery-independent-verification/v1` and
+decision
+`RECOVERY_SEMANTICS_VERIFIED_SIDE_EFFECT_CARDINALITY_SEPARATE`.
+
+The verifier intentionally does **not** mutate the workload database and does
+not claim request-attempt or provider-mutation cardinality. Its report freezes
+that boundary as
+`SEPARATE_PROVIDER_DAY_PROOF_REQUIRED`. The payment-reference long-running
+campaign must cross-bind this semantic proof with its independent provider
+timeline/cardinality evidence before a day can advance.
+
+The committed #271 retained-evidence manifest/verifier remains the historical
+exact-0.7.0 recovery qualification authority. It is not automatically a
+day-scoped #318 recovery proof. `reset` remains intentionally unimplemented.
