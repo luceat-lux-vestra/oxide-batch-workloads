@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          git log -1 --check
+          git cat-file -e "$EXPECTED_SHA^{commit}"
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # latest stable snapshot

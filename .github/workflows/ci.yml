@@ -824,11 +824,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Java 11 for payment-reference adapter core
+      - name: Setup Java 25 LTS for payment-reference adapter core
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: zulu
-          java-version: 11
+          java-version: 25
           check-latest: true
           cache: maven
           cache-dependency-path: payment-reference/adapters/killbill-payment-sandbox/pom.xml

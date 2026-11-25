@@ -73,7 +73,10 @@ operation idempotency keys. PURCHASE retains both authorize and capture keys.
 
 ## Validation
 
-Requires Java 11+ and Maven:
+Build and tests use Java 25 LTS and Maven. JUnit 6 requires Java 17 or newer;
+test sources target Java 17. The shipped OSGi plugin remains compiled with
+`--release 11` for the pinned Kill Bill runtime. The Docker builder uses the
+same Java LTS while the final Kill Bill runtime image remains unchanged.
 
 ```bash
 mvn -B -ntp test
